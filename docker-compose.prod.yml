@@ -1,0 +1,10 @@
+# Used on the VM. Pulls the image that GitHub Actions built and pushed;
+# nothing is built on the server.
+#   docker compose -f docker-compose.prod.yml up -d
+services:
+  web:
+    image: ghcr.io/hadigghazi/dblp-dashboard:latest
+    container_name: dblp-dashboard
+    ports:
+      - "80:80"
+    restart: unless-stopped

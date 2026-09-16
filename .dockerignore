@@ -1,0 +1,6 @@
+node_modules
+dist
+.git
+*.log
+prep_data.py
+README.md

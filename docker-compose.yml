@@ -1,0 +1,29 @@
+services:
+  # Production build: static site served by nginx.
+  #   docker compose up -d --build      ->  http://localhost:8090
+  web:
+    build:
+      context: .
+      network: host   # BuildKit's isolated build network was flaky on Docker Desktop; host is not
+    image: dblp-dashboard:latest
+    container_name: dblp-dashboard
+    ports:
+      - "8090:80"     # 8080 was already taken on this machine; change freely
+    restart: unless-stopped
+
+  # Hot-reload dev server, only when asked for:
+  #   docker compose --profile dev up dev   ->  http://localhost:5173
+  dev:
+    image: node:22-alpine
+    container_name: dblp-dashboard-dev
+    working_dir: /app
+    command: sh -c "npm install --no-audit --no-fund && npm run dev"
+    ports:
+      - "5173:5173"
+    volumes:
+      - .:/app
+      - dev_node_modules:/app/node_modules   # keep the container's own modules, not the host's
+    profiles: ["dev"]
+
+volumes:
+  dev_node_modules:
