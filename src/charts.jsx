@@ -33,17 +33,23 @@ export function usePalette() {
 }
 
 // ------------------------------------------------------------- wrapper -----
-export function Chart({ option, height = 260 }) {
+export function Chart({ option, height = 260, onClick, label }) {
   const el = useRef(null);
   const inst = useRef(null);
+  const clickRef = useRef(onClick);
+  clickRef.current = onClick;
   useEffect(() => {
     inst.current = echarts.init(el.current, null, { renderer: "canvas" });
+    inst.current.on("click", (params) => clickRef.current && clickRef.current(params));
     const ro = new ResizeObserver(() => inst.current && inst.current.resize());
     ro.observe(el.current);
     return () => { ro.disconnect(); if (inst.current) { inst.current.dispose(); inst.current = null; } };
   }, []);
   useEffect(() => { if (inst.current && option) inst.current.setOption(option, { notMerge: true }); }, [option]);
-  return <div ref={el} className="chartbox" style={{ height }} />;
+  return (
+    <div ref={el} className={"chartbox" + (onClick ? " clickable" : "")} style={{ height }}
+         role="img" aria-label={label || "chart"} />
+  );
 }
 
 // --------------------------------------------------------- option parts ----
@@ -179,15 +185,16 @@ export function loglogOption(p, { name, color, data, xLabel }) {
 /** Growth-rate bars with confidence intervals in the tooltip. rows: [{kind, period, rate, lo, hi, doubling}] */
 export function growthOption(p, rows) {
   const kinds = ["all", "journal", "conference", "preprint"];
-  const periods = [...new Set(rows.map((r) => r.period))];
+  const periods = [...new Set(rows.map((r) => r.period))].slice(0, 2);
   const colors = [p.s4, p.s6];
   const find = (k, per) => rows.find((r) => r.kind === k && r.period === per);
   return {
     ...base(p, { legend: true, legendNames: periods }),
     tooltip: { ...base(p).tooltip, trigger: "axis", axisPointer: { type: "shadow", shadowStyle: { color: "rgba(128,128,128,.08)" } },
       formatter: (params) => params.map((q) => { const r = find(kinds[q.dataIndex], q.seriesName); if (!r) return "";
+        const doubling = r.doubling ? `, doubles in ${r.doubling} y` : "";
         return `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${q.color};margin-right:6px"></span>` +
-               `${q.seriesName}: <b>${r.rate}%/yr</b> <span style="color:${p.muted}">(${r.lo}–${r.hi}%, doubles in ${r.doubling} y)</span>`; }).join("<br>") },
+               `${q.seriesName}: <b>${r.rate}%/yr</b> <span style="color:${p.muted}">(${r.lo}–${r.hi}%${doubling})</span>`; }).join("<br>") },
     xAxis: categoryAxis(p, kinds.map((k) => k[0].toUpperCase() + k.slice(1)), { bars: true }),
     yAxis: valueAxis(p, { formatter: (v) => v + "%" }),
     series: periods.map((per, i) => barSeries({ name: per, color: colors[i], data: kinds.map((k) => find(k, per)?.rate ?? null) }, { maxWidth: 26 })),
