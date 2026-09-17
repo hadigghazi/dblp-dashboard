@@ -30,6 +30,7 @@ services:
   #   docker compose -f docker-compose.prod.yml run --rm ml python -m ml.cli train
   ml:
     image: ghcr.io/hadigghazi/dblp-dashboard-ml:latest
+    pull_policy: missing        # the deploy job pulls it; `run` must not need a registry login
     user: "${DATA_UID:-1000}:${DATA_GID:-1000}"
     environment:
       DUCKDB_MEMORY: ${ML_DUCKDB_MEMORY:-8GB}

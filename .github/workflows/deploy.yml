@@ -143,7 +143,10 @@ jobs:
             test -f "$(grep '^DBLP_DIR=' .env | cut -d= -f2)/parquet/dblp.parquet" \
               || { echo "dblp.parquet not found under DBLP_DIR in ~/dblp-dashboard/.env"; exit 1; }
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-            docker compose -f docker-compose.prod.yml pull
+            # --profile ml also pulls the batch-job image, so running it later needs no registry
+            # credentials on the VM (the packages are private); `up` without the profile still
+            # starts only web and api
+            docker compose -f docker-compose.prod.yml --profile ml pull
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
             docker logout ghcr.io
             docker image prune -f >/dev/null
