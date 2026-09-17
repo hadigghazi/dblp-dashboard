@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { PageOverview, PagePublishing, PageIdentity, PageNetwork, PageTitles, PageVenues, PageQuality, PageEnrichment, PageTails } from "./pages.jsx";
 import { PageAuthors, PageVenueExplorer, PagePapers } from "./explore.jsx";
+import { PageDisambiguation } from "./ml.jsx";
 import { useStatus, fmtDate } from "./api.js";
 import { Spinner } from "./components.jsx";
 
@@ -17,6 +18,7 @@ const PAGES = [
   { id: "authors", no: "A", label: "Authors", group: "Explore", Comp: PageAuthors },
   { id: "venues", no: "V", label: "Venues", group: "Explore", Comp: PageVenueExplorer },
   { id: "papers", no: "P", label: "Papers", group: "Explore", Comp: PagePapers },
+  { id: "disambiguation", no: "ML", label: "Disambiguation", group: "Machine learning", Comp: PageDisambiguation },
 ];
 
 /** "#authors?key=homepages/1/2" -> { page: "authors", params: { key: "homepages/1/2" } } */

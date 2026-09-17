@@ -262,3 +262,14 @@ pre.xml .xa { color: var(--s6); }
 pre.xml .xv { color: var(--s2); }
 pre.xml .xc { color: var(--muted); font-style: italic; }
 code { font-size: .92em; }
+
+/* ---- Disambiguation (ML) ---- */
+.modelnote { font-size: 12px; color: var(--ink-2); margin: 10px 0 14px; line-height: 1.5; }
+.clusterlist { list-style: none; margin: 14px 0 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.cluster { border: 1px solid var(--rule); border-radius: 10px; padding: 10px 14px 6px; background: var(--surface-2); }
+.clusterhead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); }
+.clusterhead.named { color: var(--ink); }
+.clusterhead .flag { margin-left: 0; }
+.paperlist.compact .paperrow { padding: 5px 4px; }
+.paperlist.compact .ptitle { font-size: 13px; }
+.paperlist.compact li + li { border-top: 1px solid var(--rule); }

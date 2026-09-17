@@ -28,7 +28,7 @@ services:
     container_name: dblp-dashboard
     ports:
       - "8090:80"     # 8080 was already taken on this machine; change freely
-    depends_on: [api]
+    depends_on: [api, mlapi]
     restart: unless-stopped
 
   dev:
@@ -45,6 +45,25 @@ services:
       - dev_node_modules:/app/node_modules   # keep the container's own modules, not the host's
     depends_on: [api]
     profiles: ["dev"]
+
+  # The model server the dashboard's /api/ml/ calls (same image as the batch jobs below).
+  mlapi:
+    build:
+      context: ./ml
+      target: runtime
+      network: host
+    image: dblp-dashboard-ml:latest
+    container_name: dblp-mlapi
+    command: ["uvicorn", "ml.server:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "1"]
+    environment:
+      DUCKDB_MEMORY: ${ML_DUCKDB_MEMORY:-4GB}
+      DUCKDB_THREADS: ${ML_DUCKDB_THREADS:-4}
+      ML_TMP_DIR: /tmp/duckdb
+    volumes:
+      - ${DBLP_DIR:-./api/fixture}:/data:ro
+      - api_cache:/cache:ro
+      - ml_models:/models
+    restart: unless-stopped
 
   # Batch ML jobs (author disambiguation). Not a server - run a command and exit:
   #   docker compose run --rm ml python -m ml.cli train

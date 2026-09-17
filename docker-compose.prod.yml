@@ -23,7 +23,23 @@ services:
     container_name: dblp-dashboard
     ports:
       - "127.0.0.1:8081:80"   # Caddy on the VM owns :80/:443 and forwards the catch-all here
-    depends_on: [api]
+    depends_on: [api, mlapi]
+    restart: unless-stopped
+
+  # The model server behind /api/ml/ (same image as the batch job below).
+  mlapi:
+    image: ghcr.io/hadigghazi/dblp-dashboard-ml:latest
+    container_name: dblp-mlapi
+    command: ["uvicorn", "ml.server:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "1"]
+    user: "${DATA_UID:-1000}:${DATA_GID:-1000}"
+    environment:
+      DUCKDB_MEMORY: ${ML_DUCKDB_MEMORY:-4GB}
+      DUCKDB_THREADS: ${ML_DUCKDB_THREADS:-4}
+      ML_TMP_DIR: /tmp/duckdb
+    volumes:
+      - ${DBLP_DIR:?set DBLP_DIR in .env}:/data:ro
+      - ./cache:/cache:ro
+      - ./models:/models      # reads the trained model; writes cached suggestions
     restart: unless-stopped
 
   # Batch ML jobs. Runs only when asked:

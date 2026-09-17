@@ -123,7 +123,7 @@ def split_bin(con, key, model=None, thresholds=None, features=None, model_dir=No
     if n_bin < 2:
         return {"bin": person, "papers": n_bin, "clusters": [], "note": "too few papers on this bin to split"}
 
-    F.build_pairs(con, sampled=False)
+    F.build_pairs(con, sampled=False, touching=[person["person_id"]])
     X, _, info = F.matrix(con, feature_names=features)
     if not len(info):
         return {"bin": person, "papers": n_bin, "clusters": [], "note": "no comparable pairs"}

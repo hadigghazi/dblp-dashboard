@@ -161,8 +161,9 @@ jobs:
           ssh -i ~/.ssh/deploy_key "${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}" bash -s <<'EOF'
             set -e
             for i in $(seq 1 30); do
-              if curl -fsS -o /dev/null http://127.0.0.1:8081/ && curl -fsS http://127.0.0.1:8081/api/health; then
-                echo; echo "dashboard and api are up"; exit 0
+              if curl -fsS -o /dev/null http://127.0.0.1:8081/ && curl -fsS http://127.0.0.1:8081/api/health \
+                 && curl -fsS http://127.0.0.1:8081/api/ml/health; then
+                echo; echo "dashboard, api and model server are up"; exit 0
               fi
               sleep 2
             done

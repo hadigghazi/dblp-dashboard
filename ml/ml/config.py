@@ -6,6 +6,7 @@ DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))        # the VM's ~/dblp, m
 CACHE_DIR = Path(os.environ.get("CACHE_DIR", "/cache"))     # the api's serving databases (read-only)
 MODELS_DIR = Path(os.environ.get("MODELS_DIR", "/models"))  # writable: model artifacts + metrics
 
+TMP_DIR = Path(os.environ.get("ML_TMP_DIR", str(MODELS_DIR / "tmp")))  # DuckDB spill space
 DUCKDB_MEMORY = os.environ.get("DUCKDB_MEMORY", "6GB")
 DUCKDB_THREADS = int(os.environ.get("DUCKDB_THREADS", "4"))
 

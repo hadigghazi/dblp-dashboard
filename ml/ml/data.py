@@ -34,7 +34,7 @@ def connect():
     con = duckdb.connect()
     con.execute(f"SET memory_limit = '{config.DUCKDB_MEMORY}'")
     con.execute(f"SET threads = {config.DUCKDB_THREADS}")
-    tmp = config.MODELS_DIR / "tmp"
+    tmp = config.TMP_DIR
     tmp.mkdir(parents=True, exist_ok=True)
     con.execute(f"SET temp_directory = '{tmp}'")
     con.execute(f"ATTACH '{path}' AS s (READ_ONLY)")
@@ -139,6 +139,22 @@ def person_by_key(con, key):
     if not row:
         return None
     return dict(zip(["person_id", "key", "name", "base_name", "page_kind"], row))
+
+
+def largest_bins(con, limit=50, q=None):
+    """Disambiguation bins by number of papers sitting on them, optionally filtered by name."""
+    where = "AND p.name ILIKE ?" if q else ""
+    params = [f"%{q}%", limit] if q else [limit]
+    return [dict(zip(["key", "name", "papers", "numbered_pages"], r)) for r in con.execute(f"""
+        WITH n AS (SELECT base_name, count(*) AS numbered FROM s.persons
+                   WHERE page_kind = 'numbered' GROUP BY base_name)
+        SELECT p.key, p.name, count(sl.pid) AS papers, coalesce(n.numbered, 0) AS numbered_pages
+        FROM s.persons p
+        JOIN s.slots sl ON sl.person_id = p.person_id
+        LEFT JOIN n ON n.base_name = p.base_name
+        WHERE p.page_kind = 'disambiguation' {where}
+        GROUP BY p.key, p.name, n.numbered
+        ORDER BY papers DESC LIMIT ?""", params).fetchall()]
 
 
 def numbered_in_block(con, base_name):

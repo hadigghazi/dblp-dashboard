@@ -5,6 +5,7 @@ import {
   KpiStrip, PageHead, Card, Filters, FilterLabel, Seg, NumberInput, SearchBox, SortableTable,
   KindBadge, PubKind, Callout, EmptyNote,
 } from "./components.jsx";
+import { BinSplit } from "./ml.jsx";
 
 const KINDS = ["journal", "conference", "preprint", "phdthesis", "book", "incollection", "data", "mastersthesis"];
 const KIND_COLORS = (p) => ({ journal: p.s2, conference: p.s1, preprint: p.s3, phdthesis: p.s6, book: p.s4, incollection: p.s5, data: p.muted, mastersthesis: p.muted });
@@ -104,6 +105,7 @@ function AuthorDetail({ authorKey, go, back }) {
         { n: fmt.comma(data.namesake_count), l: `author pages named “${person.base_name}”` },
       ]} />
       <div className="grid">
+        {isBin ? <BinSplit authorKey={authorKey} go={go} /> : null}
         <Card span2 title="Publications per year" sub="By kind of record.">
           {data.yearly.length ? <Chart option={yearlyOpt} height={240} label="Publications per year" /> : <EmptyNote>No publications resolve to this page.</EmptyNote>}
         </Card>

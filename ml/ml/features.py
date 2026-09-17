@@ -44,6 +44,7 @@ WITH j AS (
            (a.position = a.n_authors AND b.position = b.n_authors)::INT AS both_last
     FROM inst a
     JOIN inst b ON a.base_name = b.base_name AND a.pid < b.pid
+    {restrict}
 )
 SELECT * FROM j
 {sampling}
@@ -72,10 +73,16 @@ FEATURES = [
 ]
 
 
-def build_pairs(con, sampled=True, pos=None, neg=None):
+def build_pairs(con, sampled=True, pos=None, neg=None, touching=None):
+    """`touching`: person ids; keep only pairs where at least one paper belongs to one of them.
+    A bin prediction needs bin-bin and bin-known pairs, never known-known."""
     sampling = SAMPLING.format(pos=pos or config.POS_PAIRS_PER_BLOCK, neg=neg or config.NEG_PAIRS_PER_BLOCK) \
         if sampled else ""
-    con.execute(PAIR_SQL.format(sampling=sampling))
+    restrict = ""
+    if touching:
+        ids = ", ".join(str(int(i)) for i in touching)
+        restrict = f"WHERE a.person_id IN ({ids}) OR b.person_id IN ({ids})"
+    con.execute(PAIR_SQL.format(sampling=sampling, restrict=restrict))
     n, pos_n, blocks = con.execute(
         "SELECT count(*), coalesce(sum(y), 0), count(DISTINCT base_name) FROM pair").fetchone()
     log.info("pairs: %s (%s positive, %.1f%%) across %s blocks",

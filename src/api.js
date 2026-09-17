@@ -45,7 +45,9 @@ export function useApi(path, params) {
           throw new Error(detail || `The server answered ${res.status}`);
         }
         dataUrl.current = url;
-        setState({ data: body.data, error: null, loading: false, warming: null });
+        // the dashboard api wraps payloads as { data, generation }; the model server returns them bare
+        const payload = body && typeof body === "object" && "data" in body ? body.data : body;
+        setState({ data: payload, error: null, loading: false, warming: null });
       } catch (e) {
         if (!cancelled && e.name !== "AbortError") {
           setState((s) => ({ ...s, loading: false, error: e.message || "Request failed", warming: null }));
