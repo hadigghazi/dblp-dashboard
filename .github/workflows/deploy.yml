@@ -123,7 +123,9 @@ jobs:
       - name: Copy compose file to the VM
         if: env.HAS_HOST == 'true'
         run: |
-          ssh -i ~/.ssh/deploy_key "${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}" 'mkdir -p ~/dblp-dashboard/cache'
+          # both bind-mount directories must exist and be owned by the deploying user: Docker would
+          # otherwise create them as root, and the containers run as that user
+          ssh -i ~/.ssh/deploy_key "${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}" 'mkdir -p ~/dblp-dashboard/cache ~/dblp-dashboard/models'
           scp -i ~/.ssh/deploy_key docker-compose.prod.yml "${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}:~/dblp-dashboard/docker-compose.prod.yml"
 
       - name: Pull and restart on the VM
