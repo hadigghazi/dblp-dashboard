@@ -106,9 +106,8 @@ def train(con, args):
     if drop:   # keep an ablation out of the way of the model the dashboard would use
         meta = dict(meta, fingerprint=f"{meta.get('fingerprint', 'unknown')}-without-{'-'.join(sorted(drop))}")
     d = M.save(model, thresholds, metrics, meta, active)
-    print(json.dumps(metrics, indent=2))
-    print()
-    print("artifacts:", d)
+    print(json.dumps(metrics, indent=2))          # stdout stays parseable: JSON and nothing else
+    print("artifacts:", d, file=sys.stderr)
     return 0
 
 
