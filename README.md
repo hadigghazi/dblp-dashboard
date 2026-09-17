@@ -40,6 +40,40 @@ docker compose -f docker-compose.prod.yml exec api python -m app.validate
 
 compares every live query with the CSVs in `~/dblp/charts/` and prints the largest difference per chart.
 
+## Author disambiguation (ML)
+
+dblp holds 33,659 disambiguation bins - bare names like "Wei Wang" holding papers by many different
+people - and 17.5% of papers (26.8% in the 2020s) have an author sitting on one. The 147,223
+**numbered** pages (`Wei Wang 0001`) are editor-verified: each is one real person. They are the
+training labels.
+
+`ml/` learns a pairwise model - given two papers carrying the same name, P(same person) - from
+co-author overlap, venue, year, title and ORCID, then clusters a bin's papers with it and names the
+numbered page each cluster resembles.
+
+```bash
+docker compose run --rm ml python -m ml.cli dataset    # build the labelled pair dataset, print its shape
+docker compose run --rm ml python -m ml.cli train      # train, tune, evaluate, save model + metrics
+docker compose run --rm ml python -m ml.cli predict --key homepages/35/7092
+```
+
+On the VM, swap in `-f docker-compose.prod.yml`. The job reads the api's serving tables read-only, so
+it never blocks the dashboard or the analysis scripts. Artifacts land in `models/disambiguation-<dump
+fingerprint>/`, so a model is always traceable to the dump it was trained on.
+
+**How it is evaluated.** Splits are by *whole name block*, so no person and no block appears in both
+training and test. Three numbers are reported, each against the co-author-overlap heuristic a
+hand-written rule would use:
+
+| Measure | Question |
+|---|---|
+| pairwise ROC-AUC / F1 | are two papers by the same person? |
+| B-cubed F1, ARI | is the resulting clustering of a block right? |
+| assignment top-1 | hold out a paper: does it land on the right person? |
+
+`metrics.json` next to the model carries all of it, plus permutation feature importances, and the
+`predict` output embeds the test metrics - a suggestion should never be shown without its accuracy.
+
 ## Run locally (Docker only)
 
 ```bash
@@ -55,6 +89,7 @@ API docs: `/api/docs`.
 
 ```bash
 docker build --target test -t dblp-api:test api && docker run --rm dblp-api:test
+docker build --target test -t dblp-ml:test  ml  && docker run --rm dblp-ml:test
 ```
 
 The suite builds a synthetic dump with the exact 28-column schema of `parse_dblp.py` (bins, numbered
@@ -94,6 +129,12 @@ api/app/snapshots.py   readers for the analysis jobs' output files
 api/app/main.py        HTTP routes, result cache, concurrency limit
 api/app/validate.py    live-vs-report comparison
 api/tests/             synthetic dump + test suite
+ml/ml/data.py          attaches the api's serving tables read-only
+ml/ml/features.py      pair features (SQL) + matrix assembly
+ml/ml/model.py         pairwise model, threshold tuning, artifacts
+ml/ml/evaluate.py      held-out-by-block metrics + baselines
+ml/ml/predict.py       split a disambiguation bin, suggest a person
+ml/tests/              synthetic serving db with planted signal
 src/api.js             fetch hooks (loading, warming-up, errors)
 src/pages.jsx          the eight findings pages + overview
 src/explore.jsx        author, venue and paper explorers

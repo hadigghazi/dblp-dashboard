@@ -46,6 +46,23 @@ services:
     depends_on: [api]
     profiles: ["dev"]
 
+  # Batch ML jobs (author disambiguation). Not a server - run a command and exit:
+  #   docker compose run --rm ml python -m ml.cli train
+  ml:
+    build:
+      context: ./ml
+      target: runtime
+      network: host
+    image: dblp-dashboard-ml:latest
+    environment:
+      DUCKDB_MEMORY: ${ML_DUCKDB_MEMORY:-4GB}
+      DUCKDB_THREADS: ${ML_DUCKDB_THREADS:-4}
+    volumes:
+      - ${DBLP_DIR:-./api/fixture}:/data:ro
+      - api_cache:/cache:ro      # the serving tables the api built; read-only, so it never blocks it
+      - ml_models:/models
+    profiles: ["ml"]
+
   fixture:
     build:
       context: ./api
@@ -60,3 +77,4 @@ services:
 volumes:
   api_cache:
   dev_node_modules:
+  ml_models:

@@ -1,0 +1,5 @@
+duckdb==1.5.5
+numpy>=1.26
+scikit-learn>=1.4
+scipy>=1.11
+joblib>=1.3

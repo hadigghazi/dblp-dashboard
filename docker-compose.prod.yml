@@ -25,3 +25,17 @@ services:
       - "127.0.0.1:8081:80"   # Caddy on the VM owns :80/:443 and forwards the catch-all here
     depends_on: [api]
     restart: unless-stopped
+
+  # Batch ML jobs. Runs only when asked:
+  #   docker compose -f docker-compose.prod.yml run --rm ml python -m ml.cli train
+  ml:
+    image: ghcr.io/hadigghazi/dblp-dashboard-ml:latest
+    user: "${DATA_UID:-1000}:${DATA_GID:-1000}"
+    environment:
+      DUCKDB_MEMORY: ${ML_DUCKDB_MEMORY:-8GB}
+      DUCKDB_THREADS: ${ML_DUCKDB_THREADS:-4}
+    volumes:
+      - ${DBLP_DIR:?set DBLP_DIR in .env}:/data:ro
+      - ./cache:/cache:ro     # the api's serving tables, read-only
+      - ./models:/models      # model artifacts + metrics
+    profiles: ["ml"]

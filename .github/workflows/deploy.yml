@@ -9,6 +9,7 @@ on:
 env:
   WEB_IMAGE: ghcr.io/${{ github.repository }}
   API_IMAGE: ghcr.io/${{ github.repository }}-api
+  ML_IMAGE: ghcr.io/${{ github.repository }}-ml
 
 jobs:
   # The API test suite runs against a synthetic dump with the real parquet schema.
@@ -29,9 +30,28 @@ jobs:
       - name: Run tests
         run: docker run --rm dblp-api:test
 
-  # Every push and PR: prove both images build. On main, also push them to GHCR.
+  # The ML pipeline's tests run against a synthetic serving database with planted signal, so they
+  # check that the model learns and beats its baseline, not just that the code runs.
+  test-ml:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build test image
+        uses: docker/build-push-action@v6
+        with:
+          context: ml
+          target: test
+          load: true
+          tags: dblp-ml:test
+          cache-from: type=gha,scope=ml-test
+          cache-to: type=gha,scope=ml-test,mode=max
+      - name: Run tests
+        run: docker run --rm dblp-ml:test
+
+  # Every push and PR: prove the images build. On main, also push them to GHCR.
   build:
-    needs: test-api
+    needs: [test-api, test-ml]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -47,6 +67,10 @@ jobs:
             context: api
             target: runtime
             image_env: API_IMAGE
+          - name: ml
+            context: ml
+            target: runtime
+            image_env: ML_IMAGE
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
