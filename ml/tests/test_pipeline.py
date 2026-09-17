@@ -24,6 +24,9 @@ class Args:
     min_people = 3
     max_blocks = 500
     eval_blocks = 12
+    tune_blocks = 8
+    target_precision = 0.9
+    drop_features = ""
     key = None
     fingerprint = None
     max_papers = 300
@@ -87,10 +90,10 @@ def test_model_learns_the_planted_signal_and_beats_the_baseline(con):
 
 
 def test_clustering_and_assignment_are_measured(con):
-    model, threshold = M.train(*F.matrix(con, "bucket IN (0,1,2,3,4,5,6)")[:2]), 0.5
+    model = M.train(*F.matrix(con, "bucket IN (0,1,2,3,4,5,6)")[:2])
     blocks = [r[0] for r in con.execute(
         "SELECT DISTINCT base_name FROM inst WHERE (hash(base_name) % 10)::INT IN (8,9)").fetchall()]
-    summary = E.evaluate_blocks(con, model, threshold, blocks, max_blocks=10)
+    summary = E.evaluate_blocks(con, model, {"cluster": 0.5, "assign": 0.7}, blocks, max_blocks=10)
     assert summary["blocks"] > 0
     for key in ("b3_f1", "b3_precision", "b3_recall", "ari"):
         assert 0.0 <= summary[key] <= 1.0, summary
@@ -114,6 +117,8 @@ def test_train_command_saves_artifacts_and_metrics(con):
     assert (d / M.MODEL_FILE).exists()
     saved = json.loads((d / M.METRICS_FILE).read_text(encoding="utf-8"))
     assert saved["dump"]["fingerprint"] == "testfp0001"
+    assert set(saved["thresholds"]) == {"cluster", "assign", "pairwise"}
+    assert saved["metrics"]["test"]["clustering"]["assignment"]["assign_threshold"] > 0
     assert saved["metrics"]["test"]["pairwise"]["roc_auc"] > 0.85
     assert saved["metrics"]["test"]["clustering"]["blocks"] > 0
     assert saved["metrics"]["feature_importance"][0]["feature"] in F.FEATURES
@@ -143,3 +148,43 @@ def test_predict_rejects_a_non_bin(con):
 def test_model_load_reports_a_missing_model_clearly():
     with pytest.raises(FileNotFoundError, match="no model for dump"):
         M.load("nosuchfingerprint")
+
+
+def test_two_cuts_are_tuned_separately(con):
+    """The clustering cut answers a different question than the pairwise cut, so it is tuned on
+    B-cubed; the assignment cut is calibrated to a precision target instead."""
+    model = M.train(*F.matrix(con, "bucket IN (0,1,2,3,4,5,6)")[:2])
+    val = [r[0] for r in con.execute(
+        "SELECT DISTINCT base_name FROM inst WHERE (hash(base_name) % 10)::INT IN (7)").fetchall()]
+    blocks = val or [r[0] for r in con.execute("SELECT DISTINCT base_name FROM inst LIMIT 8").fetchall()]
+    t, curve = E.tune_cluster_threshold(con, model, blocks, max_blocks=8)
+    assert 0.2 <= t <= 0.9 and curve
+    assert max(curve, key=lambda r: r["b3_f1"])["threshold"] == t
+    cal = E.calibrate_assignment(con, model, blocks, target_precision=0.9, max_blocks=8)
+    assert 0.3 <= cal["threshold"] <= 0.95
+    if cal["precision"] is not None:
+        assert 0.0 <= cal["precision"] <= 1.0 and 0.0 <= cal["coverage"] <= 1.0
+
+
+def test_clusters_pointing_at_one_person_are_merged():
+    """The clustering over-splits by design, so several groups may name the same page."""
+    def cl(size, key, score):
+        return {"size": size, "papers": [{"year": 2020 + size, "title": key or "x"}],
+                "suggested_person": {"key": key, "name": key, "score": score, "margin": 0.2} if key else None,
+                "best_candidate_below_threshold": None, "looks_new": key is None}
+    merged = P.merge_by_suggestion([cl(6, "a", 0.7), cl(4, "a", 0.9), cl(3, "b", 0.8), cl(2, None, 0)])
+    assert len(merged) == 3
+    a = next(c for c in merged if (c["suggested_person"] or {}).get("key") == "a")
+    assert a["size"] == 10 and a["merged_from"] == 2
+    assert a["suggested_person"]["score"] == 0.9      # keeps the strongest evidence
+    assert sum(c["size"] for c in merged) == 15       # no paper lost or duplicated
+
+
+def test_a_near_tie_is_not_named():
+    """Two candidates almost level means we say nothing rather than guess."""
+    accepted, rejected = P._suggestion([(1, 0.80), (2, 0.78)], assign_threshold=0.6)
+    assert accepted is None and rejected["person_id"] == 1
+    accepted, _ = P._suggestion([(1, 0.80), (2, 0.40)], assign_threshold=0.6)
+    assert accepted["person_id"] == 1
+    accepted, rejected = P._suggestion([(1, 0.50)], assign_threshold=0.6)
+    assert accepted is None and rejected["score"] == 0.5

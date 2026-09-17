@@ -47,14 +47,16 @@ def model_dir(fingerprint):
     return d
 
 
-def save(model, threshold, metrics, meta):
+def save(model, thresholds, metrics, meta, features=None):
+    """`thresholds` holds two cuts: `cluster` for splitting a block, `assign` for showing a match."""
+    features = features or FEATURES
     d = model_dir(meta.get("fingerprint", "unknown"))
-    joblib.dump({"model": model, "threshold": threshold, "features": FEATURES}, d / MODEL_FILE)
+    joblib.dump({"model": model, "thresholds": thresholds, "features": features}, d / MODEL_FILE)
     payload = {
         "trained_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "dump": {k: meta.get(k) for k in ("fingerprint", "records", "latest_mdate", "parquet")},
-        "threshold": threshold,
-        "features": FEATURES,
+        "thresholds": thresholds,
+        "features": features,
         "metrics": metrics,
     }
     (d / METRICS_FILE).write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -77,9 +79,10 @@ def load(fingerprint=None):
             raise FileNotFoundError(f"no trained model in {config.MODELS_DIR}; run `train` first")
         d = dirs[0]
     bundle = joblib.load(d / MODEL_FILE)
-    if bundle["features"] != FEATURES:
-        raise ValueError("the saved model expects different features than this code builds; retrain")
-    return bundle["model"], bundle["threshold"], d
+    unknown = [f for f in bundle["features"] if f not in FEATURES]
+    if unknown:
+        raise ValueError(f"the saved model expects features this code no longer builds: {unknown}; retrain")
+    return bundle["model"], bundle["thresholds"], bundle["features"], d
 
 
 def importances(model, X, y, n_repeats=3, seed=None):

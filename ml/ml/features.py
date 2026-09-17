@@ -90,11 +90,16 @@ def _jaccard(shared, a, b):
     return out
 
 
-def matrix(con, where="TRUE", params=()):
-    """Fetch pairs and assemble (X, y, info). `info` keeps the identifiers for grouped evaluation."""
+def matrix(con, where="TRUE", params=(), feature_names=None):
+    """
+    Fetch pairs and assemble (X, y, info). `info` keeps the identifiers for grouped evaluation.
+    `feature_names` selects and orders the columns, so a model trained without a feature (e.g. the
+    ORCID ablation) is scored with exactly the columns it was trained on.
+    """
     d = con.execute(f"SELECT * FROM pair WHERE {where}", list(params)).fetchnumpy()
     if not len(d["y"]):
-        return np.empty((0, len(FEATURES)), dtype=np.float32), np.empty(0, dtype=np.int8), {}
+        width = len(feature_names or FEATURES)
+        return np.empty((0, width), dtype=np.float32), np.empty(0, dtype=np.int8), {}
     col = {k: np.asarray(v, dtype=np.float32) for k, v in d.items() if k not in ("base_name",)}
     derived = {
         "ids_jaccard": _jaccard(col["shared_ids"], col["n_ids_a"], col["n_ids_b"]),
@@ -106,7 +111,8 @@ def matrix(con, where="TRUE", params=()):
         "n_names_min": np.minimum(col["n_names_a"], col["n_names_b"]),
     }
     col.update(derived)
-    X = np.column_stack([col[f] for f in FEATURES]).astype(np.float32)
+    names = feature_names or FEATURES
+    X = np.column_stack([col[f] for f in names]).astype(np.float32)
     y = np.asarray(d["y"], dtype=np.int8)
     info = {
         "base_name": np.asarray(d["base_name"], dtype=object),

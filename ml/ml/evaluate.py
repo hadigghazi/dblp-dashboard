@@ -6,6 +6,11 @@ decision, the clustering it produces (B-cubed and ARI, the standard measures in 
 and the practical task - given a paper whose author is unassigned, does it land on the right person.
 Each is compared with the co-author-overlap heuristic, which is a strong baseline here and the thing
 a hand-written rule would do.
+
+Two separate cuts come out of this, because they answer different questions:
+  * `cluster` - where to cut the hierarchy when splitting a block. Tuned for B-cubed F1.
+  * `assign`  - how sure to be before showing "this looks like Wei Wang 0007" to a person.
+                Calibrated to a precision target, since a wrong name is worse than no name.
 """
 import logging
 
@@ -18,6 +23,8 @@ from sklearn.metrics import (adjusted_rand_score, average_precision_score, f1_sc
 from . import features as F
 
 log = logging.getLogger("dblp.ml.evaluate")
+
+MIN_MARGIN = 0.05   # how far the best candidate must beat the runner-up before we name it
 
 
 def pairwise_metrics(y, p, threshold):
@@ -52,14 +59,13 @@ def bcubed(true_labels, pred_labels):
     return {"precision": p, "recall": r, "f1": (2 * p * r / (p + r)) if p + r else 0.0}
 
 
-def _block_probabilities(con, model, base_name):
+def block_probabilities(con, model, base_name, features=None):
     """All within-block pair probabilities, plus the block's papers and their true people."""
     con.execute("CREATE OR REPLACE TEMP TABLE inst AS SELECT * FROM inst_all WHERE base_name = ?", [base_name])
-    n_inst = con.execute("SELECT count(*) FROM inst").fetchone()[0]
-    if n_inst < 4:
+    if con.execute("SELECT count(*) FROM inst").fetchone()[0] < 4:
         return None
     F.build_pairs(con, sampled=False)
-    X, y, info = F.matrix(con)
+    X, y, info = F.matrix(con, feature_names=features)
     if not len(y):
         return None
     p = model.predict_proba(X)[:, 1]
@@ -79,7 +85,7 @@ def _block_probabilities(con, model, base_name):
     }
 
 
-def _cluster(prob, threshold):
+def cluster(prob, threshold):
     d = 1.0 - prob
     np.fill_diagonal(d, 0.0)
     d = np.clip((d + d.T) / 2, 0, 1)   # exactly symmetric, as squareform demands
@@ -89,86 +95,160 @@ def _cluster(prob, threshold):
                     t=1.0 - threshold, criterion="distance")
 
 
-def _assignment(block, scorer):
-    """Hold out one paper per person (those with 3+), assign it to the best candidate person."""
-    true, pids = block["true"], block["pids"]
-    correct = total = 0
+def _assignment_decisions(block, scorer):
+    """
+    Hold out one paper per person (those with 3+ papers) and score it against every candidate.
+    Returns one decision per held-out paper: its best score, the margin over the runner-up, and
+    whether the best candidate was the right person. Both evaluation and calibration use this.
+    """
+    true = block["true"]
+    decisions = []
     for person in np.unique(true):
         owned = np.nonzero(true == person)[0]
         if len(owned) < 3:
             continue
         held, kept = owned[0], owned[1:]
-        best_person, best_score = None, -np.inf
+        scored = []
         for candidate in np.unique(true):
             cand_idx = np.nonzero(true == candidate)[0]
-            cand_idx = cand_idx[cand_idx != held]
-            if candidate == person:
-                cand_idx = kept
-            if not len(cand_idx):
-                continue
-            score = scorer(block, held, cand_idx)
-            if score > best_score:
-                best_person, best_score = candidate, score
-        total += 1
-        correct += int(best_person == person)
-    return correct, total
+            cand_idx = kept if candidate == person else cand_idx[cand_idx != held]
+            if len(cand_idx):
+                scored.append((scorer(block, held, cand_idx), candidate))
+        if not scored:
+            continue
+        scored.sort(reverse=True)
+        best_score, best_person = scored[0]
+        runner_up = scored[1][0] if len(scored) > 1 else 0.0
+        decisions.append({"score": float(best_score), "margin": float(best_score - runner_up),
+                          "correct": bool(best_person == person)})
+    return decisions
 
 
-def _model_scorer(block, held, cand_idx):
+def model_scorer(block, held, cand_idx):
     return float(block["prob"][held, cand_idx].mean())
 
 
-def _overlap_scorer(block, held, cand_idx):
+def overlap_scorer(block, held, cand_idx):
     # the hand-written rule: how many co-authors this paper shares with the candidate's papers,
     # with the candidate's paper count as the tie-breaker when nothing is shared
     return float(block["shared"][held, cand_idx].mean() * 1000 + len(cand_idx))
 
 
-def evaluate_blocks(con, model, threshold, blocks, max_blocks=150):
-    """Clustering and assignment quality on whole held-out blocks."""
+def _load_blocks(con, model, blocks, features, max_blocks):
     con.execute("CREATE OR REPLACE TEMP TABLE inst_all AS SELECT * FROM inst")
-    rows, done = [], 0
+    out = []
     for base_name in blocks:
-        if done >= max_blocks:
+        if len(out) >= max_blocks:
             break
-        block = _block_probabilities(con, model, base_name)
-        if block is None:
+        block = block_probabilities(con, model, base_name, features)
+        if block is not None:
+            out.append((base_name, block))
+    con.execute("CREATE OR REPLACE TEMP TABLE inst AS SELECT * FROM inst_all")
+    return out
+
+
+def tune_cluster_threshold(con, model, blocks, features=None, max_blocks=60):
+    """The cut that maximises B-cubed F1 on validation blocks - not the pairwise F1 cut, which
+    over-splits because it optimises a different question."""
+    loaded = _load_blocks(con, model, blocks, features, max_blocks)
+    if not loaded:
+        return 0.5, []
+    grid = np.round(np.arange(0.20, 0.91, 0.05), 2)
+    curve = []
+    for t in grid:
+        scores, weights = [], []
+        for _, block in loaded:
+            b3 = bcubed(block["true"], cluster(block["prob"], float(t)))
+            scores.append(b3["f1"])
+            weights.append(len(block["pids"]))
+        curve.append({"threshold": float(t), "b3_f1": round(float(np.average(scores, weights=weights)), 4)})
+    best = max(curve, key=lambda r: r["b3_f1"])
+    log.info("cluster threshold %.2f (validation B3 F1 %.3f on %d blocks)",
+             best["threshold"], best["b3_f1"], len(loaded))
+    return best["threshold"], curve
+
+
+def calibrate_assignment(con, model, blocks, features=None, target_precision=0.95, max_blocks=60):
+    """
+    Pick the score a suggestion must reach before it is shown, so that shown suggestions are right
+    about `target_precision` of the time. Reports the coverage that costs: staying silent on the rest
+    is the point - a wrong name is worse than no name.
+    """
+    loaded = _load_blocks(con, model, blocks, features, max_blocks)
+    decisions = [d for _, block in loaded for d in _assignment_decisions(block, model_scorer)]
+    if not decisions:
+        return {"threshold": 0.5, "precision": None, "coverage": None, "decisions": 0}
+    scores = np.asarray([d["score"] for d in decisions])
+    margins = np.asarray([d["margin"] for d in decisions])
+    correct = np.asarray([d["correct"] for d in decisions])
+    curve = []
+    for t in np.round(np.arange(0.30, 0.96, 0.05), 2):
+        shown = (scores >= t) & (margins >= MIN_MARGIN)
+        if shown.sum() < 20:
             continue
-        done += 1
-        pred = _cluster(block["prob"], threshold)
+        curve.append({"threshold": float(t),
+                      "precision": round(float(correct[shown].mean()), 4),
+                      "coverage": round(float(shown.mean()), 4),
+                      "shown": int(shown.sum())})
+    passing = [r for r in curve if r["precision"] >= target_precision]
+    chosen = min(passing, key=lambda r: r["threshold"]) if passing else (
+        max(curve, key=lambda r: r["precision"]) if curve else
+        {"threshold": 0.5, "precision": None, "coverage": None})
+    log.info("assignment threshold %.2f (precision %s, coverage %s of %d decisions)",
+             chosen["threshold"], chosen.get("precision"), chosen.get("coverage"), len(decisions))
+    return {**chosen, "target_precision": target_precision, "decisions": len(decisions), "curve": curve}
+
+
+def evaluate_blocks(con, model, thresholds, blocks, features=None, max_blocks=150):
+    """Clustering and assignment quality on whole held-out blocks."""
+    cluster_t = thresholds["cluster"] if isinstance(thresholds, dict) else thresholds
+    assign_t = thresholds.get("assign", cluster_t) if isinstance(thresholds, dict) else thresholds
+    loaded = _load_blocks(con, model, blocks, features, max_blocks)
+    rows = []
+    for base_name, block in loaded:
+        pred = cluster(block["prob"], cluster_t)
         b3 = bcubed(block["true"], pred)
-        overlap_pred = _cluster((block["shared"] > 0).astype(np.float32), 0.5)
-        b3_overlap = bcubed(block["true"], overlap_pred)
-        m_correct, m_total = _assignment(block, _model_scorer)
-        o_correct, _ = _assignment(block, _overlap_scorer)
+        b3_overlap = bcubed(block["true"], cluster((block["shared"] > 0).astype(np.float32), 0.5))
+        model_dec = _assignment_decisions(block, model_scorer)
+        overlap_dec = _assignment_decisions(block, overlap_scorer)
         rows.append({
             "block": base_name, "papers": len(block["pids"]),
             "true_people": int(len(np.unique(block["true"]))), "predicted_clusters": int(len(np.unique(pred))),
             "b3_f1": b3["f1"], "b3_precision": b3["precision"], "b3_recall": b3["recall"],
             "b3_f1_overlap_baseline": b3_overlap["f1"],
             "ari": float(adjusted_rand_score(block["true"], pred)),
-            "assign_correct": m_correct, "assign_total": m_total, "assign_correct_overlap": o_correct,
+            "decisions": model_dec, "overlap_decisions": overlap_dec,
         })
-    con.execute("CREATE OR REPLACE TEMP TABLE inst AS SELECT * FROM inst_all")
     if not rows:
         return {"blocks": 0}
+
     weights = np.asarray([r["papers"] for r in rows], dtype=float)
     mean = lambda key: round(float(np.average([r[key] for r in rows], weights=weights)), 4)
-    assign_total = sum(r["assign_total"] for r in rows)
+    all_dec = [d for r in rows for d in r["decisions"]]
+    all_overlap = [d for r in rows for d in r["overlap_decisions"]]
+    shown = [d for d in all_dec if d["score"] >= assign_t and d["margin"] >= MIN_MARGIN]
     summary = {
         "blocks": len(rows),
         "papers": int(weights.sum()),
+        "cluster_threshold": cluster_t,
         "b3_f1": mean("b3_f1"), "b3_precision": mean("b3_precision"), "b3_recall": mean("b3_recall"),
         "b3_f1_overlap_baseline": mean("b3_f1_overlap_baseline"),
         "ari": mean("ari"),
-        "cluster_count_ratio": mean("predicted_clusters") / mean("true_people") if mean("true_people") else None,
+        "cluster_count_ratio": round(mean("predicted_clusters") / mean("true_people"), 3) if mean("true_people") else None,
         "assignment": {
-            "held_out_papers": assign_total,
-            "top1_accuracy": round(sum(r["assign_correct"] for r in rows) / assign_total, 4) if assign_total else None,
+            "held_out_papers": len(all_dec),
+            # forced choice: always name the best candidate, whatever the score
+            "top1_accuracy": round(float(np.mean([d["correct"] for d in all_dec])), 4) if all_dec else None,
             "top1_accuracy_overlap_baseline":
-                round(sum(r["assign_correct_overlap"] for r in rows) / assign_total, 4) if assign_total else None,
+                round(float(np.mean([d["correct"] for d in all_overlap])), 4) if all_overlap else None,
+            # what a user would actually be shown, at the calibrated cut
+            "assign_threshold": assign_t,
+            "shown": len(shown),
+            "coverage": round(len(shown) / len(all_dec), 4) if all_dec else None,
+            "precision_when_shown": round(float(np.mean([d["correct"] for d in shown])), 4) if shown else None,
         },
-        "hardest_blocks": sorted(rows, key=lambda r: r["b3_f1"])[:5],
+        "hardest_blocks": [{k: v for k, v in r.items() if k not in ("decisions", "overlap_decisions")}
+                           for r in sorted(rows, key=lambda r: r["b3_f1"])[:5]],
     }
     return summary
 
