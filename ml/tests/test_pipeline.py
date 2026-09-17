@@ -234,3 +234,16 @@ def test_three_outcomes_are_distinguished():
     assert accepted is None and uncertain["person_id"] == 1  # plausible, not proven
     accepted, uncertain = P._suggestion([(1, 0.80), (2, 0.10)], assign_threshold=0.3)
     assert accepted["person_id"] == 1 and uncertain is None   # named
+
+
+def test_bin_like_evaluation_reports_its_floor(con):
+    """On thinned blocks most people have one paper, so "never merge" already scores high on
+    B-cubed. The metric is only interpretable next to that floor."""
+    model = M.train(*F.matrix(con, "bucket IN (0,1,2,3,4,5,6)")[:2])
+    blocks = [r[0] for r in con.execute("SELECT DISTINCT base_name FROM inst LIMIT 12").fetchall()]
+    out = E.evaluate_bin_like(con, model, {"cluster": 0.5, "cluster_bin": 0.6, "linkage_bin": "average"},
+                              blocks, max_blocks=12)
+    assert out["blocks"] > 0
+    for k in ("b3_f1", "b3_f1_all_singletons", "b3_f1_overlap_baseline", "share_of_people_with_one_paper"):
+        assert 0.0 <= out[k] <= 1.0, out
+    assert out["beats_doing_nothing_by"] == round(out["b3_f1"] - out["b3_f1_all_singletons"], 4)

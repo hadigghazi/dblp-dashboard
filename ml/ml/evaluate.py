@@ -204,6 +204,9 @@ def tune_for_bins(con, model, blocks, features=None, max_blocks=60, per_person=2
     thin = [b for b in (_subsample_like_a_bin(block, per_person, rng) for _, block in loaded) if b]
     if not thin:
         return {"threshold": 0.5, "linkage": "complete", "b3_f1": None, "blocks": 0}
+    nothing = round(float(np.average(
+        [bcubed(b["true"], np.arange(len(b["true"])))["f1"] for b in thin],
+        weights=[len(b["true"]) for b in thin])), 4)
     best, curve = None, []
     for method in ("average", "complete"):
         for t in np.round(np.arange(0.30, 0.96, 0.05), 2):
@@ -216,7 +219,9 @@ def tune_for_bins(con, model, blocks, features=None, max_blocks=60, per_person=2
                 best = row
     log.info("bin-like tuning: %s linkage at %.2f (B3 F1 %.3f on %d thinned blocks)",
              best["linkage"], best["threshold"], best["b3_f1"], len(thin))
-    return {**best, "blocks": len(thin), "papers": int(sum(len(b["true"]) for b in thin)), "curve": curve}
+    return {**best, "blocks": len(thin), "papers": int(sum(len(b["true"]) for b in thin)),
+            "b3_f1_all_singletons": nothing, "beats_doing_nothing_by": round(best["b3_f1"] - nothing, 4),
+            "curve": curve}
 
 
 def evaluate_bin_like(con, model, thresholds, blocks, features=None, max_blocks=150, per_person=2, seed=11):
@@ -232,8 +237,17 @@ def evaluate_bin_like(con, model, thresholds, blocks, features=None, max_blocks=
     for b in thin:
         pred = cluster(b["prob"], t, method)
         b3 = bcubed(b["true"], pred)
+        # Floors. On a thinned block most people have a single paper, so "never merge anything"
+        # already scores well on B-cubed: without this the model's score is uninterpretable.
+        singletons = bcubed(b["true"], np.arange(len(b["true"])))
+        overlap = bcubed(b["true"], cluster((b["shared"] > 0).astype(np.float32), 0.5, method))
+        counts = np.bincount(np.unique(b["true"], return_inverse=True)[1])
         rows.append({"b3_f1": b3["f1"], "b3_precision": b3["precision"], "b3_recall": b3["recall"],
                      "ari": float(adjusted_rand_score(b["true"], pred)),
+                     "b3_f1_all_singletons": singletons["f1"],
+                     "ari_all_singletons": float(adjusted_rand_score(b["true"], np.arange(len(b["true"])))),
+                     "b3_f1_overlap_baseline": overlap["f1"],
+                     "singleton_share": float((counts == 1).sum() / len(counts)),
                      "clusters": int(len(np.unique(pred))), "people": int(len(np.unique(b["true"])))})
         weights.append(len(b["true"]))
     mean = lambda k: round(float(np.average([r[k] for r in rows], weights=weights)), 4)
@@ -241,6 +255,11 @@ def evaluate_bin_like(con, model, thresholds, blocks, features=None, max_blocks=
             "papers_per_person": f"1-{per_person}",
             "b3_f1": mean("b3_f1"), "b3_precision": mean("b3_precision"), "b3_recall": mean("b3_recall"),
             "ari": mean("ari"),
+            "b3_f1_all_singletons": mean("b3_f1_all_singletons"),
+            "ari_all_singletons": mean("ari_all_singletons"),
+            "b3_f1_overlap_baseline": mean("b3_f1_overlap_baseline"),
+            "beats_doing_nothing_by": round(mean("b3_f1") - mean("b3_f1_all_singletons"), 4),
+            "share_of_people_with_one_paper": mean("singleton_share"),
             "cluster_count_ratio": round(mean("clusters") / mean("people"), 3) if mean("people") else None}
 
 
