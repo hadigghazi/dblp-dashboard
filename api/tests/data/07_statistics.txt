@@ -1,0 +1,48 @@
+fitted papers per author
+fitted co-authors per author
+fitted papers per venue series
+fitted authors per paper
+
+=== Inequality summary (all data)
+distribution             n          mean    median  max      gini   top_1pct_share
+-----------------------  ---------  ------  ------  -------  -----  --------------
+papers per author        4,151,660  6.71    2       3,351    0.727  26.6%
+co-authors per author    4,010,661  13.3    5       2,954    0.638  16.8%
+papers per venue series  8,490      869.44  179     110,888  0.779  24.0%
+authors per paper        7,351,104  3.46    3       450      0.3    4.1%
+
+
+=== Power-law fits (discrete, xmin chosen by minimising KS distance)
+distribution             fit_sample  xmin  alpha        share_in_tail  ks_distance  alpha_if_xmin_1
+-----------------------  ----------  ----  -----------  -------------  -----------  ---------------
+papers per author        300,000     13    2.14 ± 0.01  10.2%          0.0336       1.74
+co-authors per author    300,000     84    3.00 ± 0.02  2.2%           0.0333       1.43
+papers per venue series  8,490       2583  2.38 ± 0.06  7.4%           0.0329       1.17
+authors per paper        300,000     2     2.30 ± 0.00  87.9%          0.2          1.64
+
+
+=== Is the tail a power law? Likelihood-ratio R (>0 favours power law, <0 the alternative) and p-value
+distribution             vs_lognormal      vs_truncated_power_law  vs_exponential
+-----------------------  ----------------  ----------------------  ----------------
+papers per author        -17.5 (p=0.000)   -18.4 (p=0.000)         +25.9 (p=0.000)
+co-authors per author    -5.4 (p=0.000)    -5.2 (p=0.000)          +7.1 (p=0.000)
+papers per venue series  -2.0 (p=0.044)    -2.3 (p=0.000)          +3.5 (p=0.000)
+authors per paper        -177.8 (p=0.000)  -207.1 (p=0.000)        -207.1 (p=0.000)
+
+
+=== Annual growth rate (OLS on log yearly counts; residuals are autocorrelated, so the CI is optimistic)
+kind        period     growth_per_year  95pct_ci        doubling_years  r_squared
+----------  ---------  ---------------  --------------  --------------  ---------
+all         1990-2023  9.5%             9.0% to 10.0%   7.6             0.98
+all         1990-2005  11.8%            11.2% to 12.4%  6.2             0.993
+all         2006-2023  6.7%             6.4% to 6.9%    10.7            0.994
+journal     1990-2023  8.9%             8.6% to 9.1%    8.2             0.994
+journal     1990-2005  9.6%             9.2% to 10.0%   7.6             0.995
+journal     2006-2023  7.7%             7.1% to 8.2%    9.4             0.985
+conference  1990-2023  8.9%             7.9% to 9.8%    8.2             0.924
+conference  1990-2005  13.5%            12.6% to 14.3%  5.5             0.989
+conference  2006-2023  3.6%             3.0% to 4.1%    19.8            0.929
+preprint    1990-2023  22.3%            21.7% to 23.0%  3.4             0.994
+preprint    1990-2005  18.9%            16.7% to 21.1%  4.0             0.966
+preprint    2006-2023  22.6%            21.6% to 23.6%  3.4             0.994
+

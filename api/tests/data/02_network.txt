@@ -1,0 +1,126 @@
+[  0.0 min] building node and edge tables
+[  0.1 min] building graph: 4,189,688 author pages, 26,809,941 co-author pairs
+
+=== Network overview (papers with 2-50 authors, preprints excluded)
+graph                         nodes      with_coauthors  edges       mean_degree  max_degree  components_2plus  giant      giant_pct  second_largest
+----------------------------  ---------  --------------  ----------  -----------  ----------  ----------------  ---------  ---------  --------------
+all author pages              4,189,688  3,877,668       26,809,941  13.83        6570        63,041            3,690,658  95.2       49
+without disambiguation pages  4,156,029  3,824,208       22,200,244  11.61        2343        72,049            3,612,013  94.5       54
+
+
+=== Edge weights: papers written together per co-author pair
+papers_together  pairs       pct
+---------------  ----------  -----
+1                19,542,633  72.89
+2                3,791,687   14.14
+3-5              2,441,615   9.11
+6-20             944,446     3.52
+21+              89,560      0.33
+
+
+=== Most-connected authors (distinct co-authors, disambiguation pages removed)
+author                   coauthors
+-----------------------  ---------
+Dusit Niyato             2343
+Mohsen Guizani           2210
+Zhu Han 0001             2042
+Philip S. Yu             2031
+Joel J. P. C. Rodrigues  1820
+Witold Pedrycz           1783
+Dacheng Tao              1739
+H. Vincent Poor          1716
+Nassir Navab             1677
+Kim-Kwang Raymond Choo   1642
+Radu Timofte             1627
+Victor C. M. Leung       1627
+
+
+=== Component sizes (without disambiguation pages)
+component_size            components  authors
+------------------------  ----------  ---------
+2                         39,883      79,766
+3-5                       27,777      97,920
+6-10                      3863        27,018
+11-100                    525         7491
+101+                      0           0
+giant component           1           3,612,013
+isolated (no co-authors)  331,821     331,821
+
+[  1.8 min] giant component: clustering, assortativity, k-cores
+
+=== Structure of the giant component
+measure                                value
+-------------------------------------  ----------
+authors                                3,612,013
+edges                                  21,955,705
+mean degree                            12.16
+global clustering (transitivity)       0.1284
+average local clustering               0.6609
+clustering expected in a random graph  3.37e-06
+degree assortativity                   0.1042
+max k-core                             49
+authors in the max k-core              154
+
+[  2.3 min] distances from 20 random authors
+
+=== Distances between authors in the giant component (sample of 20 sources)
+hops  pct_of_pairs  cumulative_pct
+----  ------------  --------------
+1     0.0           0.0
+2     0.01          0.0
+3     0.28          0.3
+4     7.09          7.4
+5     38.06         45.4
+6     40.84         86.3
+7     11.58         97.9
+8     1.8           99.7
+9     0.28          99.9
+10    0.05          100.0
+11    0.01          100.0
+12    0.0           100.0
+13    0.0           100.0
+14    0.0           100.0
+15    0.0           100.0
+
+mean distance 5.63, median 6, 90th percentile 7
+
+[  3.1 min] Leiden community detection
+
+=== Communities in the giant component (Leiden, modularity)
+measure                             value
+----------------------------------  -------
+communities                         2202
+modularity                          0.7338
+communities with 1,000+ authors     60
+largest community                   552,642
+share of authors in the 10 largest  56.5%
+
+
+=== What the 10 largest communities publish in (top 5 venues)
+authors  top_venues
+-------  --------------------------------------------------------------------------------------------------------------------------------------------------------
+552,642  IEEE Access (44197), Sensors (21079), Remote. Sens. (17098), Neurocomputing (16747), AAAI (14757)
+276,192  IEEE Access (24742), Multim. Tools Appl. (7883), Sensors (6077), Wirel. Pers. Commun. (5886), Appl. Math. Comput. (5132)
+218,275  CHI (12560), CHI Extended Abstracts (9979), CogSci (7476), AAAI (5470), IJCAI (4180)
+210,865  ICC (14610), ICASSP (13866), GLOBECOM (12504), IEEE Trans. Commun. (10338), IEEE Trans. Inf. Theory (10039)
+165,627  IROS (5059), IEICE Trans. Fundam. Electron. Commun. Comput. Sci. (5041), IEEE Access (4399), IEICE Trans. Inf. Syst. (4065), IEICE Trans. Commun. (3691)
+141,410  NeuroImage (17489), EMBC (6566), ISBI (6539), IEEE Trans. Medical Imaging (4395), IEEE Trans. Biomed. Eng. (4000)
+123,873  Theor. Comput. Sci. (4170), ICSE (3267), J. Syst. Softw. (2948), IEEE Trans. Software Eng. (2702), IEEE Softw. (2665)
+121,648  INTERSPEECH (13421), ICASSP (13256), NeurIPS (11682), CVPR (10974), ICML (9154)
+115,846  Discret. Math. (13993), Eur. J. Oper. Res. (9246), Discret. Appl. Math. (8737), Theor. Comput. Sci. (8375), WSC (4863)
+115,410  IEEE Access (10122), Sensors (5947), ICTC (4751), ICRA (1759), IROS (1723)
+
+[  5.1 min] growth of the network over time
+
+=== Network up to each year (authors with at least one co-author by then)
+up_to  authors    edges       mean_degree  giant_pct  second_largest
+-----  ---------  ----------  -----------  ---------  --------------
+1970   7953       8579        2.16         16.8       39
+1980   32,474     44,456      2.74         36.7       100
+1990   113,991    202,727     3.56         57.8       46
+2000   368,116    930,081     5.05         77.0       72
+2010   1,111,240  3,971,929   7.15         87.3       34
+2020   2,569,123  12,401,424  9.65         92.7       49
+2025   3,709,867  21,183,172  11.42        94.4       54
+
+[  6.1 min] done

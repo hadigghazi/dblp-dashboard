@@ -1,29 +1,62 @@
+# Local development.
+#   docker compose --profile fixture run --rm fixture   # once: writes a small synthetic dump to api/fixture
+#   docker compose up -d --build                        # -> http://localhost:8090
+#   docker compose --profile dev up dev                 # hot-reload UI -> http://localhost:5173
+# Point DBLP_DIR at a real dblp folder (parquet/, eda_out/, charts/) to run on the full dump.
 services:
-  # Production build: static site served by nginx.
-  #   docker compose up -d --build      ->  http://localhost:8090
+  api:
+    build:
+      context: ./api
+      target: runtime
+      network: host   # BuildKit's isolated build network was flaky on Docker Desktop; host is not
+    image: dblp-dashboard-api:latest
+    container_name: dblp-api
+    environment:
+      DUCKDB_MEMORY: ${DUCKDB_MEMORY:-2GB}
+      DUCKDB_THREADS: ${DUCKDB_THREADS:-4}
+      HOME: /cache
+    volumes:
+      - ${DBLP_DIR:-./api/fixture}:/data:ro
+      - api_cache:/cache
+    restart: unless-stopped
+
   web:
     build:
       context: .
-      network: host   # BuildKit's isolated build network was flaky on Docker Desktop; host is not
+      network: host
     image: dblp-dashboard:latest
     container_name: dblp-dashboard
     ports:
       - "8090:80"     # 8080 was already taken on this machine; change freely
+    depends_on: [api]
     restart: unless-stopped
 
-  # Hot-reload dev server, only when asked for:
-  #   docker compose --profile dev up dev   ->  http://localhost:5173
   dev:
     image: node:22-alpine
     container_name: dblp-dashboard-dev
     working_dir: /app
     command: sh -c "npm install --no-audit --no-fund && npm run dev"
+    environment:
+      API_URL: http://api:8000
     ports:
       - "5173:5173"
     volumes:
       - .:/app
       - dev_node_modules:/app/node_modules   # keep the container's own modules, not the host's
+    depends_on: [api]
     profiles: ["dev"]
 
+  fixture:
+    build:
+      context: ./api
+      target: test
+      network: host
+    image: dblp-dashboard-api:test
+    command: python -m tests.make_fixture /out
+    volumes:
+      - ./api/fixture:/out
+    profiles: ["fixture"]
+
 volumes:
+  api_cache:
   dev_node_modules:

@@ -146,7 +146,7 @@ export function barOption(p, { labels, series, stacked = false, fmtY }) {
 }
 
 /** Horizontal bars, largest at the top. labels/series data are given top-to-bottom. */
-export function hbarOption(p, { labels, series, stacked = false, fmtX, labelWidth = 150 }) {
+export function hbarOption(p, { labels, series, stacked = false, fmtX, labelWidth = 150, max }) {
   const multi = series.length > 1;
   const rev = (a) => [...a].reverse();
   return {
@@ -154,7 +154,7 @@ export function hbarOption(p, { labels, series, stacked = false, fmtX, labelWidt
     grid: { left: 8, right: 44, top: multi ? 38 : 8, bottom: 6, containLabel: true },
     tooltip: { ...base(p).tooltip, trigger: "axis", axisPointer: { type: "shadow", shadowStyle: { color: "rgba(128,128,128,.08)" } },
                valueFormatter: (v) => (v == null ? "—" : fmtX ? fmtX(v) : v) },
-    xAxis: valueAxis(p, { formatter: fmtX }),
+    xAxis: valueAxis(p, { formatter: fmtX, max }),
     yAxis: categoryAxis(p, rev(labels), { bars: true, axisLabel: { color: p.ink2, fontSize: 11.5, width: labelWidth, overflow: "truncate" } }),
     series: series.map((s) => barSeries({ ...s, data: rev(s.data) }, { horizontal: true, stack: stacked ? "s" : null, maxWidth: 18 })),
   };

@@ -10,6 +10,8 @@ export default defineConfig({
     host: true,
     port: 5173,
     watch: { usePolling: true, interval: 500 },
+    // live data comes from the api service (docker compose) or a local one
+    proxy: { '/api': { target: process.env.API_URL || 'http://localhost:8000', changeOrigin: true } },
   },
   build: {
     chunkSizeWarningLimit: 1200, // echarts is a single large chunk; that's expected

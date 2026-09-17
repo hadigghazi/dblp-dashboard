@@ -1,10 +1,27 @@
-# Used on the VM. Pulls the image that GitHub Actions built and pushed;
-# nothing is built on the server.
+# Used on the VM. Pulls the images GitHub Actions built; nothing is built on the server.
 #   docker compose -f docker-compose.prod.yml up -d
+# .env (written by the deploy job on first run):
+#   DBLP_DIR=/home/<user>/dblp     the analysis folder: parquet/, eda_out/, charts/
+#   DATA_UID / DATA_GID            the owner of that folder; the api runs as this user
 services:
+  api:
+    image: ghcr.io/hadigghazi/dblp-dashboard-api:latest
+    container_name: dblp-api
+    user: "${DATA_UID:-1000}:${DATA_GID:-1000}"
+    environment:
+      # the VM (8 vCPU, 31 GB) also runs AutoML Studio and the search app: leave them room
+      DUCKDB_MEMORY: ${DUCKDB_MEMORY:-10GB}
+      DUCKDB_THREADS: ${DUCKDB_THREADS:-4}
+      HOME: /cache
+    volumes:
+      - ${DBLP_DIR:?set DBLP_DIR in .env}:/data:ro   # read-only: the api never writes to your data
+      - ./cache:/cache                               # its own serving database (a few GB)
+    restart: unless-stopped
+
   web:
     image: ghcr.io/hadigghazi/dblp-dashboard:latest
     container_name: dblp-dashboard
     ports:
-      - "80:80"
+      - "127.0.0.1:8081:80"   # Caddy on the VM owns :80/:443 and forwards the catch-all here
+    depends_on: [api]
     restart: unless-stopped

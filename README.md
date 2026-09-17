@@ -1,79 +1,96 @@
 # dblp Explorer
 
-Interactive dashboard over an exploratory analysis of the complete [dblp](https://dblp.org) dump
-(release 2026-09-01, 12.9M records): publishing trends, author identity, the co-authorship network,
-titles, venues, data quality and an OpenAlex check. Nine pages, every chart filterable.
+Interactive dashboard over the complete [dblp](https://dblp.org) dump, queried live: publishing trends,
+author identity, the co-authorship network, titles, venues, data quality and an OpenAlex check, plus
+explorers for any author, venue series or publication.
 
-Vite + React 19 + Apache ECharts. Data is the set of pre-aggregated CSVs behind the analysis's
-charts, bundled as `src/data.json` (no backend needed).
-
-## Run locally (Docker, nothing installed on the host)
-
-```bash
-docker compose up -d --build            # production build       -> http://localhost:8090
-docker compose --profile dev up dev     # hot-reload dev server  -> http://localhost:5173
-docker compose down
+```
+browser ──► web (nginx + React/ECharts) ──/api/──► api (FastAPI + DuckDB) ──► ~/dblp (read-only)
 ```
 
-## Refresh the data
+## How the data flows
 
-`src/data.json` is generated from the analysis's chart CSVs:
+The **api** reads `~/dblp/parquet/dblp.parquet`, the file the analysis's `dblp.duckdb` view points at.
+It never opens `dblp.duckdb` itself: DuckDB locks its file, so an API holding it open would stop the
+analysis scripts (and later ML jobs) from writing to it.
+
+On startup the api builds its own **serving tables** into `cache/` (publications, author pages, one row
+per author slot, careers, venue series, title words), using the same SQL predicates as the analysis
+scripts. That takes a few minutes on the full dump and happens once per dump: a watcher rebuilds
+automatically when a new `dblp.parquet` appears. After that **every request runs its own SQL** with the
+filters you choose, and results are cached until the next rebuild.
+
+Three results are too expensive to compute per request, so those pages show the **latest output of
+the analysis job** (labelled with its date in the UI) and update when you re-run it:
+
+| Page | Job output read from `~/dblp/eda_out/` |
+|---|---|
+| Co-author network | `02_network.txt` (igraph over 26M co-author pairs) |
+| OpenAlex check | `06_openalex.txt` (external API sample) |
+| Long tails: power-law fits | `07_statistics.txt` (the distributions themselves are live) |
+
+### Check the live numbers against the report
 
 ```bash
-python prep_data.py     # reads the 27 CSVs, writes src/data.json
+cd ~/dblp-dashboard
+docker compose -f docker-compose.prod.yml exec api python -m app.validate
 ```
+
+compares every live query with the CSVs in `~/dblp/charts/` and prints the largest difference per chart.
+
+## Run locally (Docker only)
+
+```bash
+docker compose --profile fixture run --rm fixture   # once: a small synthetic dump in api/fixture
+docker compose up -d --build                        # -> http://localhost:8090
+docker compose --profile dev up dev                 # hot-reload UI -> http://localhost:5173
+```
+
+Set `DBLP_DIR` to a real dblp folder (with `parquet/`, `eda_out/`, `charts/`) to run on the full dump.
+API docs: `/api/docs`.
+
+### Tests
+
+```bash
+docker build --target test -t dblp-api:test api && docker run --rm dblp-api:test
+```
+
+The suite builds a synthetic dump with the exact 28-column schema of `parse_dblp.py` (bins, numbered
+namesakes, name variants, unresolved names, withdrawn papers, preprint twins, every page format) and
+exercises every endpoint, input validation, and rebuild-on-new-dump.
 
 ## CI/CD
 
-`.github/workflows/deploy.yml` runs on every push:
+`.github/workflows/deploy.yml`:
 
-1. **build** — builds the Docker image (fails the run on any compile error). On `main` it also
-   pushes the image to `ghcr.io/hadigghazi/dblp-dashboard` tagged `latest` and with the commit SHA.
-2. **deploy** (`main` only) — SSHes into the VM, logs into GHCR with the run's own token, pulls
-   the image and restarts the container via `docker-compose.prod.yml`, then curls the site.
-   Skips (without failing) until the `VM_HOST` secret exists.
+1. **test-api** runs the suite above.
+2. **build** builds both images; on `main` pushes `ghcr.io/hadigghazi/dblp-dashboard` and
+   `ghcr.io/hadigghazi/dblp-dashboard-api` (tags `latest` and the commit SHA).
+3. **deploy** (`main` only) SSHes into the VM, writes `~/dblp-dashboard/.env` on first run, pulls both
+   images, restarts the stack and checks `http://127.0.0.1:8081/` and `/api/health`.
 
-### Repository secrets
+Secrets: `VM_HOST`, `VM_USER`, `VM_SSH_KEY`.
 
-| Secret       | Value                                                     |
-|--------------|-----------------------------------------------------------|
-| `VM_HOST`    | the VM's external IP (a static one, or deploys break on restart) |
-| `VM_USER`    | the Linux user on the VM (e.g. `hadi_devancy`)            |
-| `VM_SSH_KEY` | private half of a dedicated deploy keypair (ed25519)      |
+### On the VM
 
-### One-time VM setup
-
-```bash
-# Docker (official repo), then let your user run it without sudo
-curl -fsSL https://get.docker.com | sudo sh
-sudo usermod -aG docker "$USER" && newgrp docker
-
-# Authorise the deploy key GitHub Actions will use
-mkdir -p ~/.ssh && chmod 700 ~/.ssh
-echo "<contents of the deploy public key>" >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
-```
-
-Open port 80 on the GCP firewall and give the instance a static IP (from Cloud Shell):
-
-```bash
-gcloud compute firewall-rules create allow-http-80 --network default --allow tcp:80 --target-tags http-server
-gcloud compute instances add-tags dblp-vm --zone europe-west3-c --tags http-server
-gcloud compute addresses create dblp-vm-ip --region europe-west3
-gcloud compute instances delete-access-config dblp-vm --zone europe-west3-c --access-config-name "external-nat"
-gcloud compute instances add-access-config dblp-vm --zone europe-west3-c --address "$(gcloud compute addresses describe dblp-vm-ip --region europe-west3 --format='get(address)')"
-```
-
-After that, every push to `main` deploys.
+- `web` listens on `127.0.0.1:8081`; the Caddy proxy in `~/proxy` owns ports 80/443 and forwards to it.
+- `api` has no published port; only `web` reaches it.
+- `~/dblp-dashboard/.env`: `DBLP_DIR` (the analysis folder), `DATA_UID`/`DATA_GID` (its owner; the api
+  runs as that user), optional `DUCKDB_MEMORY` (default 10GB) and `DUCKDB_THREADS` (default 4).
+- The serving database lives in `~/dblp-dashboard/cache/` (a few GB).
 
 ## Layout
 
 ```
-src/data.json        the 27 datasets
-src/charts.jsx       ECharts option builders + <Chart> wrapper + theme handling
-src/components.jsx   KPI tiles, cards, filter chips, sliders, sortable table, heatmap
-src/pages.jsx        the 9 pages
-src/App.jsx          sidebar, hash routing, light/dark/system toggle
-Dockerfile           node:22-alpine build -> nginx:1.27-alpine serve
-docker-compose.yml   local: web (:8090) + optional dev profile (:5173)
-docker-compose.prod.yml   VM: pulls the GHCR image, serves on :80
+api/app/serving.py     serving-table build, rebuild watcher, connections
+api/app/queries.py     every live query (each names the analysis script it mirrors)
+api/app/snapshots.py   readers for the analysis jobs' output files
+api/app/main.py        HTTP routes, result cache, concurrency limit
+api/app/validate.py    live-vs-report comparison
+api/tests/             synthetic dump + test suite
+src/api.js             fetch hooks (loading, warming-up, errors)
+src/pages.jsx          the eight findings pages + overview
+src/explore.jsx        author, venue and paper explorers
+src/charts.jsx         ECharts option builders
+src/components.jsx     cards, filters, tables, badges
 ```
