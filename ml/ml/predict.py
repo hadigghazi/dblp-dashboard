@@ -24,17 +24,29 @@ log = logging.getLogger("dblp.ml.predict")
 MAX_BIN_PAPERS = 300
 KNOWN_PAPERS_PER_PERSON = 8
 
+# Below this, the best candidate is not merely unproven but implausible: with hundreds of numbered
+# pages in a block, something always scores highest, so "no candidate" has to mean "nothing close".
+NEW_PERSON_CEILING = 0.15
+
 
 def _suggestion(ranked, assign_threshold):
-    """The best candidate, but only when it is both confident enough and clearly ahead."""
+    """
+    Three outcomes, not two:
+      accepted  - confident and clearly ahead of the runner-up: name it.
+      uncertain - plausible but unproven: show it as a candidate, not an answer.
+      new       - nothing comes close: this person most likely has no page yet.
+    """
     if not ranked:
         return None, None
     best_id, best_score = ranked[0]
     runner_up = ranked[1][1] if len(ranked) > 1 else 0.0
     margin = best_score - runner_up
+    entry = {"person_id": best_id, "score": round(best_score, 3), "margin": round(margin, 3)}
+    if best_score < NEW_PERSON_CEILING:
+        return None, None
     if best_score < assign_threshold or margin < E.MIN_MARGIN:
-        return None, {"person_id": best_id, "score": round(best_score, 3), "margin": round(margin, 3)}
-    return {"person_id": best_id, "score": round(best_score, 3), "margin": round(margin, 3)}, None
+        return None, entry
+    return entry, None
 
 
 def merge_by_suggestion(clusters):
@@ -73,7 +85,10 @@ def split_bin(con, key, model=None, thresholds=None, features=None, model_dir=No
         return {"error": f"{key} is a {person['page_kind']} page, not a disambiguation bin"}
     if model is None:
         model, thresholds, features, model_dir = M.load()
-    cluster_t = thresholds["cluster"]
+    # the cut and linkage tuned on bin-like blocks, not on the labelled ones: a bin is mostly
+    # people with a single paper, where average linkage chains unrelated work together
+    cluster_t = thresholds.get("cluster_bin", thresholds["cluster"])
+    linkage = thresholds.get("linkage_bin", "average")
     assign_t = thresholds.get("assign", cluster_t)
 
     known = data.numbered_in_block(con, person["base_name"])
@@ -113,7 +128,7 @@ def split_bin(con, key, model=None, thresholds=None, features=None, model_dir=No
             if bin_pid in idx and known_pid in owner:
                 to_known.setdefault(bin_pid, {}).setdefault(owner[known_pid], []).append(float(pr))
 
-    labels = E.cluster(prob, cluster_t)
+    labels = E.cluster(prob, cluster_t, linkage)
     meta = con.execute(
         "SELECT pid, key, title, year, venue FROM s.pubs WHERE pid IN (SELECT pid FROM inst_bin)").fetchall()
     papers = {int(r[0]): {"key": r[1], "title": r[2], "year": r[3], "venue": r[4]} for r in meta}
@@ -160,7 +175,8 @@ def split_bin(con, key, model=None, thresholds=None, features=None, model_dir=No
             "look_new": sum(1 for c in clusters if c["looks_new"]),
             "papers_matched": sum(c["size"] for c in named),
         },
-        "thresholds": {"cluster": cluster_t, "assign": assign_t, "min_margin": E.MIN_MARGIN},
+        "thresholds": {"cluster": cluster_t, "linkage": linkage, "assign": assign_t,
+                       "min_margin": E.MIN_MARGIN, "new_person_ceiling": NEW_PERSON_CEILING},
     }
     if model_dir is not None:
         metrics = model_dir / M.METRICS_FILE

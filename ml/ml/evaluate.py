@@ -85,13 +85,19 @@ def block_probabilities(con, model, base_name, features=None):
     }
 
 
-def cluster(prob, threshold):
+def cluster(prob, threshold, method="average"):
+    """
+    `average` linkage merges on the mean similarity, which lets a chain (A resembles B, B resembles
+    C) pull unrelated papers into one group. `complete` linkage requires every pair in a group to
+    clear the bar, so it refuses to chain - which matters on a bin, where most people contribute a
+    single paper and the evidence between papers is weak.
+    """
     d = 1.0 - prob
     np.fill_diagonal(d, 0.0)
     d = np.clip((d + d.T) / 2, 0, 1)   # exactly symmetric, as squareform demands
     if len(d) < 2:
         return np.zeros(len(d), dtype=int)
-    return fcluster(linkage(squareform(d, checks=False), method="average"),
+    return fcluster(linkage(squareform(d, checks=False), method=method),
                     t=1.0 - threshold, criterion="distance")
 
 
@@ -168,6 +174,76 @@ def tune_cluster_threshold(con, model, blocks, features=None, max_blocks=60):
     return best["threshold"], curve
 
 
+def _subsample_like_a_bin(block, per_person, rng):
+    """
+    A labelled block has people with several papers each. A disambiguation bin does not: it collects
+    the papers nobody has assigned, and dblp's median author has two papers in total. So thin each
+    person down to one or two papers - that is the distribution prediction actually runs on.
+    """
+    keep = []
+    for person in np.unique(block["true"]):
+        idx = np.nonzero(block["true"] == person)[0]
+        rng.shuffle(idx)
+        keep.extend(idx[:rng.integers(1, per_person + 1)].tolist())
+    keep = np.sort(np.asarray(keep))
+    if len(keep) < 4:
+        return None
+    grid = np.ix_(keep, keep)
+    return {"prob": block["prob"][grid], "shared": block["shared"][grid],
+            "true": block["true"][keep], "pids": block["pids"][keep]}
+
+
+def tune_for_bins(con, model, blocks, features=None, max_blocks=60, per_person=2, seed=7):
+    """
+    Pick the linkage and cut for predicting on bins, tuned on bin-like blocks rather than on the
+    labelled blocks. Tuning on labelled blocks gave a cut that chained unrelated papers together
+    once it met a real bin - the distributions are not the same.
+    """
+    loaded = _load_blocks(con, model, blocks, features, max_blocks)
+    rng = np.random.default_rng(seed)
+    thin = [b for b in (_subsample_like_a_bin(block, per_person, rng) for _, block in loaded) if b]
+    if not thin:
+        return {"threshold": 0.5, "linkage": "complete", "b3_f1": None, "blocks": 0}
+    best, curve = None, []
+    for method in ("average", "complete"):
+        for t in np.round(np.arange(0.30, 0.96, 0.05), 2):
+            scores = [bcubed(b["true"], cluster(b["prob"], float(t), method))["f1"] for b in thin]
+            weights = [len(b["true"]) for b in thin]
+            row = {"linkage": method, "threshold": float(t),
+                   "b3_f1": round(float(np.average(scores, weights=weights)), 4)}
+            curve.append(row)
+            if best is None or row["b3_f1"] > best["b3_f1"]:
+                best = row
+    log.info("bin-like tuning: %s linkage at %.2f (B3 F1 %.3f on %d thinned blocks)",
+             best["linkage"], best["threshold"], best["b3_f1"], len(thin))
+    return {**best, "blocks": len(thin), "papers": int(sum(len(b["true"]) for b in thin)), "curve": curve}
+
+
+def evaluate_bin_like(con, model, thresholds, blocks, features=None, max_blocks=150, per_person=2, seed=11):
+    """Clustering quality on thinned (bin-like) held-out blocks - the number that predicts bin behaviour."""
+    loaded = _load_blocks(con, model, blocks, features, max_blocks)
+    rng = np.random.default_rng(seed)
+    thin = [b for b in (_subsample_like_a_bin(block, per_person, rng) for _, block in loaded) if b]
+    if not thin:
+        return {"blocks": 0}
+    method = thresholds.get("linkage_bin", "complete")
+    t = thresholds.get("cluster_bin", thresholds["cluster"])
+    rows, weights = [], []
+    for b in thin:
+        pred = cluster(b["prob"], t, method)
+        b3 = bcubed(b["true"], pred)
+        rows.append({"b3_f1": b3["f1"], "b3_precision": b3["precision"], "b3_recall": b3["recall"],
+                     "ari": float(adjusted_rand_score(b["true"], pred)),
+                     "clusters": int(len(np.unique(pred))), "people": int(len(np.unique(b["true"])))})
+        weights.append(len(b["true"]))
+    mean = lambda k: round(float(np.average([r[k] for r in rows], weights=weights)), 4)
+    return {"blocks": len(rows), "papers": int(sum(weights)), "linkage": method, "cluster_threshold": t,
+            "papers_per_person": f"1-{per_person}",
+            "b3_f1": mean("b3_f1"), "b3_precision": mean("b3_precision"), "b3_recall": mean("b3_recall"),
+            "ari": mean("ari"),
+            "cluster_count_ratio": round(mean("clusters") / mean("people"), 3) if mean("people") else None}
+
+
 def calibrate_assignment(con, model, blocks, features=None, target_precision=0.95, max_blocks=60):
     """
     Pick the score a suggestion must reach before it is shown, so that shown suggestions are right
@@ -206,7 +282,8 @@ def evaluate_blocks(con, model, thresholds, blocks, features=None, max_blocks=15
     loaded = _load_blocks(con, model, blocks, features, max_blocks)
     rows = []
     for base_name, block in loaded:
-        pred = cluster(block["prob"], cluster_t)
+        pred = cluster(block["prob"], cluster_t, thresholds.get("linkage", "average")
+                       if isinstance(thresholds, dict) else "average")
         b3 = bcubed(block["true"], pred)
         b3_overlap = bcubed(block["true"], cluster((block["shared"] > 0).astype(np.float32), 0.5))
         model_dec = _assignment_decisions(block, model_scorer)

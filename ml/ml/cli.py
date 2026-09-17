@@ -73,12 +73,17 @@ def train(con, args):
     val_blocks = _blocks_in(con, config.VAL_BUCKETS)
     test_blocks = _blocks_in(con, config.TEST_BUCKETS)
     cluster_t, cluster_curve = E.tune_cluster_threshold(con, model, val_blocks, active, args.tune_blocks)
+    bin_tuned = E.tune_for_bins(con, model, val_blocks, active, args.tune_blocks)
     assign = E.calibrate_assignment(con, model, val_blocks, active, args.target_precision, args.tune_blocks)
-    thresholds = {"cluster": cluster_t, "assign": assign["threshold"], "pairwise": pairwise_t}
+    thresholds = {"cluster": cluster_t, "linkage": "average",
+                  "cluster_bin": bin_tuned["threshold"], "linkage_bin": bin_tuned["linkage"],
+                  "assign": assign["threshold"], "pairwise": pairwise_t}
 
     metrics = {"dataset": dataset, "thresholds": thresholds, "dropped_features": sorted(drop),
-               "tuning": {"cluster_curve": cluster_curve, "assignment_calibration":
-                          {k: v for k, v in assign.items() if k != "curve"},
+               "tuning": {"cluster_curve": cluster_curve,
+                          "bin_like": {k: v for k, v in bin_tuned.items() if k != "curve"},
+                          "bin_like_curve": bin_tuned.get("curve"),
+                          "assignment_calibration": {k: v for k, v in assign.items() if k != "curve"},
                           "assignment_curve": assign.get("curve")}}
     if len(yte):
         pte = model.predict_proba(Xte)[:, 1]
@@ -91,6 +96,9 @@ def train(con, args):
 
     log.info("evaluating clustering and assignment on %s held-out blocks", len(test_blocks))
     metrics.setdefault("test", {})["clustering"] = E.evaluate_blocks(
+        con, model, thresholds, test_blocks, active, args.eval_blocks)
+    # the number that predicts behaviour on a real bin, where people have one or two papers each
+    metrics["test"]["clustering_bin_like"] = E.evaluate_bin_like(
         con, model, thresholds, test_blocks, active, args.eval_blocks)
     metrics["feature_importance"] = M.importances(model, Xte if len(yte) else Xtr, yte if len(yte) else ytr)
 

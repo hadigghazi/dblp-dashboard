@@ -117,7 +117,9 @@ def test_train_command_saves_artifacts_and_metrics(con):
     assert (d / M.MODEL_FILE).exists()
     saved = json.loads((d / M.METRICS_FILE).read_text(encoding="utf-8"))
     assert saved["dump"]["fingerprint"] == "testfp0001"
-    assert set(saved["thresholds"]) == {"cluster", "assign", "pairwise"}
+    assert set(saved["thresholds"]) == {"cluster", "linkage", "cluster_bin", "linkage_bin",
+                                        "assign", "pairwise"}
+    assert saved["metrics"]["test"]["clustering_bin_like"]["blocks"] > 0
     assert saved["metrics"]["test"]["clustering"]["assignment"]["assign_threshold"] > 0
     assert saved["metrics"]["test"]["pairwise"]["roc_auc"] > 0.85
     assert saved["metrics"]["test"]["clustering"]["blocks"] > 0
@@ -188,3 +190,47 @@ def test_a_near_tie_is_not_named():
     assert accepted["person_id"] == 1
     accepted, rejected = P._suggestion([(1, 0.50)], assign_threshold=0.6)
     assert accepted is None and rejected["score"] == 0.5
+
+
+def test_complete_linkage_refuses_to_chain():
+    """A resembles B, B resembles C, A does not resemble C: average linkage merges all three,
+    complete linkage does not. That chaining is what produced a 16-paper cluster spanning
+    lattice QCD and cleanroom airflow on a real bin."""
+    import numpy as np
+    # distances: A-B 0.2, B-C 0.2, A-C 0.7, cut at 1 - 0.4 = 0.6
+    # average links {A,B} to C at (0.7 + 0.2) / 2 = 0.45 -> merges; complete uses max = 0.7 -> refuses
+    prob = np.array([[1.0, 0.8, 0.3],
+                     [0.8, 1.0, 0.8],
+                     [0.3, 0.8, 1.0]], dtype=np.float32)
+    assert len(set(E.cluster(prob, 0.4, "average").tolist())) == 1
+    assert len(set(E.cluster(prob, 0.4, "complete").tolist())) > 1
+
+
+def test_bin_like_tuning_thins_each_person_down(con):
+    """Tuning must run on the distribution prediction sees: many people, one or two papers each."""
+    import numpy as np
+    model = M.train(*F.matrix(con, "bucket IN (0,1,2,3,4,5,6)")[:2])
+    blocks = [r[0] for r in con.execute("SELECT DISTINCT base_name FROM inst LIMIT 10").fetchall()]
+    tuned = E.tune_for_bins(con, model, blocks, max_blocks=10)
+    assert tuned["linkage"] in ("average", "complete")
+    assert 0.3 <= tuned["threshold"] <= 0.95
+    assert tuned["blocks"] > 0 and tuned["curve"]
+    # the thinned blocks really are thinner than the originals
+    rng = np.random.default_rng(3)
+    loaded = E._load_blocks(con, model, blocks, None, 4)
+    for _, block in loaded:
+        thin = E._subsample_like_a_bin(block, 2, rng)
+        if thin:
+            counts = [int((thin["true"] == p).sum()) for p in np.unique(thin["true"])]
+            assert max(counts) <= 2
+
+
+def test_three_outcomes_are_distinguished():
+    """A hopeless best candidate means "no page yet", not "uncertain" - with hundreds of numbered
+    pages in a block something always scores highest, so the floor matters."""
+    accepted, uncertain = P._suggestion([(1, 0.05), (2, 0.01)], assign_threshold=0.3)
+    assert accepted is None and uncertain is None            # looks new
+    accepted, uncertain = P._suggestion([(1, 0.40), (2, 0.38)], assign_threshold=0.3)
+    assert accepted is None and uncertain["person_id"] == 1  # plausible, not proven
+    accepted, uncertain = P._suggestion([(1, 0.80), (2, 0.10)], assign_threshold=0.3)
+    assert accepted["person_id"] == 1 and uncertain is None   # named
