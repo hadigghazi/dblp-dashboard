@@ -95,7 +95,10 @@ ctx AS (
 )
 SELECT c.base_name, c.person_id, c.pid, c.position,
        rec.year, rec.sid, rec.venue, rec.key_prefix, rec.n_authors, rec.is_preprint,
-       lower(coalesce(rec.authors[c.position], '')) AS used_name,
+       -- NOTE: dblp writes the assignment into the author string itself (<author>Wei Wang 0001</author>),
+       -- so the raw string would leak the label: within a block, identical string <=> same person.
+       -- Strip the suffix; what remains is the real signal, the printed name variant.
+       lower(regexp_replace(coalesce(rec.authors[c.position], ''), ' [0-9]{4}$', '')) AS used_name,
        rec.author_orcids[c.position] AS orcid,
        coalesce(list_filter(list_transform(rec.authors, x -> lower(regexp_replace(x, ' [0-9]{4}$', ''))),
                             x -> x <> lower(c.base_name)), []) AS other_names,

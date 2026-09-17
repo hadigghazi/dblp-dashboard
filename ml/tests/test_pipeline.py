@@ -59,6 +59,22 @@ def test_features_are_finite_and_named(con):
     assert np.isfinite(X).all()
 
 
+def test_name_form_does_not_leak_the_label(con):
+    """dblp encodes the assignment in the author string ("Wei Wang 0001"), so within a block an
+    identical string would mean "same person" by construction. The suffix must be stripped."""
+    leaked = con.execute(
+        "SELECT count(*) FROM inst WHERE regexp_matches(used_name, ' [0-9]{4}$')").fetchone()[0]
+    assert leaked == 0
+    # and the feature must not be able to reconstruct the label on its own
+    import numpy as np
+    _, y, _ = F.matrix(con)
+    d = con.execute("SELECT (a.used_name = b.used_name)::INT AS same, (a.person_id = b.person_id)::INT AS y "
+                    "FROM inst a JOIN inst b ON a.base_name = b.base_name AND a.pid < b.pid").fetchnumpy()
+    agreement = float(np.mean(d["same"] == d["y"]))
+    assert agreement < 0.99, f"name form agrees with the label {agreement:.3f} of the time"
+    assert len(y)
+
+
 def test_model_learns_the_planted_signal_and_beats_the_baseline(con):
     Xtr, ytr, _ = F.matrix(con, "bucket IN (0,1,2,3,4,5,6)")
     Xte, yte, ite = F.matrix(con, "bucket IN (8,9)")
