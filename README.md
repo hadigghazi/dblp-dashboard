@@ -4,8 +4,10 @@ Interactive dashboard over the complete [dblp](https://dblp.org) dump, queried l
 author identity, the co-authorship network, titles, venues, data quality and an OpenAlex check, plus
 explorers for any author, venue series or publication.
 
+**https://dblp.hadighazi.com**
+
 ```
-browser ──► web (nginx + React/ECharts) ──/api/──► api (FastAPI + DuckDB) ──► ~/dblp (read-only)
+browser ──► Caddy (TLS) ──► web (nginx + React/ECharts) ──/api/──► api (FastAPI + DuckDB) ──► ~/dblp (read-only)
 ```
 
 ## How the data flows
@@ -73,7 +75,11 @@ Secrets: `VM_HOST`, `VM_USER`, `VM_SSH_KEY`.
 
 ### On the VM
 
-- `web` listens on `127.0.0.1:8081`; the Caddy proxy in `~/proxy` owns ports 80/443 and forwards to it.
+- `web` listens on `127.0.0.1:8081`. The Caddy proxy in `~/proxy` owns ports 80/443, serves
+  `dblp.hadighazi.com` with a Let's Encrypt certificate it renews itself, and redirects plain HTTP on the
+  bare IP to that address. Its config is kept in the automl-studio repo (`deploy/proxy/Caddyfile`).
+- DNS: Cloudflare A record `dblp` → `34.89.182.10`, **DNS only**. The orange proxy would cut requests
+  at 100 s, and the certificate lives on the VM.
 - `api` has no published port; only `web` reaches it.
 - `~/dblp-dashboard/.env`: `DBLP_DIR` (the analysis folder), `DATA_UID`/`DATA_GID` (its owner; the api
   runs as that user), optional `DUCKDB_MEMORY` (default 10GB) and `DUCKDB_THREADS` (default 4).
