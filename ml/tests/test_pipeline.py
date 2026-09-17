@@ -178,8 +178,25 @@ def test_clusters_pointing_at_one_person_are_merged():
     assert len(merged) == 3
     a = next(c for c in merged if (c["suggested_person"] or {}).get("key") == "a")
     assert a["size"] == 10 and a["merged_from"] == 2
-    assert a["suggested_person"]["score"] == 0.9      # keeps the strongest evidence
-    assert sum(c["size"] for c in merged) == 15       # no paper lost or duplicated
+    assert a["suggested_person"]["score"] == 0.9                  # strongest evidence
+    assert a["suggested_person"]["weakest_member_score"] == 0.7   # ... and the weakest, in the open
+    assert sum(c["size"] for c in merged) == 15                   # no paper lost or duplicated
+
+
+def test_a_marginal_group_is_not_absorbed_by_a_confident_one():
+    """A group that barely cleared the bar must not borrow a confident group's score by pointing
+    at the same page. It stays separate, still labelled, for a human to judge."""
+    def cl(size, key, score):
+        return {"size": size, "papers": [{"year": 2020, "title": "x"}],
+                "suggested_person": {"key": key, "name": key, "score": score, "margin": 0.2},
+                "best_candidate_below_threshold": None, "looks_new": False}
+    merged = P.merge_by_suggestion([cl(6, "a", 0.95), cl(4, "a", 0.35), cl(2, "a", 0.8)])
+    sizes = sorted(c["size"] for c in merged)
+    assert sizes == [4, 8]                                        # 0.95 and 0.8 merge; 0.35 does not
+    strong = next(c for c in merged if c["size"] == 8)
+    assert strong["suggested_person"]["weakest_member_score"] == 0.8
+    weak = next(c for c in merged if c["size"] == 4)
+    assert weak["suggested_person"]["score"] == 0.35 and "merged_from" not in weak
 
 
 def test_a_near_tie_is_not_named():

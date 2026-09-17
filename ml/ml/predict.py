@@ -56,16 +56,23 @@ def _suggestion(ranked, max_links, assign_threshold):
     return entry, None
 
 
+STRONG_MERGE = 0.6   # every member of a merged group must match the person at least this well
+
+
 def merge_by_suggestion(clusters):
     """
-    Fold together clusters whose accepted suggestion is the same person. The clustering produces
-    about 30% more groups than there are people (measured), so one person routinely appears as
-    several groups; if they all point at the same page, that page is the answer.
+    Fold together clusters whose accepted suggestion is the same person - but only when each of
+    them matches that person strongly on its own. Two independent strong matches to one page are
+    good evidence the groups are one person; a strong match plus a marginal one is not, and merging
+    them let a barely-accepted group borrow the credibility of a confident one (the merged group
+    used to report the best member's score). Weaker groups stay separate, still labelled with the
+    page they point at, so a reader sees several groups naming one person and can judge.
     """
     merged, by_person = [], {}
     for c in clusters:
-        person = (c.get("suggested_person") or {}).get("key")
-        if person is None:
+        sug = c.get("suggested_person")
+        person = (sug or {}).get("key")
+        if person is None or sug["score"] < STRONG_MERGE:
             merged.append(c)
             continue
         if person in by_person:
@@ -73,8 +80,9 @@ def merge_by_suggestion(clusters):
             into["papers"].extend(c["papers"])
             into["size"] += c["size"]
             into["merged_from"] = into.get("merged_from", 1) + 1
-            best = max(into["suggested_person"]["score"], c["suggested_person"]["score"])
-            into["suggested_person"]["score"] = best
+            prev_weakest = into["suggested_person"].get("weakest_member_score", into["suggested_person"]["score"])
+            into["suggested_person"]["weakest_member_score"] = min(prev_weakest, sug["score"])
+            into["suggested_person"]["score"] = max(into["suggested_person"]["score"], sug["score"])
         else:
             by_person[person] = c
             merged.append(c)
@@ -172,6 +180,9 @@ def split_bin(con, key, model=None, thresholds=None, features=None, model_dir=No
     clusters.sort(key=lambda c: -c["size"])
 
     named = [c for c in clusters if c["suggested_person"]]
+    groups_per_person = {}
+    for c in named:
+        groups_per_person[c["suggested_person"]["key"]] = groups_per_person.get(c["suggested_person"]["key"], 0) + 1
     out = {
         "bin": {"key": person["key"], "name": person["name"]},
         "papers": n_bin,
@@ -183,6 +194,11 @@ def split_bin(con, key, model=None, thresholds=None, features=None, model_dir=No
             "uncertain": sum(1 for c in clusters if c["best_candidate_below_threshold"]),
             "look_new": sum(1 for c in clusters if c["looks_new"]),
             "papers_matched": sum(c["size"] for c in named),
+            # a page named by several separate groups: either over-splitting of one person, or
+            # the page itself mixes people; worth a human look either way
+            "pages_named_by_several_groups": sorted(
+                [{"key": k, "groups": n} for k, n in groups_per_person.items() if n > 1],
+                key=lambda r: -r["groups"]),
         },
         "thresholds": {"cluster": cluster_t, "linkage": linkage, "assign": assign_t,
                        "min_margin": E.MIN_MARGIN, "min_z": E.ASSIGN_Z, "min_max_link": E.MIN_MAX_LINK,
