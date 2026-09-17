@@ -184,11 +184,12 @@ def test_clusters_pointing_at_one_person_are_merged():
 
 def test_a_near_tie_is_not_named():
     """Two candidates almost level means we say nothing rather than guess."""
-    accepted, rejected = P._suggestion([(1, 0.80), (2, 0.78)], assign_threshold=0.6)
+    links = {1: 0.9, 2: 0.9}
+    accepted, rejected = P._suggestion([(1, 0.80), (2, 0.78)], links, assign_threshold=0.6)
     assert accepted is None and rejected["person_id"] == 1
-    accepted, _ = P._suggestion([(1, 0.80), (2, 0.40)], assign_threshold=0.6)
+    accepted, _ = P._suggestion([(1, 0.80), (2, 0.40)], links, assign_threshold=0.6)
     assert accepted["person_id"] == 1
-    accepted, rejected = P._suggestion([(1, 0.50)], assign_threshold=0.6)
+    accepted, rejected = P._suggestion([(1, 0.50)], links, assign_threshold=0.6)
     assert accepted is None and rejected["score"] == 0.5
 
 
@@ -228,12 +229,33 @@ def test_bin_like_tuning_thins_each_person_down(con):
 def test_three_outcomes_are_distinguished():
     """A hopeless best candidate means "no page yet", not "uncertain" - with hundreds of numbered
     pages in a block something always scores highest, so the floor matters."""
-    accepted, uncertain = P._suggestion([(1, 0.05), (2, 0.01)], assign_threshold=0.3)
+    links = {1: 0.9, 2: 0.9}
+    accepted, uncertain = P._suggestion([(1, 0.05), (2, 0.01)], links, assign_threshold=0.3)
     assert accepted is None and uncertain is None            # looks new
-    accepted, uncertain = P._suggestion([(1, 0.40), (2, 0.38)], assign_threshold=0.3)
+    accepted, uncertain = P._suggestion([(1, 0.40), (2, 0.38)], links, assign_threshold=0.3)
     assert accepted is None and uncertain["person_id"] == 1  # plausible, not proven
-    accepted, uncertain = P._suggestion([(1, 0.80), (2, 0.10)], assign_threshold=0.3)
+    accepted, uncertain = P._suggestion([(1, 0.80), (2, 0.10)], links, assign_threshold=0.3)
     assert accepted["person_id"] == 1 and uncertain is None   # named
+
+
+def test_best_of_many_noisy_candidates_is_not_named():
+    """With hundreds of candidates, the top of a noisy pile looks like a match. It must stand out
+    from the pile (outlier test) and rest on at least one strong pair, or stay unnamed."""
+    pile = [(i, 0.30 + 0.01 * (i % 5)) for i in range(2, 300)]     # 298 look-alikes at 0.30-0.34
+    ranked = sorted([(1, 0.42)] + pile, key=lambda t: -t[1])
+    links = {i: 0.45 for i, _ in ranked}
+    accepted, uncertain = P._suggestion(ranked, links, assign_threshold=0.3)
+    assert accepted is None and uncertain["person_id"] == 1     # 0.42 is not an outlier at z=3
+    # a real match: far above the pile, and with one confident pairwise link
+    ranked = sorted([(1, 0.85)] + pile, key=lambda t: -t[1])
+    links = {i: 0.45 for i, _ in ranked}
+    links[1] = 0.93
+    accepted, _ = P._suggestion(ranked, links, assign_threshold=0.3)
+    assert accepted["person_id"] == 1 and accepted["z"] > 3
+    # far above the pile on average but no single strong pair: name coincidence, stay silent
+    links[1] = 0.5
+    accepted, uncertain = P._suggestion(ranked, links, assign_threshold=0.3)
+    assert accepted is None and uncertain["max_link"] == 0.5
 
 
 def test_bin_like_evaluation_reports_its_floor(con):

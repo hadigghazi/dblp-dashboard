@@ -25,6 +25,31 @@ from . import features as F
 log = logging.getLogger("dblp.ml.evaluate")
 
 MIN_MARGIN = 0.05   # how far the best candidate must beat the runner-up before we name it
+ASSIGN_Z = 3.0      # ... and how far it must stand above the pile of all other candidates (in std devs)
+MIN_MAX_LINK = 0.6  # ... with at least one pairwise link this strong; diffuse 0.35-everywhere is noise
+
+
+def accept(decision, assign_threshold):
+    """
+    Whether a candidate is named. Four conditions, because the failure modes differ:
+      score     - enough evidence overall (calibrated to a precision target);
+      margin    - clearly ahead of the runner-up, so near-ties stay silent;
+      z         - an outlier against every other candidate. With 522 numbered pages in a block,
+                  the best of 522 noisy scores is high by chance alone; this scales with the pool;
+      max_link  - at least one confident pair. Name coincidences among co-authors produce a weak
+                  similarity to everything and a strong one to nothing.
+    """
+    return (decision["score"] >= assign_threshold and decision["margin"] >= MIN_MARGIN
+            and decision.get("z", float("inf")) >= ASSIGN_Z
+            and decision.get("max_link", 1.0) >= MIN_MAX_LINK)
+
+
+def outlier_z(best, others):
+    """How many standard deviations the best score sits above the other candidates' scores."""
+    others = np.asarray(others, dtype=float)
+    if len(others) < 4:
+        return float("inf")   # too few to estimate a pile; the margin rule has to carry it
+    return float((best - others.mean()) / (others.std() + 1e-6))
 
 
 def pairwise_metrics(y, p, threshold):
@@ -125,7 +150,12 @@ def _assignment_decisions(block, scorer):
         scored.sort(reverse=True)
         best_score, best_person = scored[0]
         runner_up = scored[1][0] if len(scored) > 1 else 0.0
+        best_idx = np.nonzero(true == best_person)[0]
+        best_idx = kept if best_person == person else best_idx[best_idx != held]
         decisions.append({"score": float(best_score), "margin": float(best_score - runner_up),
+                          "z": outlier_z(best_score, [sc for sc, _ in scored[1:]]),
+                          "max_link": float(block["prob"][held, best_idx].max()) if len(best_idx) else 0.0,
+                          "candidates": len(scored),
                           "correct": bool(best_person == person)})
     return decisions
 
@@ -278,7 +308,7 @@ def calibrate_assignment(con, model, blocks, features=None, target_precision=0.9
     correct = np.asarray([d["correct"] for d in decisions])
     curve = []
     for t in np.round(np.arange(0.30, 0.96, 0.05), 2):
-        shown = (scores >= t) & (margins >= MIN_MARGIN)
+        shown = np.asarray([accept(d, float(t)) for d in decisions])
         if shown.sum() < 20:
             continue
         curve.append({"threshold": float(t),
@@ -322,7 +352,7 @@ def evaluate_blocks(con, model, thresholds, blocks, features=None, max_blocks=15
     mean = lambda key: round(float(np.average([r[key] for r in rows], weights=weights)), 4)
     all_dec = [d for r in rows for d in r["decisions"]]
     all_overlap = [d for r in rows for d in r["overlap_decisions"]]
-    shown = [d for d in all_dec if d["score"] >= assign_t and d["margin"] >= MIN_MARGIN]
+    shown = [d for d in all_dec if accept(d, assign_t)]
     summary = {
         "blocks": len(rows),
         "papers": int(weights.sum()),

@@ -29,22 +29,29 @@ KNOWN_PAPERS_PER_PERSON = 8
 NEW_PERSON_CEILING = 0.15
 
 
-def _suggestion(ranked, assign_threshold):
+def _suggestion(ranked, max_links, assign_threshold):
     """
     Three outcomes, not two:
-      accepted  - confident and clearly ahead of the runner-up: name it.
+      accepted  - confident, clearly ahead of the runner-up, an outlier against the whole candidate
+                  pool, and backed by at least one strong pairwise link: name it.
       uncertain - plausible but unproven: show it as a candidate, not an answer.
       new       - nothing comes close: this person most likely has no page yet.
+    ranked is [(person_id, mean score)] best first; max_links maps person_id to the strongest single
+    pairwise probability between the cluster and that person's papers.
     """
     if not ranked:
         return None, None
     best_id, best_score = ranked[0]
     runner_up = ranked[1][1] if len(ranked) > 1 else 0.0
-    margin = best_score - runner_up
-    entry = {"person_id": best_id, "score": round(best_score, 3), "margin": round(margin, 3)}
+    decision = {"score": best_score, "margin": best_score - runner_up,
+                "z": E.outlier_z(best_score, [sc for _, sc in ranked[1:]]),
+                "max_link": max_links.get(best_id, 0.0)}
+    entry = {"person_id": best_id, "score": round(best_score, 3), "margin": round(decision["margin"], 3),
+             "z": None if decision["z"] == float("inf") else round(decision["z"], 1),
+             "max_link": round(decision["max_link"], 3), "candidates": len(ranked)}
     if best_score < NEW_PERSON_CEILING:
         return None, None
-    if best_score < assign_threshold or margin < E.MIN_MARGIN:
+    if not E.accept(decision, assign_threshold):
         return None, entry
     return entry, None
 
@@ -137,19 +144,21 @@ def split_bin(con, key, model=None, thresholds=None, features=None, model_dir=No
     clusters = []
     for label in sorted(set(labels.tolist())):
         members = [bin_pids[i] for i in np.nonzero(labels == label)[0]]
-        scores = {}
+        scores, strongest = {}, {}
         for pid in members:
             for person_id, probs in to_known.get(pid, {}).items():
                 scores.setdefault(person_id, []).append(float(np.mean(probs)))
+                strongest[person_id] = max(strongest.get(person_id, 0.0), max(probs))
         ranked = sorted(((pid, float(np.mean(v))) for pid, v in scores.items()), key=lambda t: -t[1])
-        accepted, rejected = _suggestion(ranked, assign_t)
+        accepted, rejected = _suggestion(ranked, strongest, assign_t)
 
         def name_of(entry):
             if entry is None:
                 return None
             who = known_by_id.get(entry["person_id"], {})
-            return {"key": who.get("key"), "name": who.get("name"),
-                    "score": entry["score"], "margin": entry["margin"]}
+            return {"key": who.get("key"), "name": who.get("name"), "score": entry["score"],
+                    "margin": entry["margin"], "z": entry["z"], "max_link": entry["max_link"],
+                    "candidates": entry["candidates"]}
 
         clusters.append({
             "size": len(members),
@@ -176,7 +185,8 @@ def split_bin(con, key, model=None, thresholds=None, features=None, model_dir=No
             "papers_matched": sum(c["size"] for c in named),
         },
         "thresholds": {"cluster": cluster_t, "linkage": linkage, "assign": assign_t,
-                       "min_margin": E.MIN_MARGIN, "new_person_ceiling": NEW_PERSON_CEILING},
+                       "min_margin": E.MIN_MARGIN, "min_z": E.ASSIGN_Z, "min_max_link": E.MIN_MAX_LINK,
+                       "new_person_ceiling": NEW_PERSON_CEILING},
     }
     if model_dir is not None:
         metrics = model_dir / M.METRICS_FILE
