@@ -99,3 +99,21 @@ def test_links_are_suggested_then_cached(client):
 def test_links_errors_are_clean(client):
     assert client.get("/ml/links", params={"key": "homepages/bin/0"}).status_code == 404   # a bin
     assert client.get("/ml/links", params={"key": "homepages/nope"}).status_code == 404
+
+
+def test_a_retrain_into_the_same_directory_is_noticed(client):
+    """A retrain on the same dump rewrites the same model directory; the watcher must still see it,
+    and cached answers from the previous model must not be served for the new one."""
+    import os
+    import time
+    from ml import server
+    st = server.links
+    assert st.available and not st.newer_model_exists()
+    before = st.cache_path("homepages/link/0/0", 5)
+    metrics = st.model_dir / "metrics.json"
+    later = time.time() + 10
+    os.utime(metrics, (later, later))
+    assert st.newer_model_exists()
+    st.load()
+    assert not st.newer_model_exists()
+    assert st.cache_path("homepages/link/0/0", 5) != before

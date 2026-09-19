@@ -36,6 +36,7 @@ class State:
         self.name, self.loader, self.cache_dir = name, loader, cache_dir
         self.lock = threading.Lock()
         self.payload, self.model_dir, self.metrics, self.error = None, None, {}, None
+        self.version = None   # (dir, metrics.json mtime): a retrain on the same dump keeps the dir
 
     @property
     def available(self):
@@ -45,31 +46,40 @@ class State:
     def fingerprint(self):
         return (self.metrics.get("dump") or {}).get("fingerprint") if self.metrics else None
 
+    @staticmethod
+    def _version(d):
+        return (d, (d / "metrics.json").stat().st_mtime_ns)
+
     def load(self):
         try:
             self.payload, self.model_dir = self.loader()
             self.metrics = json.loads((self.model_dir / "metrics.json").read_text(encoding="utf-8"))
+            self.version = self._version(self.model_dir)
             self.error = None
             log.info("%s: loaded %s", self.name, self.model_dir.name)
         except Exception as e:  # no model yet is a normal state, not a crash
             self.payload, self.error = None, str(e)
             log.warning("%s: no model loaded: %s", self.name, e)
 
+    def newer_model_exists(self):
+        try:
+            _, d = self.loader()
+            return self._version(d) != self.version
+        except Exception:
+            return False
+
     def watch(self):
         def loop():
             while True:
                 time.sleep(300)
-                try:
-                    _, d = self.loader()
-                    if d != self.model_dir:
-                        with self.lock:
-                            self.load()
-                except Exception:
-                    pass
+                if self.newer_model_exists():
+                    with self.lock:
+                        self.load()
         threading.Thread(target=loop, name=f"{self.name}-watch", daemon=True).start()
 
     def cache_path(self, *parts):
-        tag = hashlib.sha1("|".join([str(self.fingerprint), self.model_dir.name, *map(str, parts)]).encode()).hexdigest()[:16]
+        tag = hashlib.sha1("|".join([str(self.fingerprint), self.model_dir.name, str(self.version[1]),
+                                     *map(str, parts)]).encode()).hexdigest()[:16]
         d = config.MODELS_DIR / self.cache_dir
         d.mkdir(parents=True, exist_ok=True)
         return d / f"{tag}.json"
