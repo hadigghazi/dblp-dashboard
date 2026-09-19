@@ -30,6 +30,7 @@ LINK_PAPERS_PER_YEAR = 12
 
 def _link_world(rnd, person_id, pid, persons, slots, pubs, src):
     people, name_of = {}, {}   # person_id -> (community, start, end) / name
+    person_id = max(person_id, 4_000_000)   # real dblp ids run into the millions: arithmetic on them must not overflow INT32
     for c in range(LINK_COMMUNITIES):
         for i in range(LINK_PEOPLE):
             person_id += 1

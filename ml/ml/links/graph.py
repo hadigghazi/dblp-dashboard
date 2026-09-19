@@ -143,7 +143,7 @@ def select_anchors(con, T, buckets, limit):
         GROUP BY person_id
         HAVING sum(papers) >= ? AND max(year) >= ?
            AND (hash(person_id) % 10)::INT IN ({", ".join(str(b) for b in sorted(buckets))})
-        QUALIFY row_number() OVER (ORDER BY hash(person_id * 31 + ?)) <= ?
+        QUALIFY row_number() OVER (ORDER BY hash(person_id::BIGINT * 31 + ?)) <= ?
     """, [T, config.MIN_PAPERS, T - config.RECENT_YEARS + 1, T, limit])
     return con.execute("SELECT count(*) FROM anchor").fetchone()[0]
 
@@ -196,7 +196,7 @@ CANDIDATE_SQL = [
     ("cand", """
         CREATE OR REPLACE TEMP TABLE cand AS
         SELECT * FROM cand_all
-        QUALIFY row_number() OVER (PARTITION BY u ORDER BY cn DESC, hash(u * 1000003 + v)) <= $max_cand"""),
+        QUALIFY row_number() OVER (PARTITION BY u ORDER BY cn DESC, hash(u::BIGINT * 1000003 + v)) <= $max_cand"""),
     # the label: a joint paper within the horizon after T (empty when T is "now")
     ("future", """
         CREATE OR REPLACE TEMP TABLE future AS
@@ -268,7 +268,7 @@ def sample_training_pairs(con, neg_per_anchor=None):
     con.execute("""
         CREATE OR REPLACE TEMP TABLE pair_sampled AS
         SELECT * FROM pair
-        QUALIFY row_number() OVER (PARTITION BY u, y ORDER BY hash(u * 1000003 + v))
+        QUALIFY row_number() OVER (PARTITION BY u, y ORDER BY hash(u::BIGINT * 1000003 + v))
                 <= CASE WHEN y = 1 THEN 1000000000 ELSE ? END
     """, [int(neg_per_anchor or config.NEG_PER_ANCHOR)])
     con.execute("DROP TABLE pair")
