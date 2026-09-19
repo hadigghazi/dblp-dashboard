@@ -74,6 +74,42 @@ hand-written rule would use:
 `metrics.json` next to the model carries all of it, plus permutation feature importances, and the
 `predict` output embeds the test metrics - a suggestion should never be shown without its accuracy.
 
+## Co-author link prediction (ML)
+
+Who will an author publish with next? `ml/ml/links/` ranks an author's **distance-2 neighbours** -
+co-authors of co-authors who are not co-authors yet - by the probability of a joint paper within two
+years (the framing of Liben-Nowell & Kleinberg). Labels are real and temporal: the graph as it stood
+at the end of one year, and who actually collaborated in the two years after.
+
+| Snapshot | Graph seen | Labels | Used for |
+|---|---|---|---|
+| T = last complete year − 4 (2021) | papers ≤ 2021 | new pairs 2022–2023 | training (anchors from hash buckets 0–7) |
+| T = last complete year − 2 (2023) | papers ≤ 2023 | new pairs 2024–2025 | every reported number (buckets 8–9) |
+
+Disambiguation bins are not nodes: a bin mixes hundreds of people and would be the best-connected
+node in the graph. Features are the classic neighbourhood heuristics (common neighbours, Jaccard,
+Adamic–Adar, resource allocation, preferential attachment) plus what they ignore: when the bridge
+between the two people was last active, how active each of them is now, career age, shared venues.
+The heuristics are also the baselines, scored on the same candidate sets.
+
+```bash
+docker compose run --rm ml python -m ml.links.cli graph     # the graph store for this dump (once)
+docker compose run --rm ml python -m ml.links.cli train     # both snapshots, train, evaluate, save
+docker compose run --rm ml python -m ml.links.cli predict --key homepages/s/JurgenSchmidhuber
+```
+
+The **graph store** (`models/links-graph-<dump fingerprint>.duckdb`: one row per author, co-author
+and year, plus per-year degree, activity and venues) is built once per dump; training snapshots and
+live suggestions both read it, so nothing is computed differently at serving time. Artifacts land in
+`models/links-<fingerprint>/`.
+
+**How it is evaluated.** Pooled ROC-AUC / average precision over every candidate pair, and per author
+the ranking a user meets: MRR, Hits@10, Precision@5, Recall@10, over authors who did gain a new
+distance-2 co-author. The job also reports **where new co-authors came from** at the snapshot
+(distance 2 / farther / newcomers with no paper yet): the distance-2 share is the ceiling for any
+local method, and the site says so. A calibration table (how often pairs in each score range became
+co-authors) is stored with the model and shown next to every suggestion.
+
 ## Run locally (Docker only)
 
 ```bash
@@ -134,7 +170,11 @@ ml/ml/features.py      pair features (SQL) + matrix assembly
 ml/ml/model.py         pairwise model, threshold tuning, artifacts
 ml/ml/evaluate.py      held-out-by-block metrics + baselines
 ml/ml/predict.py       split a disambiguation bin, suggest a person
-ml/tests/              synthetic serving db with planted signal
+ml/ml/server.py        HTTP front for both models (/ml/...)
+ml/ml/links/graph.py   graph store, snapshots, distance-2 candidates + heuristics (SQL)
+ml/ml/links/evaluate.py pooled + per-author ranking metrics, baselines, calibration
+ml/ml/links/predict.py suggestions for one author, with the shared co-authors behind each
+ml/tests/              synthetic serving db with planted signal (name blocks, bins, a link world)
 src/api.js             fetch hooks (loading, warming-up, errors)
 src/pages.jsx          the eight findings pages + overview
 src/explore.jsx        author, venue and paper explorers

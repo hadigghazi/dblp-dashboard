@@ -18,6 +18,68 @@ VENUES = [("conf/aaa", "AAA", "conf"), ("conf/bbb", "BBB", "conf"), ("journals/c
           ("journals/ddd", "DDD", "journals"), ("conf/eee", "EEE", "conf")]
 WORDS = "learning graph neural robust efficient system network analysis model data adaptive secure".split()
 
+# The link world: communities whose members keep collaborating, where new collaborations mostly
+# close triangles (a co-author of a co-author) between people who are active now - the structure
+# link prediction relies on. People join over the years, so at any snapshot there are newcomers
+# with few links and veterans with many.
+LINK_COMMUNITIES = 5
+LINK_PEOPLE = 40
+LINK_YEARS = range(2006, 2026)
+LINK_PAPERS_PER_YEAR = 12
+
+
+def _link_world(rnd, person_id, pid, persons, slots, pubs, src):
+    people, name_of = {}, {}   # person_id -> (community, start, end) / name
+    for c in range(LINK_COMMUNITIES):
+        for i in range(LINK_PEOPLE):
+            person_id += 1
+            name = f"Link Person {c:02d}-{i:02d}"
+            persons.append((person_id, f"homepages/link/{c}/{i}", name, name, "regular"))
+            name_of[person_id] = name
+            start = rnd.randint(LINK_YEARS[0], LINK_YEARS[-1] - 3)
+            people[person_id] = (c, start, start + rnd.randint(8, 14))
+    venues = {c: rnd.sample(VENUES, 2) for c in range(LINK_COMMUNITIES)}
+    collab = {p: set() for p in people}
+
+    def active(c, year):
+        return [p for p, (cc, s, e) in people.items() if cc == c and s <= year <= e]
+
+    for year in LINK_YEARS:
+        for c in range(LINK_COMMUNITIES):
+            members = active(c, year)
+            if len(members) < 3:
+                continue
+            for _ in range(LINK_PAPERS_PER_YEAR):
+                first = rnd.choice(members)
+                team = [first]
+                for _ in range(rnd.randint(1, 3)):
+                    r = rnd.random()
+                    pool = []
+                    if r < 0.5:
+                        pool = [p for p in collab[first] if p in members and p not in team]
+                    elif r < 0.85:
+                        pool = [q for p in collab[first] for q in collab[p]
+                                if q in members and q not in team and q not in collab[first] and q != first]
+                    if not pool:
+                        pool = [p for p in members if p not in team]
+                    if pool:
+                        team.append(rnd.choice(pool))
+                if rnd.random() < 0.03:
+                    other = active((c + 1) % LINK_COMMUNITIES, year)
+                    if other:
+                        team.append(rnd.choice(other))
+                pid += 1
+                sid, venue, prefix = rnd.choice(venues[c])
+                names = [name_of[p] for p in team]
+                pubs.append((pid, f"{sid}/l{pid}", year, sid, venue, prefix, len(team),
+                             " ".join(rnd.sample(WORDS, 5)).capitalize() + ".", False))
+                src.append((f"{sid}/l{pid}", names, [None] * len(names)))
+                for pos, p in enumerate(team, start=1):
+                    slots.append((p, pid, pos))
+                for p in team:
+                    collab[p].update(q for q in team if q != p)
+    return person_id, pid, len(people)
+
 
 def make(cache_dir: Path, fingerprint="testfp0001", seed=11):
     rnd = random.Random(seed)
@@ -89,6 +151,8 @@ def make(cache_dir: Path, fingerprint="testfp0001", seed=11):
                 for i, c in enumerate(collaborators, start=2):
                     slots.append((c, pid, i))
 
+    person_id, pid, link_people = _link_world(rnd, person_id, pid, persons, slots, pubs, src)
+
     con.execute("CREATE TABLE persons (person_id INTEGER, key VARCHAR, name VARCHAR, base_name VARCHAR, page_kind VARCHAR)")
     con.execute("CREATE TABLE slots (person_id INTEGER, pid INTEGER, position SMALLINT)")
     con.execute("""CREATE TABLE pubs (pid INTEGER, key VARCHAR, year SMALLINT, sid VARCHAR, venue VARCHAR,
@@ -105,7 +169,7 @@ def make(cache_dir: Path, fingerprint="testfp0001", seed=11):
     ])
     con.execute("CHECKPOINT")
     con.close()
-    return path, {"people": len(persons), "papers": len(pubs), "slots": len(slots)}
+    return path, {"people": len(persons), "papers": len(pubs), "slots": len(slots), "link_people": link_people}
 
 
 if __name__ == "__main__":
