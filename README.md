@@ -110,6 +110,46 @@ distance-2 co-author. The job also reports **where new co-authors came from** at
 local method, and the site says so. A calibration table (how often pairs in each score range became
 co-authors) is stored with the model and shown next to every suggestion.
 
+## Venue recommendation (ML)
+
+Where would a paper with this title, by these authors, be published? `ml/ml/venues/` ranks the
+journal and conference series for a title, and the same index answers "which dblp titles are
+closest" - the search feature as a by-product of a supervised problem with real labels: every
+paper's actual series.
+
+Two stages, because a flat classifier over thousands of series and a million title tokens does not
+fit a 4-thread VM. Three cheap scorers propose candidates and are also the baselines: **Naive
+Bayes** and a **TF-IDF centroid** over title words and bigrams (content), and the **authors'
+history** (where they published before this year). A gradient-boosting **ranker** orders the union
+from those scores, the series' popularity and recency, and how many authors have history there.
+
+| Papers of | Statistics from | Used for |
+|---|---|---|
+| last complete year − 2 (2023) | papers ≤ 2022 | training the ranker |
+| last complete year (2025) | papers ≤ 2024 | every reported number |
+| — | everything in the dump | serving (`stats.parquet` next to the model) |
+
+No paper contributes to the statistics it is scored by. The class set at a snapshot is the series
+with ≥ 100 papers and a paper in the last three years; the share of test papers whose venue is in
+it is reported as the ceiling, as is the share whose venue the candidate stage found at all.
+
+```bash
+docker compose run --rm ml python -m ml.venues.cli store     # the venue store for this dump (once)
+docker compose run --rm ml python -m ml.venues.cli train     # statistics, ranker, evaluation, serving stats
+docker compose run --rm ml python -m ml.venues.cli predict --title "Graph neural networks for traffic forecasting"
+docker compose run --rm ml python -m ml.venues.cli predict --key conf/nips/VaswaniSPUJGKP17
+```
+
+The **venue store** (`models/venues-store-<fingerprint>.duckdb`: eligible papers, the inverted
+index of title tokens, each author's papers per series and year) is built once per dump. The
+serving statistics are written as parquet into `models/venues-<fingerprint>/` by `train`, so a
+retrain never contends with the server for a file lock.
+
+**How it is evaluated.** Accuracy@1/3/5/10 and MRR over *all* sampled papers of the test year (a
+venue outside the class set or outside the candidates is a miss), for the model and for each scorer
+alone plus "most popular venue"; the same split by whether any author had a history. A calibration
+table (how often a candidate at each score was the real venue) is shown next to every suggestion.
+
 ## Run locally (Docker only)
 
 ```bash
@@ -174,7 +214,11 @@ ml/ml/server.py        HTTP front for both models (/ml/...)
 ml/ml/links/graph.py   graph store, snapshots, distance-2 candidates + heuristics (SQL)
 ml/ml/links/evaluate.py pooled + per-author ranking metrics, baselines, calibration
 ml/ml/links/predict.py suggestions for one author, with the shared co-authors behind each
-ml/tests/              synthetic serving db with planted signal (name blocks, bins, a link world)
+ml/ml/venues/store.py  venue store (papers, title-token index, author history), statistics as of a year
+ml/ml/venues/candidates.py  Naive Bayes + centroid + history scoring, candidate pairs, related papers
+ml/ml/venues/evaluate.py    accuracy@k / MRR over all test papers, per-scorer baselines, calibration
+ml/ml/venues/predict.py     suggestions for a title or an existing paper, with the evidence
+ml/tests/              synthetic serving db with planted signal (name blocks, bins, a link world with venue vocabularies)
 src/api.js             fetch hooks (loading, warming-up, errors)
 src/pages.jsx          the eight findings pages + overview
 src/explore.jsx        author, venue and paper explorers

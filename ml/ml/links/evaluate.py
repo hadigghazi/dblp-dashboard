@@ -89,10 +89,14 @@ def calibration(y, p):
 
 
 def came_true_rate(calib, score):
+    """The measured rate for the score's bin; if no test pair reached that bin, the nearest bin's."""
+    if not calib:
+        return None
     for row in calib:
         if row["from"] <= score < row["to"] or (score >= 1.0 and row["to"] >= 1.0):
             return row["came_true"]
-    return None
+    nearest = min(calib, key=lambda r: min(abs(score - r["from"]), abs(score - r["to"])))
+    return nearest["came_true"]
 
 
 def evaluate(u, score, y, info):

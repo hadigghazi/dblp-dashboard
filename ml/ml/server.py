@@ -6,8 +6,9 @@ minutes, so a retrain on the VM reaches the site without a redeploy), the api's 
 opened read-only per request, and heavy answers are cached on disk per (dump, model, input) - they
 do not change until the dump or the model does.
 
-  /ml/status, /ml/bins, /ml/bin          author disambiguation
-  /ml/links/status, /ml/links            co-author link prediction
+  /ml/status, /ml/bins, /ml/bin                 author disambiguation
+  /ml/links/status, /ml/links                   co-author link prediction
+  /ml/venues/status, /ml/venues, /ml/venues/paper   venue recommendation
 """
 import hashlib
 import json
@@ -22,6 +23,7 @@ from fastapi.responses import JSONResponse
 
 from . import config, data, model as M, predict as P
 from .links import graph as LG, model as LM, predict as LP
+from .venues import model as VM, predict as VP, store as VS
 
 log = logging.getLogger("dblp.ml.server")
 
@@ -95,13 +97,19 @@ def _load_links():
     return {"model": model, "features": features, "calibration": calibration}, d
 
 
+def _load_venues():
+    model, features, calibration, d = VM.load()
+    return {"model": model, "features": features, "calibration": calibration}, d
+
+
 disambiguation = State("disambiguation", _load_disambiguation, "suggestions")
 links = State("links", _load_links, "links-suggestions")
+venues = State("venues", _load_venues, "venues-suggestions")
 
 
 @asynccontextmanager
 async def lifespan(_app):
-    for s in (disambiguation, links):
+    for s in (disambiguation, links, venues):
         s.load()
         s.watch()
     yield
@@ -132,7 +140,7 @@ def _cached(state_, path, compute):
 
 @app.get("/ml/health")
 def health():
-    return {"ok": True, "model": disambiguation.available, "links": links.available}
+    return {"ok": True, "model": disambiguation.available, "links": links.available, "venues": venues.available}
 
 
 # --------------------------------------------------------------------------- disambiguation
@@ -236,3 +244,65 @@ def links_suggest(key: str = Query(..., max_length=200), top: int = Query(10, ge
         finally:
             con.close()
     return _cached(links, path, compute)
+
+
+# --------------------------------------------------------------------------- venue recommendation
+def _venues_card():
+    m = venues.metrics.get("metrics", {}) if venues.metrics else {}
+    test = m.get("test", {})
+    return {
+        "available": venues.available,
+        "error": venues.error,
+        "trained_at": venues.metrics.get("trained_at") if venues.metrics else None,
+        "dump": venues.metrics.get("dump") if venues.metrics else None,
+        "dataset": m.get("dataset"),
+        "serving_statistics": m.get("serving_statistics"),
+        "test": test,
+        "calibration": venues.metrics.get("calibration") if venues.metrics else None,
+        "feature_importance": (m.get("feature_importance") or [])[:10],
+        "dropped_features": m.get("dropped_features", []),
+    }
+
+
+@app.get("/ml/venues/status")
+def venues_status():
+    return _venues_card()
+
+
+def _venues_compute(fn):
+    if not venues.available:
+        raise HTTPException(503, detail=f"No trained venue model yet ({venues.error}). Run: python -m ml.venues.cli train")
+
+    def compute():
+        con, meta = data.connect()
+        try:
+            VS.attach_store(con, meta)
+            pl = venues.payload
+            return fn(con, pl["model"], pl["features"], pl["calibration"], venues.model_dir)
+        except FileNotFoundError as e:
+            return {"error": str(e)}
+        finally:
+            con.close()
+    return compute
+
+
+@app.get("/ml/venues")
+def venues_suggest(title: str = Query(..., min_length=3, max_length=VP.MAX_TITLE),
+                   authors: Optional[str] = Query(None, max_length=2000),
+                   top: int = Query(10, ge=1, le=VP.MAX_TOP), refresh: bool = False):
+    keys = sorted({k.strip() for k in (authors or "").split(",") if k.strip()})[:VP.MAX_AUTHORS]
+    path = venues.cache_path("title", title.strip().lower(), ",".join(keys), top)
+    if refresh:
+        path.unlink(missing_ok=True)
+    return _cached(venues, path, _venues_compute(
+        lambda con, model, features, calibration, d: VP.suggest(con, title, keys, top, model, features, calibration, d)))
+
+
+@app.get("/ml/venues/paper")
+def venues_paper(key: str = Query(..., max_length=200), top: int = Query(10, ge=1, le=VP.MAX_TOP),
+                 refresh: bool = False):
+    path = venues.cache_path("paper", key, top)
+    if refresh:
+        path.unlink(missing_ok=True)
+    return _cached(venues, path, _venues_compute(
+        lambda con, model, features, calibration, d: VP.for_paper(con, key, top, model, features, calibration, d)))

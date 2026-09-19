@@ -27,6 +27,16 @@ LINK_PEOPLE = 40
 LINK_YEARS = range(2006, 2026)
 LINK_PAPERS_PER_YEAR = 12
 
+# Each venue has a vocabulary its titles draw from, next to the shared WORDS: the content signal
+# venue recommendation relies on (authors' loyalty to their community's venues is the other one).
+VENUE_WORDS = {
+    "conf/aaa": "reinforcement agents planning policy reward bandit".split(),
+    "conf/bbb": "graph vertex clustering spectral community embedding".split(),
+    "journals/ccc": "protein genome sequence cell clinical patients".split(),
+    "journals/ddd": "wireless antenna channel spectrum radio latency".split(),
+    "conf/eee": "compiler kernel scheduling memory runtime concurrency".split(),
+}
+
 
 def _link_world(rnd, person_id, pid, persons, slots, pubs, src):
     people, name_of = {}, {}   # person_id -> (community, start, end) / name
@@ -72,8 +82,10 @@ def _link_world(rnd, person_id, pid, persons, slots, pubs, src):
                 pid += 1
                 sid, venue, prefix = rnd.choice(venues[c])
                 names = [name_of[p] for p in team]
+                title_words = rnd.sample(VENUE_WORDS[sid], 3) + rnd.sample(WORDS, 2)
+                rnd.shuffle(title_words)
                 pubs.append((pid, f"{sid}/l{pid}", year, sid, venue, prefix, len(team),
-                             " ".join(rnd.sample(WORDS, 5)).capitalize() + ".", False))
+                             " ".join(title_words).capitalize() + ".", False))
                 src.append((f"{sid}/l{pid}", names, [None] * len(names)))
                 for pos, p in enumerate(team, start=1):
                     slots.append((p, pid, pos))

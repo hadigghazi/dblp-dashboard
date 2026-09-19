@@ -170,3 +170,5 @@ def test_came_true_rate_lookup():
     assert E.came_true_rate(calib, 0.3) == 0.2
     assert E.came_true_rate(calib, 1.0) == 0.6
     assert E.came_true_rate([], 0.3) is None
+    # a score beyond every bin the test reached takes the nearest bin, rather than nothing
+    assert E.came_true_rate(calib[:2], 0.95) == 0.2

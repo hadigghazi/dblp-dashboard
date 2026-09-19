@@ -304,6 +304,224 @@ export function PageCollaborators({ params, go }) {
   );
 }
 
+// ============================================================== Venue recommendation ====
+
+const RANKER_NAMES = { model: "Model", naive_bayes: "Naive Bayes (title)", centroid: "TF-IDF centroid (title)", history: "Authors' history", popularity: "Most popular venue" };
+
+/** The venue model's measured accuracy on the test year, next to each scorer alone. */
+export function VenuesModelCard({ card, compact }) {
+  if (!card) return null;
+  if (!card.available) {
+    return <Callout><b>No trained venue model yet.</b> {card.error} On the VM: <code>docker compose -f docker-compose.prod.yml run --rm ml python -m ml.venues.cli train</code></Callout>;
+  }
+  const t = card.test || {};
+  const r = t.rankers || {};
+  const m = r.model || {};
+  const bestOther = Object.entries(r).filter(([k]) => k !== "model").reduce((b, [k, v]) => (v["acc@1"] != null && (b == null || v["acc@1"] > b.v) ? { k, v: v["acc@1"] } : b), null);
+  if (compact) {
+    return (
+      <div className="modelnote">
+        <span className="srctag job">Model · trained {fmtDate(card.trained_at)}</span>
+        {" "}On {fmt.comma(t.papers || 0)} papers of {t.year}, scored from earlier years only: the real venue is the first suggestion for {pct(m["acc@1"], 0)},
+        in the top 5 for {pct(m["acc@5"], 0)} (best single signal, {RANKER_NAMES[bestOther?.k] || "—"}: {pct(bestOther?.v, 0)} at rank 1).
+      </div>
+    );
+  }
+  const rows = Object.entries(r).map(([k, v]) => ({ ranker: RANKER_NAMES[k] || k, model: k === "model", ...v }));
+  const seg = (name) => Object.entries(t[name] || {}).map(([k, v]) => ({ ranker: RANKER_NAMES[k] || k, model: k === "model", ...v }));
+  const cols = [
+    { key: "ranker", label: "Ranker", render: (x) => (x.model ? <span className="strong">{x.ranker}</span> : x.ranker) },
+    { key: "acc@1", label: "Top 1", num: true, render: (x) => pct(x["acc@1"], 1) },
+    { key: "acc@3", label: "Top 3", num: true, render: (x) => pct(x["acc@3"], 1) },
+    { key: "acc@5", label: "Top 5", num: true, render: (x) => pct(x["acc@5"], 1) },
+    { key: "acc@10", label: "Top 10", num: true, render: (x) => pct(x["acc@10"], 1) },
+    { key: "mrr", label: "MRR", num: true, render: (x) => num(x.mrr, 3) },
+  ];
+  return (
+    <>
+      <KpiStrip items={[
+        { n: pct(m["acc@1"], 0), l: `papers whose real venue is the first suggestion (${RANKER_NAMES[bestOther?.k] || "—"} alone: ${pct(bestOther?.v, 0)})` },
+        { n: pct(m["acc@5"], 0), l: "real venue within the top 5" },
+        { n: pct(t.covered?.share, 0), l: `of papers appear in a venue the model knows (${fmt.comma(t.covered?.papers || 0)} of ${fmt.comma(t.papers || 0)}): the ceiling` },
+        { n: pct(t.in_candidates?.share_of_covered, 0), l: "of those had the real venue among the candidates the ranker sees" },
+        { n: pct(t.with_author_history?.share, 0), l: "of papers had at least one author with a publishing history" },
+      ]} />
+      <div className="grid">
+        <Card span2 title="Model versus each signal alone" sub={`Accuracy over all ${fmt.comma(t.papers || 0)} test papers of ${t.year}; a venue outside the class set or outside the candidates counts as a miss.`}>
+          <SortableTable rows={rows} defaultSort={{ key: "acc@1", dir: -1 }} columns={cols} />
+        </Card>
+        <Card title="Papers with an author history" sub={`${fmt.comma(t.with_author_history?.papers || 0)} papers: someone on the paper had published in a known venue before.`}>
+          <SortableTable rows={seg("with_history")} defaultSort={{ key: "acc@1", dir: -1 }} columns={cols.filter((c) => ["ranker", "acc@1", "acc@5", "mrr"].includes(c.key))} />
+        </Card>
+        <Card title="Papers without any history" sub="Only the title and the venues' popularity can speak.">
+          <SortableTable rows={seg("without_history")} defaultSort={{ key: "acc@1", dir: -1 }} columns={cols.filter((c) => ["ranker", "acc@1", "acc@5", "mrr"].includes(c.key))} />
+        </Card>
+        <Card title="What a score means" sub="Candidate pairs of the test year by score: how often that venue was the real one.">
+          <SortableTable rows={card.calibration || []} defaultSort={{ key: "from", dir: 1 }} columns={[
+            { key: "from", label: "Score", render: (x) => `${num(x.from, 2)} – ${num(x.to, 2)}` },
+            { key: "pairs", label: "Pairs", num: true, render: (x) => fmt.comma(x.pairs) },
+            { key: "came_true", label: "Was the venue", num: true, render: (x) => pct(x.came_true, 1) },
+          ]} />
+        </Card>
+        <Card title="What carries the signal" sub="Permutation importance: how much average precision drops when the feature is shuffled.">
+          <SortableTable rows={card.feature_importance || []} defaultSort={{ key: "drop_in_average_precision", dir: -1 }} columns={[
+            { key: "feature", label: "Feature", render: (x) => <code>{x.feature}</code> },
+            { key: "drop_in_average_precision", label: "Drop in AP", num: true, render: (x) => num(x.drop_in_average_precision, 3) },
+          ]} />
+        </Card>
+        <Card span2 title="Training data" sub="Statistics never include the year they score; the ranker learns on one year, the test is a later one.">
+          <SortableTable rows={[
+            { k: "Ranker", v: `${fmt.comma(card.dataset?.rank?.queries || 0)} papers of ${card.dataset?.rank?.year}, statistics up to ${card.dataset?.rank?.statistics_up_to} · ${fmt.comma(card.dataset?.rank?.series || 0)} venues · ${fmt.comma(card.dataset?.rank?.pairs || 0)} candidate pairs` },
+            { k: "Test", v: `${fmt.comma(card.dataset?.test?.queries || 0)} papers of ${card.dataset?.test?.year}, statistics up to ${card.dataset?.test?.statistics_up_to} · ${fmt.comma(card.dataset?.test?.series || 0)} venues` },
+            { k: "Serving", v: `statistics from everything up to ${card.serving_statistics?.up_to} · ${fmt.comma(card.serving_statistics?.series || 0)} venues · ${fmt.comma(card.serving_statistics?.tokens || 0)} title tokens` },
+            { k: "Dump", v: `${card.dump?.fingerprint} · ${fmt.comma(Number(card.dump?.records || 0))} records` },
+            { k: "Trained", v: fmtDate(card.trained_at) },
+          ]} defaultSort={{ key: "k", dir: 1 }} columns={[{ key: "k", label: "" }, { key: "v", label: "" }]} />
+        </Card>
+      </div>
+    </>
+  );
+}
+
+function VenueRow({ s, actual, go }) {
+  const c = s.content;
+  const h = s.history;
+  const isActual = actual && s.sid === actual;
+  return (
+    <li className={"cluster" + (isActual ? " actual" : "")}>
+      <div className={"clusterhead" + (isActual ? " named" : "")}>
+        <span className="flag">#{s.rank}</span>
+        <button type="button" className="linkish strong" onClick={() => go("venues", { sid: s.sid })}>{s.name}</button>
+        {s.kind ? <span className="muted">{s.kind}</span> : null}
+        {isActual ? <span className="flag good">the real venue</span> : null}
+        <span className="muted">score {num(s.score, 2)}{s.came_true != null ? ` · was the venue ${pct(s.came_true, 0)} of the time at this score` : ""}</span>
+      </div>
+      <div className="pmeta" style={{ padding: "6px 0 8px" }}>
+        {c ? <span>title: Naive Bayes #{c.nb_rank}, centroid #{c.cen_rank}, {c.shared_tokens} token{c.shared_tokens === 1 ? "" : "s"} in common</span> : <span>title: no shared token</span>}
+        {h ? <span>· authors: {h.papers} earlier paper{h.papers === 1 ? "" : "s"} here by {h.authors} of them, last {h.last_year}</span> : <span>· authors: never published here</span>}
+        {s.recent_papers != null ? <span>· {fmt.comma(s.recent_papers)} papers in the last 3 years</span> : null}
+      </div>
+    </li>
+  );
+}
+
+function RelatedPapers({ rows, go }) {
+  if (!rows?.length) return null;
+  return (
+    <Card span2 title="Closest titles in dblp" sub="The papers sharing the most of the query's rarest title tokens: what a search for this title returns, with where each was published.">
+      <ul className="paperlist compact">
+        {rows.map((p) => (
+          <li key={p.key}><button type="button" className="paperrow" onClick={() => go("papers", { key: p.key })}>
+            <span className="ptitle">{p.title}</span>
+            <span className="pmeta">{p.year ?? "—"} · {p.venue || p.sid}</span>
+          </button></li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
+/** Suggestions for a typed title, optionally with authors. */
+export function VenueSuggestions({ title, authorKeys, go }) {
+  const links = useApi(title && title.trim().length >= 3 ? "ml/venues" : null, { title: title?.trim(), authors: authorKeys?.length ? authorKeys.join(",") : undefined, top: 10 });
+  const status = useApi("ml/venues/status");
+  const d = links.data;
+  return (
+    <>
+      <Card span2 title="Where a paper with this title would be published" state={links} job={null}
+            sub={d ? `${fmt.comma(d.candidates)} venues considered · title tokens used: ${d.tokens_used.join(", ") || "none"} · ${d.cached ? "from cache" : `computed in ${d.computed_in_seconds}s`}`
+                   : "Type a title above. The venues each scorer proposes are merged, then ranked by the model."}>
+        {(data) => (
+          <>
+            <VenuesModelCard card={status.data} compact />
+            {data.query?.authors?.length ? <div className="modelnote">With the publishing history of {data.query.authors.map((a) => a.name).join(", ")}.</div> : null}
+            {data.note ? <EmptyNote>{data.note}.</EmptyNote> : null}
+            <ol className="clusterlist">{data.suggestions.map((s) => <VenueRow key={s.sid} s={s} go={go} />)}</ol>
+          </>
+        )}
+      </Card>
+      {d ? <RelatedPapers rows={d.related} go={go} /> : null}
+    </>
+  );
+}
+
+/** The model's ranking for an existing paper, with its real venue marked. */
+export function PaperVenueFit({ paperKey, go }) {
+  const fit = useApi("ml/venues/paper", { key: paperKey, top: 10 });
+  const status = useApi("ml/venues/status");
+  const d = fit.data;
+  if (fit.error) return null;   // not a journal/conference paper the store knows: nothing to show
+  return (
+    <>
+      <Card span2 title="Where the model would have sent it" state={fit} job={null}
+            sub={d ? `${fmt.comma(d.candidates)} venues considered from the title and the ${d.query.authors_known} known authors' earlier papers · ${d.cached ? "from cache" : `computed in ${d.computed_in_seconds}s`}`
+                   : "Ranking the venues for this paper from its title and its authors' history before its year."}>
+        {(data) => (
+          <>
+            <VenuesModelCard card={status.data} compact />
+            <div className="modelnote">
+              {data.actual.rank ? <>The real venue, <b>{data.actual.name}</b>, is ranked <b>#{data.actual.rank}</b>.</>
+                : data.actual.in_class_set ? <>The real venue, <b>{data.actual.name}</b>, is not among the top {data.suggestions.length}.</>
+                : <>The real venue, <b>{data.actual.name}</b>, is outside the class set (too few papers, or inactive), so the model could not have found it.</>}
+              {" "}{data.note}.
+            </div>
+            <ol className="clusterlist">{data.suggestions.map((s) => <VenueRow key={s.sid} s={s} actual={data.actual.sid} go={go} />)}</ol>
+          </>
+        )}
+      </Card>
+      {d ? <RelatedPapers rows={d.related} go={go} /> : null}
+    </>
+  );
+}
+
+/** The Where-to-publish page: the model card, a title box, an optional author. */
+export function PageWhereToPublish({ params, go }) {
+  const status = useApi("ml/venues/status");
+  const [title, setTitle] = useState(params.title || "");
+  const titleD = useDebounced(title, 600);
+  const [authorQ, setAuthorQ] = useState("");
+  const authorQd = useDebounced(authorQ, 400);
+  const [authors, setAuthors] = useState(() => (params.authors ? params.authors.split(",").map((k) => ({ key: k, name: k })) : []));
+  const search = useApi(authorQd.trim().length >= 2 ? "authors/search" : null, { q: authorQd.trim() });
+  return (
+    <>
+      <PageHead eyebrow="Machine learning · Venue recommendation" title="Where would this paper be published?">
+        Type a title. Two readers of the title — a Naive Bayes model and a TF-IDF centroid over every journal and conference
+        series — propose venues, the authors’ own publishing history proposes more, and a model trained on one year of
+        papers and tested on a later one ranks them. The closest titles in dblp come with it.
+      </PageHead>
+      <Card state={status} title="How good is it" sub="Measured on papers of a year the statistics never saw, next to each signal used on its own.">
+        {(card) => <VenuesModelCard card={card} />}
+      </Card>
+      <div style={{ height: 18 }} />
+      <Card title="Try a title" sub="Optionally add authors: their history usually decides.">
+        <Filters>
+          <SearchBox id="venue-title" value={title} onChange={setTitle} placeholder="A paper title, e.g. Graph neural networks for traffic forecasting" autoFocus />
+        </Filters>
+        <Filters>
+          <FilterLabel htmlFor="venue-author">Add an author</FilterLabel>
+          <SearchBox id="venue-author" value={authorQ} onChange={setAuthorQ} placeholder="Search a name" />
+          {authors.map((a) => (
+            <button key={a.key} type="button" className="btn" onClick={() => setAuthors(authors.filter((x) => x.key !== a.key))} title="Remove">{a.name} ×</button>
+          ))}
+        </Filters>
+        {search.data && authorQd.trim().length >= 2 ? (
+          search.data.filter((r) => r.page_kind !== "disambiguation").length ? (
+            <SortableTable rows={search.data.filter((r) => r.page_kind !== "disambiguation").slice(0, 8)} defaultSort={{ key: "papers", dir: -1 }}
+                           onRowClick={(r) => { if (!authors.some((a) => a.key === r.key)) setAuthors([...authors, { key: r.key, name: r.name }]); setAuthorQ(""); }} columns={[
+              { key: "name", label: "Name", render: (r) => <><span className="strong">{r.name}</span> {r.page_kind !== "regular" ? <KindBadge kind={r.page_kind} /> : null}</> },
+              { key: "papers", label: "Papers", num: true, render: (r) => fmt.comma(r.papers) },
+              { key: "first_year", label: "Active", render: (r) => (r.first_year ? `${r.first_year}–${r.last_year}` : "—") },
+            ]} />
+          ) : <EmptyNote>No author page matches “{authorQd}”.</EmptyNote>
+        ) : null}
+      </Card>
+      <div style={{ height: 18 }} />
+      <div className="grid"><VenueSuggestions title={titleD} authorKeys={authors.map((a) => a.key)} go={go} /></div>
+    </>
+  );
+}
+
 /** The Disambiguation page: the model card and the biggest bins to try it on. */
 export function PageDisambiguation({ params, go }) {
   const status = useApi("ml/status");

@@ -3,14 +3,15 @@ models into the same temporary MODELS_DIR (pytest runs files alphabetically; all
 import pytest
 
 from tests import test_pipeline as tp  # noqa: F401  (sets env, builds the serving db)
-from tests import test_links as tl
+from tests import test_links as tl, test_venues as tv
 from ml import cli, data, model as M
 from ml.links import cli as lcli, graph as G, model as LM
+from ml.venues import cli as vcli, model as VM, store as VS
 
 
 @pytest.fixture(scope="module")
 def client():
-    # make sure both models exist, whatever order the files ran in
+    # make sure every model exists, whatever order the files ran in
     con, meta = data.connect()
     try:
         try:
@@ -22,6 +23,11 @@ def client():
         except FileNotFoundError:
             G.attach_store(con, meta, build_if_missing=True)
             assert lcli.train(con, meta, tl.Args()) == 0
+        try:
+            VM.load()
+        except FileNotFoundError:
+            VS.attach_store(con, meta, build_if_missing=True)
+            assert vcli.train(con, meta, tv.Args()) == 0
     finally:
         con.close()
     from fastapi.testclient import TestClient
@@ -30,9 +36,9 @@ def client():
         yield c
 
 
-def test_health_reports_both_models(client):
+def test_health_reports_every_model(client):
     h = client.get("/ml/health").json()
-    assert h == {"ok": True, "model": True, "links": True}
+    assert h == {"ok": True, "model": True, "links": True, "venues": True}
 
 
 def test_status_is_a_model_card(client):
@@ -99,6 +105,39 @@ def test_links_are_suggested_then_cached(client):
 def test_links_errors_are_clean(client):
     assert client.get("/ml/links", params={"key": "homepages/bin/0"}).status_code == 404   # a bin
     assert client.get("/ml/links", params={"key": "homepages/nope"}).status_code == 404
+
+
+def test_venues_status_is_a_model_card(client):
+    s = client.get("/ml/venues/status").json()
+    assert s["available"] is True and s["dump"]["fingerprint"] == "testfp0001"
+    r = s["test"]["rankers"]
+    assert set(r) == {"model", "naive_bayes", "centroid", "history", "popularity"}
+    assert 0 <= r["model"]["acc@1"] <= 1 and s["test"]["covered"]["share"] > 0
+    assert s["calibration"] and s["feature_importance"] and s["serving_statistics"]["series"] > 0
+
+
+def test_venues_are_suggested_for_a_title_then_cached(client):
+    first = client.get("/ml/venues", params={"title": "Spectral clustering of graph embeddings", "top": 5}).json()
+    assert first["cached"] is False and first["suggestions"][0]["sid"] == "conf/bbb", first["suggestions"]
+    assert first["related"] and first["suggestions"][0]["came_true"] is not None
+    again = client.get("/ml/venues", params={"title": "spectral clustering of graph embeddings ", "top": 5}).json()
+    assert again["cached"] is True and again["suggestions"] == first["suggestions"]
+    with_authors = client.get("/ml/venues", params={"title": "Spectral clustering of graph embeddings",
+                                                    "authors": "homepages/link/1/0,homepages/nope", "top": 5}).json()
+    assert [a["key"] for a in with_authors["query"]["authors"]] == ["homepages/link/1/0"]
+
+
+def test_venues_for_a_paper(client):
+    con, _ = data.connect()
+    try:
+        key = con.execute("SELECT key FROM s.pubs WHERE key LIKE 'journals/ccc/l%' AND year >= 2015 "
+                          "ORDER BY key LIMIT 1").fetchone()[0]
+    finally:
+        con.close()
+    out = client.get("/ml/venues/paper", params={"key": key}).json()
+    assert out["actual"]["sid"] == "journals/ccc" and out["actual"]["rank"] is not None
+    assert client.get("/ml/venues/paper", params={"key": "conf/nope/x"}).status_code == 404
+    assert client.get("/ml/venues", params={"title": "ab"}).status_code == 422
 
 
 def test_a_retrain_into_the_same_directory_is_noticed(client):

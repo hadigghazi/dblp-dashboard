@@ -5,7 +5,7 @@ import {
   KpiStrip, PageHead, Card, Filters, FilterLabel, Seg, NumberInput, SearchBox, SortableTable,
   KindBadge, PubKind, Callout, EmptyNote,
 } from "./components.jsx";
-import { BinSplit, LinkSuggestions } from "./ml.jsx";
+import { BinSplit, LinkSuggestions, PaperVenueFit } from "./ml.jsx";
 
 const KINDS = ["journal", "conference", "preprint", "phdthesis", "book", "incollection", "data", "mastersthesis"];
 const KIND_COLORS = (p) => ({ journal: p.s2, conference: p.s1, preprint: p.s3, phdthesis: p.s6, book: p.s4, incollection: p.s5, data: p.muted, mastersthesis: p.muted });
@@ -380,6 +380,7 @@ function PaperDetail({ paperKey, go, back }) {
             </>
           ) : <EmptyNote>No authors on this record.</EmptyNote>}
         </Card>
+        {paper.sid && /^(conf|journals)\//.test(paper.sid) && !paper.is_preprint ? <PaperVenueFit paperKey={paperKey} go={go} /> : null}
         {twins.length ? (
           <Card span2 title="Same title, separate records" sub="dblp does not link a preprint to its published version; these share the normalized title.">
             <PaperList rows={twins} go={go} />
