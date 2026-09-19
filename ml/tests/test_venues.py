@@ -74,6 +74,21 @@ def test_candidates_use_only_earlier_history_and_are_bounded(con):
     assert X.shape[1] == len(F.FEATURES) and np.isfinite(X).all() and y.sum() > 0
 
 
+def test_scoring_in_batches_changes_nothing(con, monkeypatch):
+    """Content scores are computed per batch of queries to bound memory; ranks are per query, so the
+    batch size must not change a single row."""
+    c, meta = con
+    year = S.years(meta)[1]
+    S.build_stats(c, year - 1)
+    C.queries_from_papers(c, year, 300)
+    C.build_pairs(c)
+    whole = set(c.execute("SELECT qid, sid, nb_rank, cen_rank, round(nb, 6), round(cen, 6) FROM content").fetchall())
+    monkeypatch.setattr(config, "BATCH_QUERIES", 7)
+    C.build_pairs(c)
+    batched = set(c.execute("SELECT qid, sid, nb_rank, cen_rank, round(nb, 6), round(cen, 6) FROM content").fetchall())
+    assert whole == batched and len(whole) > 0
+
+
 def test_rank_metrics_on_a_known_case():
     qid = np.array([1, 1, 1, 2, 2, 3, 3])
     y = np.array([0, 1, 0, 1, 0, 0, 0])

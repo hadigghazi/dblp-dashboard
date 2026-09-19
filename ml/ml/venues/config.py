@@ -24,8 +24,9 @@ NB_ALPHA = 0.05
 TOP_CONTENT = int(os.environ.get("VENUES_TOP_CONTENT", "20"))
 MAX_HISTORY = int(os.environ.get("VENUES_MAX_HISTORY", "30"))
 
-# Papers sampled for the ranker and for the test.
+# Papers sampled for the ranker and for the test, scored in batches to bound memory.
 RANK_PAPERS = int(os.environ.get("VENUES_RANK_PAPERS", "150000"))
 TEST_PAPERS = int(os.environ.get("VENUES_TEST_PAPERS", "50000"))
+BATCH_QUERIES = int(os.environ.get("VENUES_BATCH_QUERIES", "10000"))
 
 SEED = 7

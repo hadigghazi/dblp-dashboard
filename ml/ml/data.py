@@ -34,6 +34,7 @@ def connect():
     con = duckdb.connect()
     con.execute(f"SET memory_limit = '{config.DUCKDB_MEMORY}'")
     con.execute(f"SET threads = {config.DUCKDB_THREADS}")
+    con.execute("SET preserve_insertion_order = false")   # large aggregates spill instead of failing
     tmp = config.TMP_DIR
     tmp.mkdir(parents=True, exist_ok=True)
     con.execute(f"SET temp_directory = '{tmp}'")

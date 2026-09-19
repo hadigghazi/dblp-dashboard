@@ -58,25 +58,37 @@ CANDIDATE_SQL = [
     ("q_norm", """
         CREATE OR REPLACE TEMP TABLE q_norm AS
         SELECT qid, count(*)::INTEGER AS n_used, sqrt(sum(idf * idf)) AS nrm FROM q_used GROUP BY 1"""),
-    # both content scores in one join over the present tokens
     ("content", """
-        CREATE OR REPLACE TEMP TABLE content AS
-        WITH present AS (
-            SELECT qu.qid, st.sid, sum(st.nb_w) AS nb_present, count(*)::INTEGER AS n_shared,
-                   sum(qu.idf * st.cen_w) AS dot
-            FROM q_used qu JOIN stats st ON st.token = qu.token
-            GROUP BY 1, 2),
-        scored AS (
-            SELECT p.qid, p.sid, p.n_shared,
-                   ss.log_prior + qn.n_used * ss.c_absent + p.nb_present AS nb,
-                   p.dot / qn.nrm AS cen
-            FROM present p JOIN stats_series ss USING (sid) JOIN q_norm qn USING (qid))
+        CREATE OR REPLACE TEMP TABLE content (
+            qid INTEGER, sid VARCHAR, n_shared INTEGER, nb DOUBLE, cen DOUBLE,
+            nb_rank BIGINT, cen_rank BIGINT, nb_best DOUBLE, cen_best DOUBLE)"""),
+]
+
+# Both content scores in one join over the present tokens. Run per batch of queries: every query
+# meets every series sharing one of its tokens, which is hundreds of millions of rows for a whole
+# year, and the ranking windows cannot spill. Ranks are per query, so batches change nothing.
+CONTENT_SQL = """
+    INSERT INTO content
+    WITH present AS (
+        SELECT qu.qid, st.sid, sum(st.nb_w) AS nb_present, count(*)::INTEGER AS n_shared,
+               sum(qu.idf * st.cen_w) AS dot
+        FROM q_used qu JOIN stats st ON st.token = qu.token
+        WHERE qu.qid % $batches = $batch
+        GROUP BY 1, 2),
+    scored AS (
+        SELECT p.qid, p.sid, p.n_shared,
+               ss.log_prior + qn.n_used * ss.c_absent + p.nb_present AS nb,
+               p.dot / qn.nrm AS cen
+        FROM present p JOIN stats_series ss USING (sid) JOIN q_norm qn USING (qid))
+    SELECT qid, sid, n_shared, nb, cen, nb_rank, cen_rank, nb_best, cen_best FROM (
         SELECT *, row_number() OVER (PARTITION BY qid ORDER BY nb DESC) AS nb_rank,
                   row_number() OVER (PARTITION BY qid ORDER BY cen DESC) AS cen_rank,
                   max(nb) OVER (PARTITION BY qid) AS nb_best,
                   max(cen) OVER (PARTITION BY qid) AS cen_best
-        FROM scored
-        QUALIFY nb_rank <= $top OR cen_rank <= $top"""),
+        FROM scored)
+    WHERE nb_rank <= $top OR cen_rank <= $top"""
+
+HISTORY_SQL = [
     # the authors' history: series they published in before the query's year
     ("hist", """
         CREATE OR REPLACE TEMP TABLE hist AS
@@ -128,6 +140,12 @@ def build_pairs(con):
     params = {"max_tokens": config.MAX_QUERY_TOKENS, "top": config.TOP_CONTENT, "max_hist": config.MAX_HISTORY}
     t0 = time.time()
     for _, sql in CANDIDATE_SQL:
+        _run(con, sql, params)
+    n_q = con.execute("SELECT count(*) FROM q").fetchone()[0]
+    batches = max(1, -(-n_q // config.BATCH_QUERIES))
+    for b in range(batches):
+        _run(con, CONTENT_SQL, {**params, "batches": batches, "batch": b})
+    for _, sql in HISTORY_SQL:
         _run(con, sql, params)
     n, pos, queries = con.execute("SELECT count(*), coalesce(sum(y), 0), count(DISTINCT qid) FROM pair").fetchone()
     log.info("candidates: %s pairs for %s queries, %s hold the true series, %.1fs",
