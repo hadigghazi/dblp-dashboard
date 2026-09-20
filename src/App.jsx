@@ -2,8 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { PageOverview, PagePublishing, PageIdentity, PageNetwork, PageTitles, PageVenues, PageQuality, PageEnrichment, PageTails } from "./pages.jsx";
 import { PageAuthors, PageVenueExplorer, PagePapers } from "./explore.jsx";
 import { PageDisambiguation, PageCollaborators, PageWhereToPublish } from "./ml.jsx";
-import { useStatus, fmtDate } from "./api.js";
-import { Spinner } from "./components.jsx";
+import { useStatus } from "./api.js";
 
 const PAGES = [
   { id: "overview", no: "–", label: "Overview", group: null, Comp: PageOverview },
@@ -50,34 +49,6 @@ function useTheme() {
   return [theme, () => setTheme(next[theme])];
 }
 
-function StatusBlock({ status }) {
-  const s = status?.status;
-  if (!s) return <div className="status"><Spinner /> Connecting…</div>;
-  if (s.state === "ready") {
-    const m = status.meta || {};
-    return (
-      <div className="status">
-        <div><span className="dot live" aria-hidden="true" /><b>Live</b> · {Number(m.records || 0).toLocaleString()} records</div>
-        <div>Latest record edit {fmtDate(m.latest_mdate)}</div>
-        <div>Tables built {fmtDate(m.built_at)}</div>
-        {s.refreshing ? <div className="warn"><Spinner /> New dump found, rebuilding: {s.refreshing}</div> : null}
-        {s.optional_failed ? <div className="warn">Unavailable: {s.optional_failed}</div> : null}
-      </div>
-    );
-  }
-  if (s.state === "building" || s.state === "starting") {
-    return (
-      <div className="status">
-        <div><Spinner /> <b>Preparing live data</b></div>
-        <div>{s.message} ({s.step}/{s.steps})</div>
-        <div className="progress"><span style={{ width: `${Math.round((100 * (s.step || 0)) / (s.steps || 1))}%` }} /></div>
-        <div className="muted">Only after a new dump: this takes a few minutes.</div>
-      </div>
-    );
-  }
-  return <div className="status"><div><span className="dot off" aria-hidden="true" /><b>Unavailable</b></div><div>{s.message}</div></div>;
-}
-
 export default function App() {
   const [route, setRoute] = useState(readRoute);
   const [navOpen, setNavOpen] = useState(false);
@@ -113,7 +84,6 @@ export default function App() {
         <div className="brand">
           <div className="mark"><b>dblp</b> / explorer</div>
           <h1>dblp Explorer</h1>
-          <div className="sub">Queried live from the dump</div>
         </div>
         <nav className="pages" aria-label="Sections">
           {PAGES.map((p) => {
@@ -132,8 +102,6 @@ export default function App() {
           })}
         </nav>
         <div className="sidebar-foot">
-          <StatusBlock status={status} />
-          <div className="footline">Source: dblp.xml.gz · CC0</div>
           <button className="themebtn" onClick={cycleTheme}>Theme: {theme}</button>
         </div>
       </aside>
