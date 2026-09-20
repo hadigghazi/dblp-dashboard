@@ -82,8 +82,8 @@ export default function App() {
       <button className="menubtn" onClick={() => setNavOpen(!navOpen)} aria-label="Toggle navigation" aria-expanded={navOpen}>{"☰"}</button>
       <aside className={"sidebar" + (navOpen ? " open" : "")}>
         <div className="brand">
-          <div className="mark"><b>dblp</b> / explorer</div>
-          <h1>dblp Explorer</h1>
+          <div className="mark"><b>dblp</b> Explorer</div>
+          <button className="themebtn" onClick={cycleTheme} title="Switch theme">{theme}</button>
         </div>
         <nav className="pages" aria-label="Sections">
           {PAGES.map((p) => {
@@ -101,9 +101,6 @@ export default function App() {
             );
           })}
         </nav>
-        <div className="sidebar-foot">
-          <button className="themebtn" onClick={cycleTheme}>Theme: {theme}</button>
-        </div>
       </aside>
       <main>
         <current.Comp key={current.id} params={route.params} go={go} status={status} />
