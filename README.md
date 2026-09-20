@@ -150,6 +150,44 @@ venue outside the class set or outside the candidates is a miss), for the model 
 alone plus "most popular venue"; the same split by whether any author had a history. A calibration
 table (how often a candidate at each score was the real venue) is shown next to every suggestion.
 
+## Hybrid paper search (ML)
+
+The plain paper search (`/api/papers/search`, still in `api/` as an always-available exact-word
+fallback) only finds a title that contains every word you typed. `search/` upgrades the dashboard's
+own search box: BM25 over title words and bigrams, fused by reciprocal rank with cosine similarity
+over [BAAI/bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) embeddings, so a query
+that paraphrases a title - different words, same meaning - can still rank it first.
+
+```bash
+docker compose run --rm search python -m search.cli store                 # the sparse index (~1 min)
+docker compose run -d --name search-embed search python -m search.cli build-index   # embeddings: hours, resumable
+docker compose run --rm search python -m search.cli evaluate              # self-retrieval check, feeds /api/search/status
+docker compose run --rm search python -m search.cli search --q "graph neural networks for traffic forecasting"
+```
+
+**Scope.** The index covers the same population as venue recommendation: journal and conference
+papers from 2010 on (~5.4M). Preprints, theses, books and older papers are not embedded; a query
+still finds them through an exact-word match run inside the same request, so upgrading to hybrid
+ranking never finds *fewer* papers, only ranks the indexed ones better.
+
+**Building the embeddings is the slow part** - every eligible title, encoded on CPU, checkpointed
+every few batches into `models/search-progress-<fingerprint>.duckdb`. Interrupting and re-running
+the same command picks up where it left off; `python -m search.cli status` reports how much of the
+index exists. The model itself is baked into the `search` image at build time (see
+`search/Dockerfile`), so the VM never needs to reach Hugging Face.
+
+**How it is evaluated.** There are no external relevance judgments, so `evaluate` measures something
+concrete instead: for a sample of indexed papers, one distinctive title word is swapped for a
+synonym (a real user rarely types a title's exact words), and the job checks whether the paper still
+comes back. BM25 can partially recover through the words that were *not* swapped; only the
+embeddings can recover through the swapped word itself - this is the specific case exact-word search
+cannot handle by construction, and `/api/search/status` reports accuracy@1/5/10 and MRR for BM25
+alone, embeddings alone, and the fused ranking, so the gain is a measured number, not a claim.
+
+Served at `/api/search/papers` (a query, with `kind`/`from`/`to` filters) and `/api/search/status`.
+Each result carries which signal(s) found it (`bm25`, `dense`, or `exact_word`); the Papers page
+tags a result found by meaning alone.
+
 ## Run locally (Docker only)
 
 ```bash
@@ -164,8 +202,9 @@ API docs: `/api/docs`.
 ### Tests
 
 ```bash
-docker build --target test -t dblp-api:test api && docker run --rm dblp-api:test
-docker build --target test -t dblp-ml:test  ml  && docker run --rm dblp-ml:test
+docker build --target test -t dblp-api:test    api    && docker run --rm dblp-api:test
+docker build --target test -t dblp-ml:test     ml     && docker run --rm dblp-ml:test
+docker build --target test -t dblp-search:test search && docker run --rm dblp-search:test
 ```
 
 The suite builds a synthetic dump with the exact 28-column schema of `parse_dblp.py` (bins, numbered
@@ -219,6 +258,14 @@ ml/ml/venues/candidates.py  Naive Bayes + centroid + history scoring, candidate 
 ml/ml/venues/evaluate.py    accuracy@k / MRR over all test papers, per-scorer baselines, calibration
 ml/ml/venues/predict.py     suggestions for a title or an existing paper, with the evidence
 ml/tests/              synthetic serving db with planted signal (name blocks, bins, a link world with venue vocabularies)
+search/search/store.py     sparse index (paper population, title-token inverted index) - self-contained
+search/search/bm25.py      Okapi BM25 over the token index
+search/search/embed.py     the embedding model, imported lazily (tests never need torch)
+search/search/vectors.py   resumable memory-mapped embedding index, build + block-wise dense search
+search/search/fuse.py      reciprocal rank fusion of the two rankings
+search/search/evaluate.py  synonym-substitution self-retrieval check (BM25 vs. dense vs. fused)
+search/search/search.py    orchestration + exact-word fallback for out-of-index records
+search/tests/           synthetic serving db with per-topic title vocabularies + a fake encoder
 src/api.js             fetch hooks (loading, warming-up, errors)
 src/pages.jsx          the eight findings pages + overview
 src/explore.jsx        author, venue and paper explorers

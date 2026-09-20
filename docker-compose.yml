@@ -28,7 +28,7 @@ services:
     container_name: dblp-dashboard
     ports:
       - "8090:80"     # 8080 was already taken on this machine; change freely
-    depends_on: [api, mlapi]
+    depends_on: [api, mlapi, searchapi]
     restart: unless-stopped
 
   dev:
@@ -82,6 +82,44 @@ services:
       - ml_models:/models
     profiles: ["ml"]
 
+  # The hybrid-search server behind /api/search/ (same image as the batch jobs below).
+  searchapi:
+    build:
+      context: ./search
+      target: runtime
+      network: host
+    image: dblp-dashboard-search:latest
+    container_name: dblp-searchapi
+    command: ["uvicorn", "search.server:app", "--host", "0.0.0.0", "--port", "8003", "--workers", "1"]
+    environment:
+      DUCKDB_MEMORY: ${SEARCH_DUCKDB_MEMORY:-2GB}
+      DUCKDB_THREADS: ${SEARCH_DUCKDB_THREADS:-2}
+      SEARCH_TMP_DIR: /tmp/duckdb
+    volumes:
+      - ${DBLP_DIR:-./api/fixture}:/data:ro
+      - api_cache:/cache:ro
+      - search_models:/models
+    restart: unless-stopped
+
+  # Batch search jobs (the sparse index, and the - slow, resumable - embedding build). Not a
+  # server - run a command and exit:
+  #   docker compose run --rm search python -m search.cli store
+  #   docker compose run -d --name search-embed search python -m search.cli build-index
+  search:
+    build:
+      context: ./search
+      target: runtime
+      network: host
+    image: dblp-dashboard-search:latest
+    environment:
+      DUCKDB_MEMORY: ${SEARCH_DUCKDB_MEMORY:-2GB}
+      DUCKDB_THREADS: ${SEARCH_DUCKDB_THREADS:-2}
+    volumes:
+      - ${DBLP_DIR:-./api/fixture}:/data:ro
+      - api_cache:/cache:ro
+      - search_models:/models
+    profiles: ["search"]
+
   fixture:
     build:
       context: ./api
@@ -97,3 +135,4 @@ volumes:
   api_cache:
   dev_node_modules:
   ml_models:
+  search_models:

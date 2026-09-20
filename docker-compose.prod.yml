@@ -23,7 +23,7 @@ services:
     container_name: dblp-dashboard
     ports:
       - "127.0.0.1:8081:80"   # Caddy on the VM owns :80/:443 and forwards the catch-all here
-    depends_on: [api, mlapi]
+    depends_on: [api, mlapi, searchapi]
     restart: unless-stopped
 
   # The model server behind /api/ml/ (same image as the batch job below).
@@ -56,3 +56,38 @@ services:
       - ./cache:/cache:ro     # the api's serving tables, read-only
       - ./models:/models      # model artifacts + metrics
     profiles: ["ml"]
+
+  # The hybrid-search server behind /api/search/ (same image as the batch jobs below). The model
+  # is baked into the image, so this never needs internet access.
+  searchapi:
+    image: ghcr.io/hadigghazi/dblp-dashboard-search:latest
+    container_name: dblp-searchapi
+    command: ["uvicorn", "search.server:app", "--host", "0.0.0.0", "--port", "8003", "--workers", "1"]
+    user: "${DATA_UID:-1000}:${DATA_GID:-1000}"
+    environment:
+      DUCKDB_MEMORY: ${SEARCH_DUCKDB_MEMORY:-3GB}
+      DUCKDB_THREADS: ${SEARCH_DUCKDB_THREADS:-2}
+      SEARCH_TMP_DIR: /tmp/duckdb
+    volumes:
+      - ${DBLP_DIR:?set DBLP_DIR in .env}:/data:ro
+      - ./cache:/cache:ro
+      - ./models:/models      # search store, embedding vectors, progress, evaluation, cache
+    restart: unless-stopped
+
+  # Batch search jobs (the sparse index, and the - slow, resumable - embedding build). Not started
+  # by `up -d`:
+  #   docker compose -f docker-compose.prod.yml run --rm search python -m search.cli store
+  #   docker compose -f docker-compose.prod.yml run -d --name search-embed search python -m search.cli build-index
+  search:
+    image: ghcr.io/hadigghazi/dblp-dashboard-search:latest
+    pull_policy: missing
+    user: "${DATA_UID:-1000}:${DATA_GID:-1000}"
+    environment:
+      DUCKDB_MEMORY: ${SEARCH_DUCKDB_MEMORY:-6GB}
+      DUCKDB_THREADS: ${SEARCH_DUCKDB_THREADS:-8}
+      SEARCH_ENCODE_THREADS: ${SEARCH_ENCODE_THREADS:-8}
+    volumes:
+      - ${DBLP_DIR:?set DBLP_DIR in .env}:/data:ro
+      - ./cache:/cache:ro
+      - ./models:/models
+    profiles: ["search"]

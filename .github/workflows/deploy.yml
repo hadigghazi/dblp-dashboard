@@ -10,6 +10,7 @@ env:
   WEB_IMAGE: ghcr.io/${{ github.repository }}
   API_IMAGE: ghcr.io/${{ github.repository }}-api
   ML_IMAGE: ghcr.io/${{ github.repository }}-ml
+  SEARCH_IMAGE: ghcr.io/${{ github.repository }}-search
 
 jobs:
   # The API test suite runs against a synthetic dump with the real parquet schema.
@@ -49,9 +50,29 @@ jobs:
       - name: Run tests
         run: docker run --rm dblp-ml:test
 
+  # embed.py only imports torch/sentence-transformers inside a function, and tests inject a fake
+  # encoder, so this test image never needs either - it stays fast even though the runtime image
+  # below (which bakes the real model in) is large.
+  test-search:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build test image
+        uses: docker/build-push-action@v6
+        with:
+          context: search
+          target: test
+          load: true
+          tags: dblp-search:test
+          cache-from: type=gha,scope=search-test
+          cache-to: type=gha,scope=search-test,mode=max
+      - name: Run tests
+        run: docker run --rm dblp-search:test
+
   # Every push and PR: prove the images build. On main, also push them to GHCR.
   build:
-    needs: [test-api, test-ml]
+    needs: [test-api, test-ml, test-search]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -71,6 +92,10 @@ jobs:
             context: ml
             target: runtime
             image_env: ML_IMAGE
+          - name: search
+            context: search
+            target: runtime
+            image_env: SEARCH_IMAGE
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -145,10 +170,10 @@ jobs:
             test -f "$(grep '^DBLP_DIR=' .env | cut -d= -f2)/parquet/dblp.parquet" \
               || { echo "dblp.parquet not found under DBLP_DIR in ~/dblp-dashboard/.env"; exit 1; }
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-            # --profile ml also pulls the batch-job image, so running it later needs no registry
-            # credentials on the VM (the packages are private); `up` without the profile still
-            # starts only web and api
-            docker compose -f docker-compose.prod.yml --profile ml pull
+            # --profile ml/search also pulls the batch-job images, so running one later needs no
+            # registry credentials on the VM (the packages are private); `up` without the profiles
+            # still starts web, api, mlapi and searchapi
+            docker compose -f docker-compose.prod.yml --profile ml --profile search pull
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
             docker logout ghcr.io
             docker image prune -f >/dev/null
@@ -162,8 +187,8 @@ jobs:
             set -e
             for i in $(seq 1 30); do
               if curl -fsS -o /dev/null http://127.0.0.1:8081/ && curl -fsS http://127.0.0.1:8081/api/health \
-                 && curl -fsS http://127.0.0.1:8081/api/ml/health; then
-                echo; echo "dashboard, api and model server are up"; exit 0
+                 && curl -fsS http://127.0.0.1:8081/api/ml/health && curl -fsS http://127.0.0.1:8081/api/search/health; then
+                echo; echo "dashboard, api and both model servers are up"; exit 0
               fi
               sleep 2
             done

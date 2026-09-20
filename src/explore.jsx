@@ -165,6 +165,7 @@ function PaperList({ rows, go, showPosition }) {
               {showPosition && r.position ? ` · position ${r.position}` : ""}
               {r.n_unidentified ? <span className="flag bad">{r.n_unidentified} unidentified</span> : null}
               {r.has_twin ? <span className="flag">has a twin</span> : null}
+              {r.sources?.length === 1 && r.sources[0] === "dense" ? <span className="flag good">matched by meaning, not words</span> : null}
             </span>
           </button>
         </li>
@@ -271,11 +272,12 @@ export function PagePapers({ params, go }) {
   const fromD = useDebounced(from, 500);
   const key = params.key;
   const ready = qd.trim().length >= 3;
-  const search = useApi(ready ? "papers/search" : null, { q: qd.trim(), kind, from: fromD > 1970 ? fromD : undefined, limit: 40 });
+  const search = useApi(ready ? "search/papers" : null, { q: qd.trim(), kind, from: fromD > 1970 ? fromD : undefined, top: 40 });
   return (
     <>
       <PageHead eyebrow="Explore · Papers" title="Find a publication and read its record">
-        Every word must appear in the title. Opening a paper shows its authors resolved through the registry and the record as dblp stores it.
+        Ranked by meaning as well as words: a title close to your query can rank first even without sharing its exact
+        wording. Opening a paper shows its authors resolved through the registry and the record as dblp stores it.
       </PageHead>
       <Filters page>
         <SearchBox id="paper-q" value={q} onChange={setQ} placeholder="Search titles, e.g. attention is all you need" autoFocus={!key} />
@@ -285,12 +287,14 @@ export function PagePapers({ params, go }) {
       </Filters>
       {key ? <PaperDetail key={key} paperKey={key} go={go} back={() => go("papers", { q: params.q })} /> : null}
       {!key && ready ? (
-        <Card state={search} title="Matching publications" sub="Newest first, up to 40.">
-          {(d) => (d.length ? <PaperList rows={d} go={go} /> : <EmptyNote>No title contains all of “{qd}”.</EmptyNote>)}
+        <Card state={search} title="Matching publications"
+              sub={search.data ? `Ranked by relevance, up to 40${search.data.dense_available ? "" : " (word match only: the semantic index is still building)"}.` : "Ranked by relevance, up to 40."}>
+          {(d) => (d.results.length ? <PaperList rows={d.results} go={go} /> : <EmptyNote>Nothing found for “{qd}”.</EmptyNote>)}
         </Card>
       ) : null}
       {!key && !ready ? <Callout>Try <button type="button" className="linkish" onClick={() => setQ("DeepSeek-R1")}>DeepSeek-R1</button>{" "}
-        (a Nature paper with 194 authors) or <button type="button" className="linkish" onClick={() => setQ("attention is all you need")}>attention is all you need</button>.</Callout> : null}
+        (a Nature paper with 194 authors) or <button type="button" className="linkish" onClick={() => setQ("teaching computers to see")}>teaching computers to see</button>{" "}
+        — a phrase that appears in no real title, but ranks computer vision papers anyway.</Callout> : null}
     </>
   );
 }
