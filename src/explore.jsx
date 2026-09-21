@@ -5,7 +5,7 @@ import {
   KpiStrip, PageHead, Card, Filters, FilterLabel, Seg, NumberInput, SearchBox, SortableTable,
   KindBadge, PubKind, Callout, EmptyNote,
 } from "./components.jsx";
-import { BinSplit, LinkSuggestions, PaperVenueFit } from "./ml.jsx";
+import { BinSplit, LinkSuggestions, PaperVenueFit, SearchQuality } from "./ml.jsx";
 
 const KINDS = ["journal", "conference", "preprint", "phdthesis", "book", "incollection", "data", "mastersthesis"];
 const KIND_COLORS = (p) => ({ journal: p.s2, conference: p.s1, preprint: p.s3, phdthesis: p.s6, book: p.s4, incollection: p.s5, data: p.muted, mastersthesis: p.muted });
@@ -293,8 +293,9 @@ export function PagePapers({ params, go }) {
         </Card>
       ) : null}
       {!key && !ready ? <Callout>Try <button type="button" className="linkish" onClick={() => setQ("DeepSeek-R1")}>DeepSeek-R1</button>{" "}
-        (a Nature paper with 194 authors) or <button type="button" className="linkish" onClick={() => setQ("teaching computers to see")}>teaching computers to see</button>{" "}
-        — a phrase that appears in no real title, but ranks computer vision papers anyway.</Callout> : null}
+        (a Nature paper with 194 authors), or describe what you are after instead of typing a title, like{" "}
+        <button type="button" className="linkish" onClick={() => setQ("computers learning from very few examples")}>computers learning from very few examples</button>.</Callout> : null}
+      {!key ? <><div style={{ height: 18 }} /><SearchQuality /></> : null}
     </>
   );
 }

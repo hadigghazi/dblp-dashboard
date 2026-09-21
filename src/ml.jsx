@@ -304,6 +304,65 @@ export function PageCollaborators({ params, go }) {
   );
 }
 
+// ============================================================== Paper search ====
+
+const SEARCH_RANKERS = [["bm25_only", "Word match (BM25)"], ["dense_only", "Meaning (embeddings)"], ["hybrid", "Both, fused"]];
+
+function SearchQualityBody({ s }) {
+  const ev = s.evaluation;
+  const idx = s.index || {};
+  const first = s.dump?.first_year;
+  const kpis = [{
+    n: pct(idx.share, idx.share === 1 ? 0 : 1),
+    l: `of ${fmt.comma(idx.papers || 0)} titles indexed by meaning: journal and conference papers${first ? ` from ${first}` : ""}. Preprints, theses and older papers are found by exact words only.`,
+  }];
+  if (!ev || !ev.hybrid) {
+    return (
+      <>
+        <KpiStrip items={kpis} />
+        <Callout>The self-retrieval check has not been run on this dump yet, so there is no accuracy number to show.</Callout>
+      </>
+    );
+  }
+  const gain = (ev.hybrid["acc@1"] - ev.bm25_only["acc@1"]) * 100;
+  kpis.unshift({
+    n: pct(ev.hybrid["acc@1"], 1),
+    l: `top-1 when one word of a title is swapped for a synonym (word match alone: ${pct(ev.bm25_only["acc@1"], 1)}, meaning alone: ${pct(ev.dense_only["acc@1"], 1)})`,
+  });
+  const rows = SEARCH_RANKERS.map(([k, label]) => ({ ranker: label, fused: k === "hybrid", ...ev[k] }));
+  return (
+    <>
+      <KpiStrip items={kpis} />
+      <SortableTable rows={rows} defaultSort={{ key: "mrr", dir: -1 }} columns={[
+        { key: "ranker", label: "Ranker", render: (r) => (r.fused ? <span className="strong">{r.ranker}</span> : r.ranker) },
+        { key: "acc@1", label: "Top 1", num: true, render: (r) => pct(r["acc@1"], 1) },
+        { key: "acc@5", label: "Top 5", num: true, render: (r) => pct(r["acc@5"], 1) },
+        { key: "acc@10", label: "Top 10", num: true, render: (r) => pct(r["acc@10"], 1) },
+        { key: "mrr", label: "MRR", num: true, render: (r) => num(r.mrr, 3) },
+      ]} />
+      <Callout>
+        Measured on {fmt.comma(ev.substitutable)} of {fmt.comma(ev.sampled)} sampled titles that contain a swappable word
+        (for example <i>neural</i> → <i>deep learning</i>). On real titles the remaining words already let word matching
+        recover almost all of them, so adding meaning {gain >= 0 ? `adds ${gain.toFixed(1)} points` : `costs ${(-gain).toFixed(1)} points`} at
+        top 1 here. How it does on a vague description that shares no words with the title is not measured.
+      </Callout>
+    </>
+  );
+}
+
+/** How good hybrid paper search is, measured. Renders nothing when the search service is unavailable:
+ * the search itself is the point of the page, and a broken card would only get in its way. */
+export function SearchQuality() {
+  const status = useApi("search/status");
+  if (status.error || (status.data && !status.data.available)) return null;
+  return (
+    <Card state={status} height={140} title="How good is this search"
+          sub="Every number is measured on this dump, not assumed. Titles found by meaning alone carry a green tag in the results.">
+      {(s) => <SearchQualityBody s={s} />}
+    </Card>
+  );
+}
+
 // ============================================================== Venue recommendation ====
 
 const RANKER_NAMES = { model: "Model", naive_bayes: "Naive Bayes (title)", centroid: "TF-IDF centroid (title)", history: "Authors' history", popularity: "Most popular venue" };
