@@ -29,6 +29,8 @@ class State:
         self.error = None
 
     def load(self):
+        """Fast: attach + read metadata only. Kept quick so it never blocks app startup or the
+        periodic watcher on the slow one-time vector load - see `warm_soon`."""
         con, dump_meta = data.connect()
         try:
             self.meta = S.attach_store(con, dump_meta)
@@ -41,11 +43,27 @@ class State:
         finally:
             con.close()
 
+    def warm_soon(self):
+        """Pre-load the vector cache in the background, so a live user's first query never pays for
+        it - a no-op once already warm. Runs off the startup/watch path so /search/health stays fast."""
+        def run():
+            if self.fingerprint is None:
+                return
+            con, _ = data.connect()
+            try:
+                V.warm(con, self.fingerprint)
+            except Exception:
+                log.exception("vector warm-up failed")
+            finally:
+                con.close()
+        threading.Thread(target=run, name="search-warm", daemon=True).start()
+
     def watch(self):
         def loop():
             while True:
                 time.sleep(300)
                 self.load()
+                self.warm_soon()
         threading.Thread(target=loop, name="search-watch", daemon=True).start()
 
     def cache_path(self, *parts):
@@ -61,6 +79,7 @@ state = State()
 @asynccontextmanager
 async def lifespan(_app):
     state.load()
+    state.warm_soon()
     state.watch()
     yield
 

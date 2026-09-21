@@ -1,13 +1,20 @@
 """
-The dense index: one embedding per eligible paper, memory-mapped rather than loaded whole into
-RAM. The VM runs several services in a fixed memory budget, so serving trades a page-fault on first
-touch of a vector block for not holding a multi-gigabyte array resident all the time.
+The dense index: one embedding per eligible paper, stored on disk as float16 and memory-mapped
+while *building* (so a multi-hour, resumable job never needs the whole array resident).
+
+Serving is different: the file is small enough (a few GB) to hold in RAM against the VM's budget,
+and re-reading + re-casting it from disk block by block on every request measured 15-20s per query
+in practice - re-scanning 5.36M rows off disk is not something to repeat per search. So the search
+path loads the array once into a process-wide float32 cache on first use and reuses it; a single
+BLAS matmul against RAM then answers a query in well under a second. Building still goes through
+`open_vectors`/memmap, untouched, so a completed embedding run never needs to be redone by this.
 
 Building is resumable and crash-safe: which papers are already embedded lives in a small separate
 database (`prog`), committed every few batches, independent of the (also separate) sparse store.
 Re-running the same command after an interruption picks up where it left off.
 """
 import logging
+import threading
 import time
 from pathlib import Path
 
@@ -18,7 +25,9 @@ from . import config, store as S
 log = logging.getLogger("dblp.search.vectors")
 
 DTYPE = np.dtype(config.VECTOR_DTYPE)
-BLOCK = 200_000   # rows per chunk when scoring a query against the whole index, bounding peak memory
+
+_cache_lock = threading.Lock()
+_cache = {}   # fingerprint -> (n, float32 ndarray), the whole index held in RAM once loaded
 
 
 def progress_path(fingerprint) -> Path:
@@ -112,20 +121,51 @@ def build(con, fingerprint, encoder, batch_size=None, checkpoint_every=None):
             "seconds": round(time.time() - t0, 1)}
 
 
+def _load_full(fingerprint, n):
+    """The whole vector index as a resident float32 array, loaded once per process. Only ever
+    called once the index is complete (the caller gates on `progress()["complete"]`), so the cached
+    array is never a stale partial snapshot. Only one fingerprint's array is kept at a time - in
+    production there is only ever one active dump, and this avoids leaking RAM across redeploys."""
+    with _cache_lock:
+        cached = _cache.get(fingerprint)
+        if cached is not None and cached[0] == n:
+            return cached[1]
+        path = S.vectors_path(fingerprint)
+        if not path.exists():
+            raise FileNotFoundError(f"no vector file at {path}; run build-index first")
+        t0 = time.time()
+        mm = np.memmap(path, dtype=DTYPE, mode="r", shape=(n, config.EMBED_DIM))
+        arr = np.asarray(mm, dtype=np.float32)   # one-time full read + cast into a real ndarray
+        del mm
+        log.info("loaded vector index into memory: %s rows, %.2f GB, %.1fs",
+                 f"{n:,}", arr.nbytes / 1e9, time.time() - t0)
+        _cache.clear()
+        _cache[fingerprint] = (n, arr)
+        return arr
+
+
+def warm(con, fingerprint):
+    """Pre-load the vector cache if the index is complete, so the first live query doesn't pay for
+    it. Safe to call whenever; a no-op if the index isn't ready or is already cached."""
+    try:
+        if progress(con, fingerprint)["complete"]:
+            n = con.execute("SELECT count(*) FROM x.paper").fetchone()[0]
+            _load_full(fingerprint, n)
+    except FileNotFoundError:
+        pass
+
+
 def search(con, fingerprint, qvec, top=None, kind=None, year_from=None, year_to=None, min_sim=0.0):
-    """[(pid, cosine)], best first. Scores the whole index in blocks (vectors are L2-normalised, so
-    a dot product is a cosine similarity), takes the raw top `TOP_DENSE` among those actually above
-    `min_sim`, then applies the kind/year filters against just those - cheap, and generous enough
-    that a filter rarely starves the result. The threshold matters once the index is smaller than
-    `TOP_DENSE` (never true on the real corpus): without it, "top N" would pad the list with
-    zero-or-negative-similarity rows that are not really matches at all."""
+    """[(pid, cosine)], best first. Vectors are L2-normalised, so a dot product is a cosine
+    similarity; takes the raw top `TOP_DENSE` among those actually above `min_sim`, then applies the
+    kind/year filters against just those - cheap, and generous enough that a filter rarely starves
+    the result. The threshold matters once the index is smaller than `TOP_DENSE` (never true on the
+    real corpus): without it, "top N" would pad the list with zero-or-negative-similarity rows that
+    are not really matches at all."""
     n = con.execute("SELECT count(*) FROM x.paper").fetchone()[0]
-    vectors = open_vectors(fingerprint, n, "r")
+    vectors = _load_full(fingerprint, n)
     q = np.asarray(qvec, dtype=np.float32)
-    sims = np.empty(n, dtype=np.float32)
-    for start in range(0, n, BLOCK):
-        end = min(start + BLOCK, n)
-        sims[start:end] = vectors[start:end].astype(np.float32) @ q
+    sims = vectors @ q
 
     raw_top = min(config.TOP_DENSE, n)
     idx = np.argpartition(-sims, raw_top - 1)[:raw_top] if raw_top < n else np.arange(n)
