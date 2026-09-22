@@ -277,6 +277,28 @@ def venue_detail(sid: str = Query(..., max_length=200)):
     return with_meta(data)
 
 
+@app.get("/api/venues/profile")
+def venue_profile(sid: str = Query(..., max_length=200)):
+    # the ranks need every series; that table is built once per dump and each sid picks its row
+    profiles = cached("venue_profiles", Q.venue_profiles, meta(), heavy=True)
+    data = Q.venue_profile(profiles, sid)
+    if data is None:
+        raise HTTPException(404, detail=f"No venue series {sid!r} with at least {profiles['min_papers']} papers")
+    return with_meta(data)
+
+
+@app.get("/api/venues/treemap")
+def venue_treemap(period: str = Query("2021-2025"), publishers: int = Query(10, ge=2, le=20),
+                  series: int = Query(12, ge=1, le=40)):
+    frm, to = _window(period, "period")
+    return with_meta(cached("venue_treemap", Q.venue_treemap, frm, to, publishers, series, heavy=True))
+
+
+@app.get("/api/venues/scatter")
+def venue_scatter(min_papers: int = Query(300, ge=10, le=1_000_000)):
+    return with_meta(cached("venue_scatter", Q.venue_scatter, meta(), min_papers))
+
+
 # ---------------------------------------------------------------- quality ----
 @app.get("/api/quality/coverage")
 def coverage():
@@ -321,6 +343,14 @@ def author_search(q: str = Query(..., max_length=100), limit: int = Query(30, ge
 @app.get("/api/authors/detail")
 def author_detail(key: str = Query(..., max_length=200)):
     data = cached("author_detail", Q.author_detail, key, heavy=True)
+    if data is None:
+        raise HTTPException(404, detail=f"No author page {key!r}")
+    return with_meta(data)
+
+
+@app.get("/api/authors/ego")
+def author_ego(key: str = Query(..., max_length=200), limit: int = Query(30, ge=5, le=60)):
+    data = cached("author_ego", Q.author_ego, key, limit, heavy=True)
     if data is None:
         raise HTTPException(404, detail=f"No author page {key!r}")
     return with_meta(data)

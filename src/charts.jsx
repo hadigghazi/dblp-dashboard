@@ -182,6 +182,133 @@ export function loglogOption(p, { name, color, data, xLabel }) {
   };
 }
 
+/**
+ * Force-directed network. nodes: [{id, name, value, category, hollow?, label?}], links: [{source, target, value, dashed?}],
+ * categories: [{name, color}]. Node size follows sqrt(value) so area is proportional; every mark wears a 2px surface ring.
+ */
+export function graphOption(p, { nodes, links, categories, sizeRange = [10, 34], tooltip }) {
+  const vals = nodes.map((n) => n.value || 0);
+  const lo = Math.sqrt(Math.max(1, Math.min(...vals))), hi = Math.sqrt(Math.max(1, ...vals));
+  const size = (v) => (hi === lo ? sizeRange[0] : sizeRange[0] + ((Math.sqrt(Math.max(1, v)) - lo) / (hi - lo)) * (sizeRange[1] - sizeRange[0]));
+  const maxLink = Math.max(1, ...links.map((l) => l.value || 1));
+  return {
+    ...base(p, { legend: true, legendNames: categories.map((c) => c.name) }),
+    legend: { show: true, top: 0, left: 0, icon: "circle", itemWidth: 9, itemHeight: 9, itemGap: 14,
+              textStyle: { color: p.ink2, fontSize: 12 }, data: categories.map((c) => c.name) },
+    tooltip: { ...base(p).tooltip, trigger: "item", formatter: tooltip },
+    series: [{
+      type: "graph", layout: "force", roam: true, draggable: true, zoom: 1,
+      force: { repulsion: 320, gravity: 0.12, edgeLength: [50, 150], friction: 0.15 },
+      categories: categories.map((c) => ({ name: c.name, itemStyle: { color: c.color } })),
+      data: nodes.map((n) => ({
+        id: n.id, name: n.name, value: n.value, category: n.category, symbolSize: size(n.value),
+        itemStyle: n.hollow
+          ? { color: p.surface, borderColor: categories[n.category].color, borderWidth: 2, borderType: "dashed" }
+          : { borderColor: p.surface, borderWidth: 2 },
+        // a surface-coloured plate keeps a label legible where it crosses another node
+        label: { show: !!n.label, position: "right", color: p.ink2, fontSize: 11, fontFamily: FONT,
+                 backgroundColor: p.surface, padding: [1, 4], borderRadius: 3,
+                 formatter: (d) => d.name.length > 22 ? d.name.slice(0, 21) + "…" : d.name },
+      })),
+      links: links.map((l) => ({
+        source: l.source, target: l.target, value: l.value,
+        lineStyle: { width: 1 + 2.5 * Math.sqrt((l.value || 1) / maxLink), color: p.rule, curveness: 0,
+                     type: l.dashed ? "dashed" : "solid", opacity: l.dashed ? 0.9 : 0.8 },
+      })),
+      lineStyle: { color: p.rule },
+      emphasis: { focus: "adjacency", label: { show: true }, lineStyle: { width: 3 } },
+      labelLayout: { hideOverlap: true },
+    }],
+  };
+}
+
+/**
+ * Radar: axes share one scale (0-100) so shapes are comparable; a reference series is drawn as a dashed gray
+ * polygon with no fill. series: [{name, values, color, reference?}], axes: [{name}].
+ */
+export function radarOption(p, { axes, series, tooltip }) {
+  return {
+    ...base(p, { legend: true, legendNames: series.map((s) => s.name) }),
+    tooltip: { ...base(p).tooltip, trigger: "item", formatter: tooltip },
+    radar: {
+      indicator: axes.map((a) => ({ name: a.name, max: 100 })), radius: "64%", center: ["50%", "56%"],
+      shape: "polygon", splitNumber: 4,
+      axisName: { color: p.ink2, fontSize: 11, fontFamily: FONT },
+      axisLine: { lineStyle: { color: p.rule } },
+      splitLine: { lineStyle: { color: p.rule } },
+      splitArea: { show: false },
+    },
+    series: [{
+      type: "radar", symbol: "circle", symbolSize: 8,
+      data: series.map((s) => ({
+        name: s.name, value: s.values,
+        lineStyle: { width: 2, color: s.color, type: s.reference ? "dashed" : "solid" },
+        itemStyle: { color: s.color, borderColor: p.surface, borderWidth: 2 },
+        areaStyle: s.reference ? { opacity: 0 } : { color: s.color, opacity: 0.12 },
+      })),
+    }],
+  };
+}
+
+/**
+ * Two-level treemap: top level coloured categorically in fixed order (a 7th+ group folds to gray), leaves within
+ * a group vary by alpha so bigger reads darker. children: [{name, value, children: [{name, value, sid}]}].
+ */
+export function treemapOption(p, { children, tooltip }) {
+  const hues = [p.s1, p.s2, p.s3, p.s4, p.s5, p.s6];
+  return {
+    ...base(p),
+    tooltip: { ...base(p).tooltip, trigger: "item", formatter: tooltip },
+    series: [{
+      type: "treemap", roam: false, nodeClick: false, width: "100%", height: "100%", top: 28, left: 0, right: 0, bottom: 0,
+      breadcrumb: { show: false },
+      upperLabel: { show: true, height: 22, color: p.ink, fontSize: 12, fontWeight: 600, fontFamily: FONT,
+                    formatter: (d) => d.name },
+      label: { show: true, color: p.ink, fontSize: 11, fontFamily: FONT, overflow: "truncate",
+               formatter: (d) => d.name },
+      levels: [
+        { itemStyle: { gapWidth: 3, borderWidth: 0, borderColor: p.surface }, upperLabel: { show: false } },
+        { itemStyle: { gapWidth: 3, borderWidth: 3, borderColor: p.surface }, colorAlpha: [0.8, 1], upperLabel: { show: true } },
+        { itemStyle: { gapWidth: 2, borderWidth: 2, borderColor: p.surface }, colorAlpha: [0.45, 0.95] },
+      ],
+      data: children.map((c, i) => ({
+        ...c, itemStyle: { color: i < hues.length ? hues[i] : p.muted },
+        children: c.children.map((leaf) => ({ ...leaf, itemStyle: { color: i < hues.length ? hues[i] : p.muted } })),
+      })),
+    }],
+  };
+}
+
+/**
+ * Scatter with a log x axis. series: [{name, color, data: [{x, y, ...meta}]}]; the `labelTop` largest-x points
+ * are direct-labelled. Points wear a surface ring so overlaps stay countable.
+ */
+export function scatterOption(p, { series, xName, yName, fmtX, fmtY, labelTop = 8, tooltip }) {
+  const all = series.flatMap((s) => s.data);
+  const labelled = new Set([...all].sort((a, b) => b.x - a.x).slice(0, labelTop).map((d) => d.name));
+  return {
+    ...base(p, { legend: series.length > 1, legendNames: series.map((s) => s.name) }),
+    grid: { left: 8, right: 24, top: series.length > 1 ? 38 : 16, bottom: 30, containLabel: true },
+    tooltip: { ...base(p).tooltip, trigger: "item", formatter: tooltip },
+    xAxis: { type: "log", logBase: 10, name: xName, nameLocation: "middle", nameGap: 26,
+             nameTextStyle: { color: p.muted, fontSize: 11.5 },
+             axisLine: { lineStyle: { color: p.rule } }, axisTick: { show: false },
+             axisLabel: { color: p.muted, fontSize: 11, formatter: fmtX }, splitLine: { lineStyle: { color: p.rule } } },
+    yAxis: { type: "value", name: yName, nameLocation: "middle", nameGap: 40, nameTextStyle: { color: p.muted, fontSize: 11.5 },
+             axisLine: { show: false }, axisTick: { show: false },
+             axisLabel: { color: p.muted, fontSize: 11, formatter: fmtY }, splitLine: { lineStyle: { color: p.rule } } },
+    series: series.map((s) => ({
+      type: "scatter", name: s.name, symbolSize: 9,
+      itemStyle: { color: s.color, borderColor: p.surface, borderWidth: 1.5, opacity: 0.9 },
+      emphasis: { focus: "series", itemStyle: { opacity: 1 } },
+      label: { show: true, position: "right", color: p.ink2, fontSize: 10.5, fontFamily: FONT,
+               formatter: (d) => (labelled.has(d.data.name) ? d.data.name : "") },
+      labelLayout: { hideOverlap: true },
+      data: s.data.map((d) => ({ ...d, value: [d.x, d.y] })),
+    })),
+  };
+}
+
 /** Growth-rate bars with confidence intervals in the tooltip. rows: [{kind, period, rate, lo, hi, doubling}] */
 export function growthOption(p, rows) {
   const kinds = ["all", "journal", "conference", "preprint"];

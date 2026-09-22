@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useApi, useDebounced } from "./api.js";
-import { Chart, usePalette, barOption, lineOption, fmt } from "./charts.jsx";
+import { Chart, usePalette, barOption, lineOption, graphOption, radarOption, fmt } from "./charts.jsx";
 import {
   KpiStrip, PageHead, Card, Filters, FilterLabel, Seg, NumberInput, SearchBox, SortableTable,
   KindBadge, PubKind, Callout, EmptyNote,
@@ -68,6 +68,123 @@ export function PageAuthors({ params, go }) {
   );
 }
 
+/** Connected components over the shown co-authors (union-find), largest first. */
+function components(ids, edges) {
+  const parent = new Map(ids.map((i) => [i, i]));
+  const find = (x) => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
+  for (const e of edges) { const a = find(e.a), b = find(e.b); if (a !== b) parent.set(a, b); }
+  const groups = new Map();
+  for (const i of ids) { const r = find(i); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(i); }
+  return [...groups.values()].sort((x, y) => y.length - x.length);
+}
+
+const MAX_GROUPS = 5;
+
+/**
+ * The author's ego network: strongest co-authors as nodes, an edge wherever two of them also publish together.
+ * Groups are the connected components among the co-authors, coloured in fixed order; predicted next co-authors
+ * (from the link model) hang off the shared co-authors that explain them, drawn hollow and dashed.
+ */
+function EgoNetwork({ authorKey, go }) {
+  const p = usePalette();
+  const ego = useApi("authors/ego", { key: authorKey, limit: 30 });
+  const pred = useApi("ml/links", { key: authorKey, top: 5 });
+  const d = ego.data;
+  const built = useMemo(() => {
+    if (!d || pred.loading) return null;   // lay out once, with the predictions in, rather than twice
+    const groups = components(d.coauthors.map((c) => c.person_id), d.edges).filter((g) => g.length >= 2);
+    const groupOf = new Map();
+    groups.slice(0, MAX_GROUPS).forEach((g, i) => g.forEach((id) => groupOf.set(id, i + 1)));
+    const hues = [p.s1, p.s2, p.s3, p.s4, p.s5];
+    const categories = [{ name: d.author.name, color: p.ink }];
+    groups.slice(0, MAX_GROUPS).forEach((g, i) => categories.push({ name: `Group ${"ABCDE"[i]} (${g.length})`, color: hues[i] }));
+    const otherIdx = categories.length;
+    categories.push({ name: "Other co-authors", color: p.muted });
+    const predIdx = categories.length;
+    const suggestions = (pred.data?.suggestions || []).slice(0, 5);
+    if (suggestions.length) categories.push({ name: "Predicted next co-author", color: p.s6 });
+
+    const labelled = new Set([...d.coauthors].sort((a, b) => b.papers - a.papers).slice(0, 5).map((c) => c.person_id));
+    const nodes = [{ id: "ego", key: d.author.key, name: d.author.name, value: Math.max(1, ...d.coauthors.map((c) => c.papers)), category: 0, label: true }];
+    d.coauthors.forEach((c) => nodes.push({ id: String(c.person_id), key: c.key, name: c.name, value: c.papers,
+                                            category: groupOf.get(c.person_id) ?? otherIdx, label: labelled.has(c.person_id) }));
+    const links = [];
+    d.coauthors.forEach((c) => links.push({ source: "ego", target: String(c.person_id), value: c.papers }));
+    d.edges.forEach((e) => links.push({ source: String(e.a), target: String(e.b), value: e.papers }));
+    const byKey = new Map(d.coauthors.map((c) => [c.key, String(c.person_id)]));
+    suggestions.forEach((s) => {
+      const id = `pred:${s.key}`;
+      nodes.push({ id, key: s.key, name: s.name, value: 1, category: predIdx, hollow: true, label: true, predicted: s });
+      const via = s.via.map((w) => byKey.get(w.key)).filter(Boolean);
+      (via.length ? via : ["ego"]).forEach((t) => links.push({ source: id, target: t, value: 1, dashed: true }));
+    });
+    const tooltip = (q) => {
+      if (q.dataType === "edge") {
+        const a = nodes.find((n) => n.id === q.data.source), b = nodes.find((n) => n.id === q.data.target);
+        return q.data.lineStyle?.type === "dashed" ? `<b>${a?.name}</b> is predicted to publish with <b>${b?.name}</b>`
+          : `<b>${a?.name}</b> — <b>${b?.name}</b><br>${q.data.value} paper${q.data.value === 1 ? "" : "s"} together`;
+      }
+      const n = q.data;
+      if (n.id === "ego") return `<b>${n.name}</b><br>${d.degree.toLocaleString()} distinct co-authors`;
+      if (n.predicted) return `<b>${n.name}</b><br>predicted next co-author (score ${n.predicted.score})<br>${n.predicted.common_coauthors} shared co-authors`;
+      return `<b>${n.name}</b><br>${n.value} paper${n.value === 1 ? "" : "s"} with ${d.author.name}`;
+    };
+    return { option: graphOption(p, { nodes, links, categories, tooltip }), groups: groups.length };
+  }, [p, d, pred.data, pred.loading]);
+  return (
+    <Card span2 state={ego} height={420} title="Collaboration groups"
+          sub={d ? `${d.degree.toLocaleString()} distinct co-authors; the ${d.shown} strongest shown. An edge joins two co-authors who also publish together; ${built?.groups ?? 0} group${built?.groups === 1 ? "" : "s"} among them, local clustering ${d.clustering ?? "—"}. Drag to rearrange, click to open.`
+                 : "The strongest co-authors, and which of them also work with each other."}>
+      {() => (d.coauthors.length
+        ? <Chart option={built?.option} height={420} label="Ego network" onClick={(e) => { if (e.dataType === "node" && e.data.key) go("authors", { key: e.data.key }); }} />
+        : <EmptyNote>No co-authored papers with 2–50 authors.</EmptyNote>)}
+    </Card>
+  );
+}
+
+const PROFILE_FMT = {
+  n: (v) => Number(v).toFixed(1),
+  share: (v) => `${Math.round(100 * v)}%`,
+  growth: (v) => `${v > 0 ? "+" : ""}${Math.round(100 * v)}%`,
+};
+// short names for the radar's axes; the table keeps the full ones
+const PROFILE_SHORT = {
+  papers_per_year: "Papers / year", growth: "Recent growth", oa_share: "Open access",
+  doi_share: "DOI", mean_authors: "Team size", unidentified_share: "Unidentified authors",
+};
+
+/** Six metrics of a series as percentile ranks among all series, against the median series. */
+function VenueProfile({ sid, kindColor }) {
+  const p = usePalette();
+  const prof = useApi("venues/profile", { sid });
+  const d = prof.data;
+  const option = useMemo(() => d && radarOption(p, {
+    axes: d.axes.map((a) => ({ name: PROFILE_SHORT[a.key] || a.label })),
+    series: [
+      { name: d.name, values: d.axes.map((a) => a.rank), color: kindColor },
+      { name: "Median series", values: d.axes.map(() => 50), color: p.muted, reference: true },
+    ],
+    tooltip: (q) => `<b>${q.name}</b><br>` + d.axes.map((a, i) => `${a.label}: <b>${Math.round(q.value[i])}</b>th percentile`).join("<br>"),
+  }), [p, d, kindColor]);
+  if (prof.error) return <Card title="Profile" sub="Where this series sits among all series."><EmptyNote>Too few papers to rank against other series.</EmptyNote></Card>;
+  return (
+    <Card state={prof} height={300} title="Profile against every other series"
+          sub={d ? `Each axis is the percentile rank among the ${fmt.comma(d.series_count)} series with ≥ ${d.min_papers} papers, so all six share one scale; the median series is the dashed hexagon.` : ""}>
+      {() => (
+        <>
+          <Chart option={option} height={300} label="Venue profile" />
+          <SortableTable rows={d.axes} defaultSort={{ key: "rank", dir: -1 }} columns={[
+            { key: "label", label: "Dimension" },
+            { key: "value", label: "This series", num: true, render: (r) => PROFILE_FMT[r.unit](r.value) },
+            { key: "median", label: "Median", num: true, render: (r) => PROFILE_FMT[r.unit](r.median) },
+            { key: "rank", label: "Percentile", num: true, render: (r) => `${Math.round(r.rank)}` },
+          ]} />
+        </>
+      )}
+    </Card>
+  );
+}
+
 function AuthorDetail({ authorKey, go, back }) {
   const p = usePalette();
   const d = useApi("authors/detail", { key: authorKey });
@@ -106,6 +223,7 @@ function AuthorDetail({ authorKey, go, back }) {
       ]} />
       <div className="grid">
         {isBin ? <BinSplit authorKey={authorKey} go={go} /> : null}
+        {!isBin && stats.coauthors > 0 ? <EgoNetwork authorKey={authorKey} go={go} /> : null}
         {!isBin && stats.coauthors > 0 ? <LinkSuggestions authorKey={authorKey} go={go} /> : null}
         <Card span2 title="Publications per year" sub="By kind of record.">
           {data.yearly.length ? <Chart option={yearlyOpt} height={240} label="Publications per year" /> : <EmptyNote>No publications resolve to this page.</EmptyNote>}
@@ -243,6 +361,7 @@ function VenueDetail({ sid, go, back }) {
       ]} />
       <div className="grid">
         <Card span2 title="Papers per year"><Chart option={papersOpt} height={230} label="Papers per year" /></Card>
+        <VenueProfile sid={sid} kindColor={s.kind === "journal" ? p.s2 : p.s1} />
         <Card title="Metadata over time" sub="Share of the series’ papers each year."><Chart option={sharesOpt} label="Metadata shares" /></Card>
         <Card title="Mean authors per paper"><Chart option={teamOpt} label="Team size" /></Card>
         <Card title="Name strings" sub="How the venue name was written over time; all belong to this one series.">

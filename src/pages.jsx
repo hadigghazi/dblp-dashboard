@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useApi, useDebounced } from "./api.js";
-import { Chart, usePalette, lineOption, barOption, hbarOption, loglogOption, growthOption, fmt } from "./charts.jsx";
+import { Chart, usePalette, lineOption, barOption, hbarOption, loglogOption, growthOption, treemapOption, scatterOption, fmt } from "./charts.jsx";
 import {
   KpiStrip, PageHead, Card, Filters, FilterLabel, Chip, ChipGroup, Seg, RangeSlider, NumberInput,
   SortableTable, Heatmap, Callout, EmptyNote,
@@ -404,6 +404,7 @@ const PERIOD_PRESETS = {
   report: { l: "2001–05 · 2011–15 · 2021–25", v: "2001-2005,2011-2015,2021-2025" },
   decades: { l: "1990s · 2000s · 2010s · 2020s", v: "1990-1999,2000-2009,2010-2019,2020-2025" },
 };
+const TREEMAP_PERIODS = ["2001-2005", "2011-2015", "2021-2025"];
 
 export function PageVenues({ go }) {
   const p = usePalette();
@@ -413,11 +414,15 @@ export function PageVenues({ go }) {
   const [minPapers, setMinPapers] = useState(2000);
   const [maxDoi, setMaxDoi] = useState(1);
   const minP = useDebounced(minPapers, 600);
+  const [treePeriod, setTreePeriod] = useState(TREEMAP_PERIODS[2]);
+  const [scatterMin, setScatterMin] = useState(1000);
 
   const life = useApi("venues/lifespans");
   const conc = useApi("venues/concentration", { top: topN });
   const pubs = useApi("venues/publishers", { periods: PERIOD_PRESETS[preset].v });
   const gaps = useApi("venues/doi-gaps", { min_papers: minP, max_doi_pct: maxDoi, limit: 15 });
+  const tree = useApi("venues/treemap", { period: treePeriod });
+  const scat = useApi("venues/scatter", { min_papers: scatterMin });
 
   const lifeRows = life.data?.filter((r) => r.kind === kind);
   const lifeColor = kind === "conference" ? p.s1 : p.s2;
@@ -437,6 +442,20 @@ export function PageVenues({ go }) {
   }, [p, pubs.data]);
   const gapOpt = useMemo(() => gaps.data && hbarOption(p, { labels: gaps.data.map((r) => r.usual_name), fmtX: fmt.comma, labelWidth: 190,
     series: [{ name: "Papers", data: gaps.data.map((r) => r.papers), color: p.bad }] }), [p, gaps.data]);
+  const treeOpt = useMemo(() => {
+    if (!tree.data) return null;
+    const total = tree.data.children.reduce((s, c) => s + c.value, 0);
+    return treemapOption(p, { children: tree.data.children, tooltip: (q) => {
+      const pub = q.treePathInfo?.[1]?.name;
+      const share = q.treePathInfo?.length > 2 ? `${(100 * q.value / (q.treePathInfo[1].value || 1)).toFixed(1)}% of ${pub}` : `${(100 * q.value / total).toFixed(1)}% of all`;
+      return `<b>${q.name}</b><br>${fmt.comma(q.value)} papers · ${share}`; } });
+  }, [p, tree.data]);
+  const scatOpt = useMemo(() => scat.data && scatterOption(p, {
+    xName: "papers in the series (log)", yName: "open access", fmtX: fmt.comma, fmtY: fmt.pct,
+    series: [["journal", "Journals", p.s2], ["conference", "Conferences", p.s1]].map(([k, name, color]) => ({
+      name, color, data: scat.data.filter((r) => r.kind === k).map((r) => ({ x: r.papers, y: r.pct_oa, name: r.name, sid: r.sid, doi: r.pct_doi })) })),
+    tooltip: (q) => `<b>${q.data.name}</b><br>${fmt.comma(q.data.x)} papers · ${q.data.y}% open access · ${q.data.doi}% with a DOI`,
+  }), [p, scat.data]);
 
   return (
     <>
@@ -460,6 +479,18 @@ export function PageVenues({ go }) {
         <Card span2 state={pubs} height={280} title="Who publishes it" sub="Share of journal and conference papers by publisher, identified from the DOI prefix."
               controls={<><FilterLabel>Periods</FilterLabel><Seg label="Periods" value={preset} onChange={setPreset} options={Object.entries(PERIOD_PRESETS).map(([k, v]) => ({ v: k, l: v.l }))} /></>}>
           {() => <Chart option={pubOpt} height={280} label="Publishers" />}
+        </Card>
+        <Card span2 state={tree} height={420} title="Inside each publisher" sub="Area is papers in the period: each publisher, and the largest series within it. Click a series to explore it."
+              controls={<><FilterLabel>Period</FilterLabel><Seg label="Period" value={treePeriod} onChange={setTreePeriod} options={TREEMAP_PERIODS.map((v) => ({ v, l: v.replace("-", "–") }))} /></>}>
+          {() => <Chart option={treeOpt} height={420} label="Publishers and their series" onClick={(e) => { if (e.data?.sid) go("venues", { sid: e.data.sid }); }} />}
+        </Card>
+        <Card span2 state={scat} height={380} title="The biggest venues are the open ones"
+              sub="Every active series above the size threshold: how large it is against how much of it is flagged open access. The mega-journals sit top right. Click a point to explore the venue."
+              controls={<><FilterLabel htmlFor="scat-min">Min. papers</FilterLabel>
+                <NumberInput id="scat-min" label="Minimum papers" value={scatterMin} min={100} max={100000} step={100} onChange={setScatterMin} width={90} /></>}>
+          {() => (scat.data.length
+            ? <Chart option={scatOpt} height={380} label="Series size against open-access share" onClick={(e) => { if (e.data?.sid) go("venues", { sid: e.data.sid }); }} />
+            : <EmptyNote>No series above this size.</EmptyNote>)}
         </Card>
         <Card span2 state={gaps} height={380} title="Where the DOI bridge is out"
               sub="Largest series whose papers almost never carry a DOI, so they can’t be enriched through OpenAlex. Click a bar to explore the venue."

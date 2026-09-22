@@ -23,7 +23,8 @@
     --ground: #0f1115; --surface: #171a20; --surface-2: #1b1f26; --ink: #eef0f3; --ink-2: #b7bec9; --muted: #7c8492;
     --rule: #282e38; --rule-2: #20242c;
     --accent: #5a9cf0; --accent-ink: #8ab8f5; --tint: #182335;
-    --s1: #5a9cf0; --s2: #f08a52; --s3: #3fd39a; --s4: #e0a942; --s5: #e895b6; --s6: #8f80e0; --good: #3fcf5e; --bad: #f0716f;
+    /* the light hues re-stepped for the dark surface (OKLCH L 0.48-0.67, >= 3:1), not brightened copies */
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #9085e9; --good: #3fcf5e; --bad: #f0716f;
     --chart-surface: #171a20;
     --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 4px 20px rgba(0, 0, 0, .35);
   }
@@ -33,7 +34,7 @@
   --ground: #0f1115; --surface: #171a20; --surface-2: #1b1f26; --ink: #eef0f3; --ink-2: #b7bec9; --muted: #7c8492;
   --rule: #282e38; --rule-2: #20242c;
   --accent: #5a9cf0; --accent-ink: #8ab8f5; --tint: #182335;
-  --s1: #5a9cf0; --s2: #f08a52; --s3: #3fd39a; --s4: #e0a942; --s5: #e895b6; --s6: #8f80e0; --good: #3fcf5e; --bad: #f0716f;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #9085e9; --good: #3fcf5e; --bad: #f0716f;
   --chart-surface: #171a20;
   --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 4px 20px rgba(0, 0, 0, .35);
 }

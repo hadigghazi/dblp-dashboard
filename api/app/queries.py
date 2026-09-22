@@ -473,6 +473,98 @@ def venue_detail(cur, sid):
     return {"series": head, "yearly": yearly, "names": names, "top_authors": authors, "recent": recent}
 
 
+# The six dimensions a venue is profiled on. Each is turned into a percentile rank among all series
+# with enough papers, so the axes share one scale and "the median venue" is a regular polygon.
+PROFILE_AXES = [
+    ("papers_per_year", "Papers per active year", "n"),
+    ("growth", "Recent growth", "growth"),
+    ("oa_share", "Open access", "share"),
+    ("doi_share", "Carry a DOI", "share"),
+    ("mean_authors", "Authors per paper", "n"),
+    ("unidentified_share", "Papers with an unidentified author", "share"),
+]
+
+
+def venue_profiles(cur, meta, min_papers=50):
+    """eda_03_venues.py metrics per series, plus their percentile ranks. One table for every series
+    that qualifies; `venue_profile` picks a row. Growth is (recent - earlier) / (recent + earlier) over
+    the last three complete years vs. the three before, so it is bounded and symmetric."""
+    last = last_full_year(meta)
+    keys = [k for k, _, _ in PROFILE_AXES]
+    ranks = ", ".join(f"round(100 * percent_rank() OVER (ORDER BY {k}), 1) AS rank_{k}" for k in keys)
+    data = rows(cur, f"""
+        WITH m AS (
+            SELECT sid, avg(n_authors) AS mean_authors, avg((n_unidentified > 0)::INT) AS unidentified_share,
+                   count(*) FILTER (WHERE year BETWEEN ? AND ?) AS recent,
+                   count(*) FILTER (WHERE year BETWEEN ? AND ?) AS earlier
+            FROM pubs WHERE {JOURNAL_CONF} AND key_prefix IN ('conf', 'journals') GROUP BY sid),
+        v AS (
+            SELECT s.sid, s.kind, s.usual_name, s.papers,
+                   s.papers::DOUBLE / greatest(s.active_years, 1) AS papers_per_year,
+                   CASE WHEN m.recent + m.earlier = 0 THEN 0.0
+                        ELSE (m.recent - m.earlier)::DOUBLE / (m.recent + m.earlier) END AS growth,
+                   s.oa_share, s.doi_share, m.mean_authors, m.unidentified_share
+            FROM series s JOIN m USING (sid) WHERE s.papers >= ?)
+        SELECT *, {ranks} FROM v""", [last - 2, last, last - 5, last - 3, min_papers])
+    medians = {k: float(np.median([r[k] for r in data])) for k in keys} if data else {}
+    return {"rows": {r["sid"]: r for r in data}, "medians": medians, "series_count": len(data),
+            "min_papers": min_papers, "windows": {"recent": f"{last - 2}–{last}", "earlier": f"{last - 5}–{last - 3}"}}
+
+
+def venue_profile(profiles, sid):
+    r = profiles["rows"].get(sid)
+    if not r:
+        return None
+    return {
+        "sid": sid, "name": r["usual_name"], "kind": r["kind"], "papers": r["papers"],
+        "axes": [{"key": k, "label": label, "unit": unit, "value": r[k], "rank": r[f"rank_{k}"],
+                  "median": profiles["medians"][k]} for k, label, unit in PROFILE_AXES],
+        "series_count": profiles["series_count"], "min_papers": profiles["min_papers"], "windows": profiles["windows"],
+    }
+
+
+def venue_treemap(cur, frm, to, publishers_top=10, series_top=12):
+    """Papers of a period by publisher (from the DOI prefix), then by series inside each publisher -
+    the hierarchy the publishers bar chart flattens."""
+    pairs = ", ".join(f"('{k}', '{v}')" for k, v in PUBLISHERS.items())
+    data = rows(cur, f"""
+        WITH names(doi_prefix, publisher) AS (VALUES {pairs}),
+        p AS (
+            SELECT s.sid, CASE WHEN s.doi_prefix = '' THEN '(no DOI)'
+                               ELSE coalesce(n.publisher, 'other DOI prefix') END AS publisher
+            FROM pubs s LEFT JOIN names n USING (doi_prefix)
+            WHERE {JOURNAL_CONF} AND s.key_prefix IN ('conf', 'journals') AND s.year BETWEEN ? AND ?),
+        per AS (SELECT publisher, sid, count(*) AS papers FROM p GROUP BY ALL),
+        ranked AS (SELECT *, row_number() OVER (PARTITION BY publisher ORDER BY papers DESC) AS rk,
+                          sum(papers) OVER (PARTITION BY publisher) AS pub_total FROM per)
+        SELECT r.publisher, r.pub_total, r.rk, r.sid, r.papers, se.usual_name AS name, se.kind
+        FROM ranked r LEFT JOIN series se USING (sid)
+        WHERE r.rk <= ?
+        ORDER BY r.pub_total DESC, r.rk""", [frm, to, series_top])
+    by_pub = {}
+    for r in data:
+        pub = by_pub.setdefault(r["publisher"], {"name": r["publisher"], "value": r["pub_total"], "children": [], "shown": 0})
+        if r["rk"] <= series_top:
+            pub["children"].append({"name": r["name"] or r["sid"], "sid": r["sid"], "kind": r["kind"], "value": r["papers"]})
+            pub["shown"] += r["papers"]
+    out = []
+    for pub in sorted(by_pub.values(), key=lambda x: -x["value"])[:publishers_top]:
+        rest = pub["value"] - pub["shown"]
+        if rest > 0:
+            pub["children"].append({"name": "other series", "sid": None, "kind": None, "value": rest})
+        out.append({k: v for k, v in pub.items() if k != "shown"})
+    return {"period": f"{frm}–{to}", "children": out}
+
+
+def venue_scatter(cur, meta, min_papers=300):
+    """Every active series large enough to plot: size against open-access share, by kind."""
+    last = last_full_year(meta)
+    return rows(cur, """
+        SELECT sid, usual_name AS name, kind, papers, round(100 * oa_share, 1) AS pct_oa,
+               round(100 * doi_share, 1) AS pct_doi, last_year
+        FROM series WHERE papers >= ? AND last_year >= ? ORDER BY papers DESC""", [min_papers, last - 2])
+
+
 # =========================================================================== quality
 COVERAGE_TYPES = ["article", "inproceedings", "www", "phdthesis", "incollection", "proceedings", "data", "book",
                   "mastersthesis"]
@@ -708,6 +800,39 @@ def paper_search(cur, q, kind=None, frm=None, to=None, limit=30):
         SELECT key, title, year, venue, {KIND_SQL} AS kind, n_authors, n_unidentified, has_twin, has_oa
         FROM pubs WHERE {' AND '.join(where)}
         ORDER BY year DESC NULLS LAST, key LIMIT ?""", params + [limit])
+
+
+def author_ego(cur, key, limit=30):
+    """The author's strongest co-authors and which of those also work with each other: the ego
+    network, whose groups a force layout makes visible. Same graph as the network job - papers with
+    2-50 authors, disambiguation bins excluded. Clustering is computed among the co-authors shown."""
+    person = one(cur, "SELECT person_id, key, name, page_kind FROM persons WHERE key = ?", [key])
+    if not person:
+        return None
+    pid = person.pop("person_id")
+    mine = "SELECT pid FROM slots WHERE person_id = ? AND n_authors BETWEEN 2 AND 50"
+    coauthors = rows(cur, f"""
+        WITH mine AS ({mine})
+        SELECT p.person_id, p.key, p.name, p.page_kind, count(*) AS papers, max(s.year) AS last_year
+        FROM slots s JOIN mine USING (pid) JOIN persons p USING (person_id)
+        WHERE s.person_id <> ? AND NOT s.on_bin
+        GROUP BY ALL ORDER BY papers DESC, p.name LIMIT ?""", [pid, pid, limit])
+    degree = one(cur, f"""
+        WITH mine AS ({mine})
+        SELECT count(DISTINCT s.person_id) AS n FROM slots s JOIN mine USING (pid)
+        WHERE s.person_id <> ? AND NOT s.on_bin""", [pid, pid])["n"]
+    ids = [c["person_id"] for c in coauthors]
+    edges = rows(cur, """
+        WITH members AS (
+            SELECT person_id, pid FROM slots
+            WHERE person_id IN (SELECT unnest(?::INTEGER[])) AND n_authors BETWEEN 2 AND 50)
+        SELECT a.person_id AS a, b.person_id AS b, count(*) AS papers
+        FROM members a JOIN members b ON a.pid = b.pid AND a.person_id < b.person_id
+        GROUP BY ALL""", [ids]) if ids else []
+    k = len(coauthors)
+    clustering = round(2 * len(edges) / (k * (k - 1)), 3) if k >= 2 else None
+    return {"author": person, "coauthors": coauthors, "edges": edges,
+            "degree": int(degree), "shown": k, "clustering": clustering}
 
 
 def paper_detail(cur, key):

@@ -151,6 +151,33 @@ def test_venue_search_and_detail(client):
     assert client.get("/api/venues/detail", params={"sid": "conf/nope"}).status_code == 404
 
 
+def test_venue_profile_ranks_share_one_scale(client):
+    p = get(client, "/api/venues/profile", sid="conf/nips")
+    assert p["sid"] == "conf/nips" and len(p["axes"]) == 6
+    for a in p["axes"]:
+        assert 0 <= a["rank"] <= 100 and a["value"] is not None and a["median"] is not None
+    assert p["series_count"] >= 5
+    # a series too small to rank is a clean 404, not a row of nulls
+    assert client.get("/api/venues/profile", params={"sid": "conf/nope"}).status_code == 404
+
+
+def test_venue_treemap_is_a_two_level_hierarchy(client):
+    t = get(client, "/api/venues/treemap", period="2011-2025", publishers=5, series=3)
+    assert t["period"] == "2011–2025" and 2 <= len(t["children"]) <= 5
+    for pub in t["children"]:
+        shown = [c for c in pub["children"] if c["sid"]]
+        assert 1 <= len(shown) <= 3
+        assert sum(c["value"] for c in pub["children"]) == pub["value"]   # the "other series" leaf closes the sum
+    assert client.get("/api/venues/treemap", params={"period": "2011-2015,2021-2025"}).status_code == 400
+
+
+def test_venue_scatter_lists_active_series(client):
+    pts = get(client, "/api/venues/scatter", min_papers=10)
+    assert pts and {p["kind"] for p in pts} <= {"journal", "conference"}
+    assert all(p["papers"] >= 10 and 0 <= p["pct_oa"] <= 100 for p in pts)
+    assert pts == sorted(pts, key=lambda p: -p["papers"])
+
+
 # ------------------------------------------------------------------ quality
 def test_quality(client):
     cov = get(client, "/api/quality/coverage")
@@ -201,6 +228,22 @@ def test_bin_detail(client):
     d = get(client, "/api/authors/detail", key="homepages/bin/WeiWang")
     assert d["person"]["page_kind"] == "disambiguation"
     assert d["stats"]["papers"] > 0
+
+
+def test_author_ego_network(client):
+    hits = get(client, "/api/authors/search", q="Wei Wang")
+    key = next(h for h in hits if h["page_kind"] == "numbered")["key"]
+    ego = get(client, "/api/authors/ego", key=key, limit=10)
+    assert ego["author"]["key"] == key and ego["shown"] == len(ego["coauthors"]) <= 10
+    assert ego["degree"] >= ego["shown"]
+    ids = {c["person_id"] for c in ego["coauthors"]}
+    assert key not in {c["key"] for c in ego["coauthors"]}                 # the ego is not its own neighbour
+    assert all(c["page_kind"] != "disambiguation" for c in ego["coauthors"])
+    for e in ego["edges"]:
+        assert e["a"] in ids and e["b"] in ids and e["a"] < e["b"] and e["papers"] >= 1
+    if ego["shown"] >= 2:
+        assert 0 <= ego["clustering"] <= 1
+    assert client.get("/api/authors/ego", params={"key": "homepages/none"}).status_code == 404
 
 
 def test_variant_name_resolves(client, data_dir):
