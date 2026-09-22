@@ -68,13 +68,31 @@ export function PageAuthors({ params, go }) {
   );
 }
 
-/** Connected components over the shown co-authors (union-find), largest first. */
-function components(ids, edges) {
-  const parent = new Map(ids.map((i) => [i, i]));
-  const find = (x) => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
-  for (const e of edges) { const a = find(e.a), b = find(e.b); if (a !== b) parent.set(a, b); }
+/**
+ * Communities among the shown co-authors by weighted label propagation, largest first. Connected components
+ * would not do: one bridge person joins every cluster into a single component, while the groups the eye sees
+ * are regions of dense edges. Nodes are visited in a fixed order and ties go to the smallest label, so the
+ * result is deterministic for a given graph.
+ */
+function communities(ids, edges) {
+  const order = [...ids];
+  const nbrs = new Map(order.map((i) => [i, []]));
+  for (const e of edges) { nbrs.get(e.a)?.push([e.b, e.papers]); nbrs.get(e.b)?.push([e.a, e.papers]); }
+  const label = new Map(order.map((i) => [i, i]));
+  for (let iter = 0; iter < 50; iter++) {
+    let changed = false;
+    for (const i of order) {
+      const weight = new Map();
+      for (const [j, w] of nbrs.get(i)) weight.set(label.get(j), (weight.get(label.get(j)) || 0) + w);
+      if (!weight.size) continue;
+      let best = label.get(i), bestW = -1;
+      for (const [l, w] of weight) if (w > bestW || (w === bestW && l < best)) { best = l; bestW = w; }
+      if (best !== label.get(i)) { label.set(i, best); changed = true; }
+    }
+    if (!changed) break;
+  }
   const groups = new Map();
-  for (const i of ids) { const r = find(i); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(i); }
+  for (const i of order) { const l = label.get(i); if (!groups.has(l)) groups.set(l, []); groups.get(l).push(i); }
   return [...groups.values()].sort((x, y) => y.length - x.length);
 }
 
@@ -92,7 +110,7 @@ function EgoNetwork({ authorKey, go }) {
   const d = ego.data;
   const built = useMemo(() => {
     if (!d || pred.loading) return null;   // lay out once, with the predictions in, rather than twice
-    const groups = components(d.coauthors.map((c) => c.person_id), d.edges).filter((g) => g.length >= 2);
+    const groups = communities(d.coauthors.map((c) => c.person_id), d.edges).filter((g) => g.length >= 2);
     const groupOf = new Map();
     groups.slice(0, MAX_GROUPS).forEach((g, i) => g.forEach((id) => groupOf.set(id, i + 1)));
     const hues = [p.s1, p.s2, p.s3, p.s4, p.s5];
@@ -133,7 +151,7 @@ function EgoNetwork({ authorKey, go }) {
   }, [p, d, pred.data, pred.loading]);
   return (
     <Card span2 state={ego} height={420} title="Collaboration groups"
-          sub={d ? `${d.degree.toLocaleString()} distinct co-authors; the ${d.shown} strongest shown. An edge joins two co-authors who also publish together; ${built?.groups ?? 0} group${built?.groups === 1 ? "" : "s"} among them, local clustering ${d.clustering ?? "—"}. Drag to rearrange, click to open.`
+          sub={d ? `${d.degree.toLocaleString()} distinct co-authors; the ${d.shown} strongest shown. An edge joins two co-authors who also publish together; the colours are ${built?.groups ?? 0} communit${built?.groups === 1 ? "y" : "ies"} found among them (label propagation), local clustering ${d.clustering ?? "—"}. Drag to rearrange, click to open.`
                  : "The strongest co-authors, and which of them also work with each other."}>
       {() => (d.coauthors.length
         ? <Chart option={built?.option} height={420} label="Ego network" onClick={(e) => { if (e.dataType === "node" && e.data.key) go("authors", { key: e.data.key }); }} />
