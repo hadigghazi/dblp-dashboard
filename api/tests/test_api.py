@@ -209,6 +209,22 @@ def test_tails_rejects_unknown_panel(client):
     assert client.get("/api/tails", params={"panel": "nope"}).status_code == 400
 
 
+def test_joint_density_is_a_log_binned_grid(client):
+    d = get(client, "/api/tails/joint", bins_per_decade=4)
+    assert d["nx"] > 0 and d["ny"] > 0 and len(d["grid"]) == d["ny"] and all(len(r) == d["nx"] for r in d["grid"])
+    assert sum(map(sum, d["grid"])) == d["authors_plotted"] <= d["authors_total"]
+    assert 0 <= d["left_out_share"] < 1
+    assert d["authors_plotted"] > 0 and any(v > 0 for r in d["grid"] for v in r)
+
+
+def test_team_boxes_are_ordered_quantiles(client):
+    rows_ = get(client, "/api/publishing/team-boxes", **{"from": 1990, "step": 10})
+    assert [r["period_start"] for r in rows_] == sorted(r["period_start"] for r in rows_)
+    assert rows_[0]["period_start"] == 1990 and rows_[0]["period_end"] == 1999
+    for r in rows_:
+        assert r["p5"] <= r["q1"] <= r["median"] <= r["q3"] <= r["p95"] <= r["max"] and r["papers"] > 0
+
+
 # ------------------------------------------------------------------ explore
 def test_author_search_and_detail(client):
     hits = get(client, "/api/authors/search", q="Wei Wang")

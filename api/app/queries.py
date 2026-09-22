@@ -698,6 +698,51 @@ def tails(cur, panel, fits):
     }
 
 
+def joint_density(cur, bins_per_decade=6):
+    """
+    Papers per author against distinct co-authors per author, as a 2-D histogram in log10 bins: the
+    joint distribution behind the two tails panels. Millions of authors make a scatter unreadable;
+    a density is the right form. Bins (disambiguation pages) are excluded as everywhere; authors with
+    no co-author or no paper cannot sit on a log axis and are reported as the share left out.
+    """
+    b = int(bins_per_decade)
+    cells = rows(cur, f"""
+        SELECT floor(log10(ps.n_pubs) * {b})::INTEGER AS bx, floor(log10(d.n_coauthors) * {b})::INTEGER AS by,
+               count(*) AS n
+        FROM person_stats ps JOIN person_degree d USING (person_id) JOIN persons p USING (person_id)
+        WHERE p.page_kind <> 'disambiguation' AND ps.n_pubs > 0 AND d.n_coauthors > 0
+        GROUP BY ALL""")
+    total_all = one(cur, """
+        SELECT count(*) AS n FROM person_stats ps JOIN persons p USING (person_id)
+        WHERE p.page_kind <> 'disambiguation' AND ps.n_pubs > 0""")["n"]
+    plotted = sum(c["n"] for c in cells)
+    nx = (max(c["bx"] for c in cells) + 1) if cells else 0
+    ny = (max(c["by"] for c in cells) + 1) if cells else 0
+    grid = [[0] * nx for _ in range(ny)]
+    for c in cells:
+        grid[c["by"]][c["bx"]] = c["n"]
+    return {
+        "bins_per_decade": b, "nx": nx, "ny": ny, "grid": grid,
+        "authors_plotted": int(plotted), "authors_total": int(total_all),
+        "left_out_share": round(1 - plotted / total_all, 4) if total_all else None,
+    }
+
+
+def team_boxes(cur, meta, frm=1970, to=None, step=5):
+    """Authors per paper as a distribution per period, not just its mean: the whiskers are the 5th
+    and 95th percentiles, the box the quartiles."""
+    frm, to = _years(frm, to, 1970, last_full_year(meta))
+    return rows(cur, f"""
+        SELECT (year - ?) // ? * ? + ? AS period_start,
+               least((year - ?) // ? * ? + ? + ? - 1, ?) AS period_end,
+               count(*) AS papers,
+               quantile_cont(n_authors, 0.05) AS p5, quantile_cont(n_authors, 0.25) AS q1,
+               quantile_cont(n_authors, 0.5) AS median, quantile_cont(n_authors, 0.75) AS q3,
+               quantile_cont(n_authors, 0.95) AS p95, avg(n_authors) AS mean, max(n_authors) AS max
+        FROM pubs WHERE {JOURNAL_CONF} AND n_authors > 0 AND year BETWEEN ? AND ?
+        GROUP BY 1, 2 ORDER BY 1""", [frm, step, step, frm, frm, step, step, frm, step, to, frm, to])
+
+
 # =========================================================================== explore: authors
 def author_search(cur, q, limit=30):
     q = (q or "").strip()

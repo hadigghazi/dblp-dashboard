@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useApi, useDebounced } from "./api.js";
-import { Chart, usePalette, lineOption, barOption, hbarOption, loglogOption, growthOption, treemapOption, scatterOption, fmt } from "./charts.jsx";
+import { Chart, usePalette, lineOption, barOption, hbarOption, loglogOption, growthOption, treemapOption, scatterOption, densityOption, boxplotOption, fmt } from "./charts.jsx";
 import {
   KpiStrip, PageHead, Card, Filters, FilterLabel, Chip, ChipGroup, Seg, RangeSlider, NumberInput,
   SortableTable, Heatmap, Callout, EmptyNote,
@@ -75,6 +75,7 @@ export function PagePublishing({ status }) {
 
   const growth = useApi("publishing/growth", { from: r[0], to: r[1] });
   const teams = useApi("publishing/teams", { from: r[0], to: r[1] });
+  const boxes = useApi("publishing/team-boxes", { from: r[0], to: r[1], step: 5 });
   const meta = useApi("publishing/metadata", { from: Math.max(2000, r[0]), to: r[1] });
   const rates = useApi("publishing/growth-rates", rc);
 
@@ -95,6 +96,10 @@ export function PagePublishing({ status }) {
     { name: "Preprint/published twin", data: meta.data.map((x) => x.with_title_twin), color: p.s4 },
     { name: "Open access", data: meta.data.map((x) => x.open_access), color: p.s3 },
   ] }), [p, meta.data]);
+  const boxOpt = useMemo(() => boxes.data && boxplotOption(p, { fmtY: fmt.fixed1,
+    labels: boxes.data.map((x) => (x.period_end > x.period_start ? `${x.period_start}–${String(x.period_end).slice(2)}` : `${x.period_start}`)),
+    boxes: boxes.data.map((x) => [x.p5, x.q1, x.median, x.q3, x.p95]),
+    means: boxes.data.map((x) => x.mean) }), [p, boxes.data]);
   const ratesRows = rates.data?.rows.filter((x) => x.period !== `${rates.data.from}-${rates.data.to}`);
   const ratesOpt = useMemo(() => ratesRows && growthOption(p, ratesRows), [p, rates.data]);
   const full = rates.data?.rows.find((x) => x.kind === "all" && x.period === `${rates.data.from}-${rates.data.to}`);
@@ -124,6 +129,12 @@ export function PagePublishing({ status }) {
         </Card>
         <Card state={teams} title="Solo papers vanished; big teams grew" sub="Share of papers with one author, and with ten or more.">
           {() => <Chart option={soloOpt} label="Team size shares" />}
+        </Card>
+        <Card span2 state={boxes} height={300} title="Authors per paper: the whole distribution, not just its mean"
+              sub={boxes.data?.length > 1
+                ? `Five-year periods. Box = middle half of papers, whiskers = 5th to 95th percentile, dot = mean. From ${boxes.data[0].period_start}s to ${boxes.data.at(-1).period_start}s the median went ${boxes.data[0].median} → ${boxes.data.at(-1).median}, the 95th percentile ${boxes.data[0].p95} → ${boxes.data.at(-1).p95}.`
+                : "Five-year periods. Box = middle half of papers, whiskers = 5th to 95th percentile, dot = mean."}>
+          {() => <Chart option={boxOpt} height={300} label="Authors per paper by period" />}
         </Card>
         <Card span2 state={meta} height={290} title="Four metadata trends"
               sub="Share of journal, conference and preprint records per year (from 2000). Recent twins are undercounted: many preprints aren’t published yet.">
@@ -641,6 +652,11 @@ export function PageTails() {
   const opt = useMemo(() => d?.points?.length && loglogOption(p, { name: d.label, color, data: d.points, xLabel: d.label }), [p, d]);
   const s = d?.stats;
   const fit = d?.fit;
+  const joint = useApi("tails/joint", { bins_per_decade: 6 });
+  const jointOpt = useMemo(() => joint.data && densityOption(p, {
+    grid: joint.data.grid, nx: joint.data.nx, ny: joint.data.ny, binsPerDecade: joint.data.bins_per_decade,
+    xName: "papers", yName: "distinct co-authors", levels: [10, 100, 1000, 10000, 100000], total: joint.data.authors_plotted,
+  }), [p, joint.data]);
   return (
     <>
       <PageHead eyebrow="08 · The long tail, formally" title="Heavy-tailed, but not power laws">
@@ -668,6 +684,10 @@ export function PageTails() {
               { key: "v", label: "R (p-value)", render: (r) => <span className="num">{r.v}</span> },
             ]} />
           ) : <EmptyNote>The statistics job has not produced a fit for this distribution.</EmptyNote>)}
+        </Card>
+        <Card span2 state={joint} height={420} title="Papers against co-authors, every author at once"
+              sub={joint.data ? `Where ${fmt.comma(joint.data.authors_plotted)} authors sit on both scales, as a density on log–log axes (colour is the count in each cell, on a log ramp; lines are iso-counts of 10, 100, 1,000, 10,000 and 100,000). ${pct(Math.round(100 * joint.data.left_out_share))} of authors have no co-author and cannot sit on a log axis. Hover a cell for its count.` : "The joint distribution behind the two author panels above."}>
+          {() => <Chart option={jointOpt} height={420} label="Density of papers against co-authors" />}
         </Card>
       </div>
       <Callout>

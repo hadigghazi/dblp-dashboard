@@ -14,6 +14,8 @@
   --tint: #e9f1fb;
   --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
   --s5: #e87ba4; --s6: #4a3aa7; --good: #0ca30c; --bad: #e34948;
+  /* sequential ramp (one hue, more = darker on a light surface); steps 150/300/450/550/650 of the blue ramp */
+  --seq-1: #b7d3f6; --seq-2: #6da7ec; --seq-3: #2a78d6; --seq-4: #1c5cab; --seq-5: #104281;
   --chart-surface: #fcfcfb;
   --shadow: 0 1px 2px rgba(20, 24, 33, .04), 0 1px 10px rgba(20, 24, 33, .05);
 }
@@ -25,6 +27,8 @@
     --accent: #5a9cf0; --accent-ink: #8ab8f5; --tint: #182335;
     /* the light hues re-stepped for the dark surface (OKLCH L 0.48-0.67, >= 3:1), not brightened copies */
     --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #9085e9; --good: #3fcf5e; --bad: #f0716f;
+    /* the ramp anchors to the surface: on dark, more = lighter */
+    --seq-1: #1c5cab; --seq-2: #2a78d6; --seq-3: #5598e7; --seq-4: #86b6ef; --seq-5: #b7d3f6;
     --chart-surface: #171a20;
     --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 4px 20px rgba(0, 0, 0, .35);
   }
@@ -35,6 +39,7 @@
   --rule: #282e38; --rule-2: #20242c;
   --accent: #5a9cf0; --accent-ink: #8ab8f5; --tint: #182335;
   --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #9085e9; --good: #3fcf5e; --bad: #f0716f;
+  --seq-1: #1c5cab; --seq-2: #2a78d6; --seq-3: #5598e7; --seq-4: #86b6ef; --seq-5: #b7d3f6;
   --chart-surface: #171a20;
   --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 4px 20px rgba(0, 0, 0, .35);
 }

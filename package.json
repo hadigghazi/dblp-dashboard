@@ -10,6 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "d3-contour": "^4.0.2",
     "echarts": "^5.6.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"

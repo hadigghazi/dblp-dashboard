@@ -160,6 +160,12 @@ def teams(frm: Optional[int] = Query(None, alias="from", ge=1900, le=2100),
     return with_meta(cached("teams", Q.teams, meta(), frm, to))
 
 
+@app.get("/api/publishing/team-boxes")
+def team_boxes(frm: int = Query(1970, alias="from", ge=1900, le=2100), to: Optional[int] = Query(None, ge=1900, le=2100),
+               step: int = Query(5, ge=1, le=20)):
+    return with_meta(cached("team_boxes", Q.team_boxes, meta(), frm, to, step))
+
+
 @app.get("/api/publishing/metadata")
 def metadata(frm: Optional[int] = Query(None, alias="from", ge=1900, le=2100),
              to: Optional[int] = Query(None, ge=1900, le=2100)):
@@ -332,6 +338,11 @@ def tails(panel: str = Query("papers_per_author")):
     fits = snapshots.power_law_fits()
     data = cached("tails", Q.tails, panel, fits.get("fits") if fits.get("available") else None)
     return with_meta({**data, "fit_source": fits.get("source")})
+
+
+@app.get("/api/tails/joint")
+def joint_density(bins_per_decade: int = Query(6, ge=2, le=12)):
+    return with_meta(cached("joint_density", Q.joint_density, bins_per_decade, heavy=True))
 
 
 # ---------------------------------------------------------------- explore ----

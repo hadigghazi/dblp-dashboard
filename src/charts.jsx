@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import * as echarts from "echarts";
+import { contours as d3contours } from "d3-contour";
 
 // ---------------------------------------------------------------- theme ----
 // ECharts draws to a canvas, which never resolves CSS custom properties.
@@ -28,6 +29,7 @@ export function usePalette() {
   return {
     s1: tok("--s1"), s2: tok("--s2"), s3: tok("--s3"), s4: tok("--s4"), s5: tok("--s5"), s6: tok("--s6"),
     good: tok("--good"), bad: tok("--bad"),
+    seq: [tok("--seq-1"), tok("--seq-2"), tok("--seq-3"), tok("--seq-4"), tok("--seq-5")],
     ink: tok("--ink"), ink2: tok("--ink-2"), muted: tok("--muted"), rule: tok("--rule-2"), surface: tok("--chart-surface"),
   };
 }
@@ -288,13 +290,13 @@ export function scatterOption(p, { series, xName, yName, fmtX, fmtY, labelTop = 
   const labelled = new Set([...all].sort((a, b) => b.x - a.x).slice(0, labelTop).map((d) => d.name));
   return {
     ...base(p, { legend: series.length > 1, legendNames: series.map((s) => s.name) }),
-    grid: { left: 8, right: 24, top: series.length > 1 ? 38 : 16, bottom: 30, containLabel: true },
+    grid: { left: 44, right: 24, top: series.length > 1 ? 38 : 16, bottom: 30, containLabel: true },
     tooltip: { ...base(p).tooltip, trigger: "item", formatter: tooltip },
     xAxis: { type: "log", logBase: 10, name: xName, nameLocation: "middle", nameGap: 26,
              nameTextStyle: { color: p.muted, fontSize: 11.5 },
              axisLine: { lineStyle: { color: p.rule } }, axisTick: { show: false },
              axisLabel: { color: p.muted, fontSize: 11, formatter: fmtX }, splitLine: { lineStyle: { color: p.rule } } },
-    yAxis: { type: "value", name: yName, nameLocation: "middle", nameGap: 40, nameTextStyle: { color: p.muted, fontSize: 11.5 },
+    yAxis: { type: "value", name: yName, nameLocation: "middle", nameGap: 40, nameRotate: 90, nameTextStyle: { color: p.muted, fontSize: 11.5 },
              axisLine: { show: false }, axisTick: { show: false },
              axisLabel: { color: p.muted, fontSize: 11, formatter: fmtY }, splitLine: { lineStyle: { color: p.rule } } },
     series: series.map((s) => ({
@@ -306,6 +308,87 @@ export function scatterOption(p, { series, xName, yName, fmtX, fmtY, labelTop = 
       labelLayout: { hideOverlap: true },
       data: s.data.map((d) => ({ ...d, value: [d.x, d.y] })),
     })),
+  };
+}
+
+/**
+ * 2-D density on log-log axes: a grid of log10 bins drawn as cells on a sequential ramp (colour is log of the
+ * count, since counts span many orders of magnitude), with iso-count contours (marching squares) on top.
+ * grid[y][x] = count; bin i covers 10^(i/b) .. 10^((i+1)/b).
+ */
+export function densityOption(p, { grid, nx, ny, binsPerDecade, xName, yName, levels, total }) {
+  const b = binsPerDecade;
+  const lo = (i) => Math.pow(10, i / b), mid = (i) => Math.pow(10, (i + 0.5) / b);
+  const maxLog = Math.log10(Math.max(1, ...grid.flat()) + 1);
+  const ramp = p.seq;
+  const colorAt = (v) => ramp[Math.min(ramp.length - 1, Math.floor((Math.log10(v + 1) / maxLog) * ramp.length))];
+  const cells = [];
+  grid.forEach((row, y) => row.forEach((v, x) => { if (v > 0) cells.push([x, y, v]); }));
+  // contours on the log-count field, in grid coordinates, then mapped to axis values through bin centres
+  const field = new Float64Array(nx * ny);
+  grid.forEach((row, y) => row.forEach((v, x) => { field[y * nx + x] = Math.log10(v + 1); }));
+  const rings = d3contours().size([nx, ny]).thresholds(levels.map((l) => Math.log10(l + 1)))(field)
+    .flatMap((c, li) => c.coordinates.flatMap((poly) => poly.map((ring) => ({
+      level: levels[li], coords: ring.map(([gx, gy]) => [mid(gx - 0.5), mid(gy - 0.5)]) }))));
+  const axis = (name) => ({
+    type: "log", logBase: 10, name, nameLocation: "middle", nameGap: 28, nameTextStyle: { color: p.muted, fontSize: 11.5 },
+    axisLine: { lineStyle: { color: p.rule } }, axisTick: { show: false },
+    axisLabel: { color: p.muted, fontSize: 11, formatter: (v) => Number(v).toLocaleString() },
+    splitLine: { lineStyle: { color: p.rule } },
+  });
+  return {
+    ...base(p),
+    // containLabel covers tick labels, not axis names: the y name needs its own room on the left
+    grid: { left: 44, right: 20, top: 16, bottom: 30, containLabel: true },
+    tooltip: { ...base(p).tooltip, trigger: "item", formatter: (q) => {
+      if (q.seriesType !== "custom") return "";
+      const [x, y, v] = q.value;
+      const r = (i) => `${Math.ceil(lo(i)).toLocaleString()}–${Math.floor(lo(i + 1) - 1e-9).toLocaleString()}`;
+      return `${xName}: <b>${r(x)}</b><br>${yName}: <b>${r(y)}</b><br><b>${v.toLocaleString()}</b> authors (${(100 * v / total).toFixed(2)}%)`; } },
+    xAxis: { ...axis(xName), min: 1, max: lo(nx) },
+    yAxis: { ...axis(yName), nameGap: 40, nameRotate: 90, min: 1, max: lo(ny) },
+    series: [
+      { type: "custom", name: "authors", z: 1,
+        renderItem: (params, api) => {
+          const x = api.value(0), y = api.value(1), v = api.value(2);
+          const a = api.coord([lo(x), lo(y)]), c = api.coord([lo(x + 1), lo(y + 1)]);
+          return { type: "rect", shape: { x: a[0], y: c[1], width: c[0] - a[0] - 1, height: a[1] - c[1] - 1 },
+                   style: { fill: colorAt(v) } };
+        },
+        encode: { x: 0, y: 1 }, data: cells },
+      { type: "lines", coordinateSystem: "cartesian2d", polyline: true, silent: true, z: 2,
+        lineStyle: { color: p.ink2, width: 1.5, opacity: 0.9 },
+        data: rings.map((r) => ({ coords: r.coords, level: r.level })) },
+    ],
+  };
+}
+
+/** "#rrggbb" -> "rgba(r,g,b,a)": a translucent fill without dimming the strokes drawn on top of it. */
+function alpha(hex, a) {
+  const n = parseInt(hex.replace("#", ""), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+/** Boxplots per group: box = quartiles, whiskers = 5th/95th percentile; the mean as a small marker. */
+export function boxplotOption(p, { labels, boxes, means, fmtY }) {
+  return {
+    ...base(p, { legend: true, legendNames: ["Quartiles, 5th–95th percentile", "Mean"] }),
+    tooltip: { ...base(p).tooltip, trigger: "axis", axisPointer: { type: "shadow", shadowStyle: { color: "rgba(128,128,128,.08)" } },
+      formatter: (params) => {
+        const box = params.find((q) => q.seriesType === "boxplot"), mean = params.find((q) => q.seriesType === "scatter");
+        if (!box) return "";
+        const [, p5, q1, med, q3, p95] = box.data;
+        return `<b>${box.name}</b><br>median <b>${med}</b> · quartiles ${q1}–${q3}<br>5th–95th percentile ${p5}–${p95}` +
+               (mean ? `<br>mean ${Number(mean.data[1]).toFixed(2)}` : ""); } },
+    xAxis: categoryAxis(p, labels, { bars: true }),
+    yAxis: valueAxis(p, { formatter: fmtY }),
+    series: [
+      { type: "boxplot", name: "Quartiles, 5th–95th percentile", data: boxes, boxWidth: [12, 34],
+        itemStyle: { color: alpha(p.s1, 0.18), borderColor: p.s1, borderWidth: 2 },
+        emphasis: { itemStyle: { color: alpha(p.s1, 0.3) } } },
+      { type: "scatter", name: "Mean", data: means.map((m, i) => [i, m]), symbolSize: 8,
+        itemStyle: { color: p.ink, borderColor: p.surface, borderWidth: 2 } },
+    ],
   };
 }
 
