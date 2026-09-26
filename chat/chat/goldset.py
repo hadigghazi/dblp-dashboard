@@ -15,8 +15,13 @@ into a key first.
 CASES = [
     # ---- lookup and entity facts
     dict(q="Which author has the most papers in dblp?", any_of=["top_authors"]),
-    dict(q="How many papers does Jürgen Schmidhuber have?", all_of=["resolve_author"],
-         any_of=["author_profile", "count_papers", "author_papers"]),
+    # resolve_author already returns each candidate's record count, from the same count(*) over author
+    # slots that author_profile reports, so a plain "how many papers" is correctly answered in one
+    # call. Requiring a second one would score a wasted round as the right behaviour.
+    dict(q="How many papers does Jürgen Schmidhuber have?", all_of=["resolve_author"]),
+    # ...but a count with filters cannot come from the resolver, so this case keeps that path honest
+    dict(q="How many journal papers did Jürgen Schmidhuber publish since 2020?",
+         all_of=["resolve_author"], any_of=["count_papers", "author_papers"]),
     dict(q="What venues does Yoshua Bengio publish in most?", all_of=["resolve_author"],
          any_of=["author_profile"]),
     dict(q="Show me the paper 'Attention is all you need'", any_of=["paper_detail", "search_papers"]),
