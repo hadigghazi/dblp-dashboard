@@ -2,12 +2,11 @@ import { useCallback, useEffect, useState } from "react";
 import { PageOverview, PagePublishing, PageIdentity, PageNetwork, PageTitles, PageVenues, PageQuality, PageEnrichment, PageTails } from "./pages.jsx";
 import { PageAuthors, PageVenueExplorer, PagePapers } from "./explore.jsx";
 import { PageDisambiguation, PageCollaborators, PageWhereToPublish } from "./ml.jsx";
-import { PageAsk } from "./ask.jsx";
+import { DeweyButton, DeweyPanel, ASSISTANT_NAME } from "./assistant.jsx";
 import { useStatus } from "./api.js";
 
 const PAGES = [
   { id: "overview", no: "–", label: "Overview", group: null, Comp: PageOverview },
-  { id: "ask", no: "★", label: "Ask dblp", group: null, Comp: PageAsk },
   { id: "publishing", no: "01", label: "Publishing", group: "Findings", Comp: PagePublishing },
   { id: "identity", no: "02", label: "Author identity", group: "Findings", Comp: PageIdentity },
   { id: "network", no: "03", label: "Co-author network", group: "Findings", Comp: PageNetwork },
@@ -54,11 +53,17 @@ function useTheme() {
 export default function App() {
   const [route, setRoute] = useState(readRoute);
   const [navOpen, setNavOpen] = useState(false);
+  // #ask is kept as a deep link: it opens the assistant over whichever page is showing
+  const [askOpen, setAskOpen] = useState(() => location.hash.replace(/^#/, "").split("?")[0] === "ask");
+  const [askBusy, setAskBusy] = useState(false);
   const [theme, cycleTheme] = useTheme();
   const status = useStatus();
 
   useEffect(() => {
-    const onHash = () => setRoute(readRoute());
+    const onHash = () => {
+      if (location.hash.replace(/^#/, "").split("?")[0] === "ask") setAskOpen(true);
+      setRoute(readRoute());
+    };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
@@ -87,6 +92,10 @@ export default function App() {
           <div className="mark"><b>dblp</b> Explorer</div>
           <button className="themebtn" onClick={cycleTheme} title="Switch theme">{theme}</button>
         </div>
+        <button type="button" className={"navbtn asknav" + (askOpen ? " active" : "")}
+                onClick={() => setAskOpen(true)}>
+          <span className="no">★</span>Ask {ASSISTANT_NAME}
+        </button>
         <nav className="pages" aria-label="Sections">
           {PAGES.map((p) => {
             const showGroup = p.group && p.group !== lastGroup;
@@ -107,6 +116,8 @@ export default function App() {
       <main>
         <current.Comp key={current.id} params={route.params} go={go} status={status} />
       </main>
+      <DeweyButton onClick={() => setAskOpen(true)} hidden={askOpen} busy={askBusy} />
+      <DeweyPanel open={askOpen} onClose={() => setAskOpen(false)} go={go} onBusy={setAskBusy} />
     </>
   );
 }
