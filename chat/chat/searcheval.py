@@ -111,6 +111,7 @@ def run(ctx, client, n_papers=60, seed=None, model=None, ledger=None):
     log.info("%s usable descriptions from %s papers", len(cases), len(papers))
 
     hybrid, words, dense_only, failures = [], [], [], []
+    weights, coverages = [], []          # did the fusion weighting actually fire on these?
     t0 = time.time()
     for case in cases:
         try:
@@ -121,6 +122,8 @@ def run(ctx, client, n_papers=60, seed=None, model=None, ledger=None):
             log.warning("search failed for %r: %s", case["query"], e)
             skipped += 1
             continue
+        weights.append(both.get("sparse_weight"))
+        coverages.append(both.get("word_match_coverage"))
         h = _rank(both.get("results", []), case["key"])
         w = _rank(words_arm.get("results", []), case["key"])
         d = _rank(dense_arm.get("results", []), case["key"])
@@ -148,6 +151,10 @@ def run(ctx, client, n_papers=60, seed=None, model=None, ledger=None):
         "fusion_cost_acc@10": round((_summary(hybrid, n)["acc@10"] or 0)
                                     - (_summary(dense_only, n)["acc@10"] or 0), 4),
         "seconds": round(time.time() - t0, 1),
+        "mean_sparse_weight": round(sum(w for w in weights if w is not None)
+                                    / max(1, len([w for w in weights if w is not None])), 3),
+        "mean_word_match_coverage": round(sum(c for c in coverages if c is not None)
+                                          / max(1, len([c for c in coverages if c is not None])), 3),
         "query_tokens": tokens,
         "examples": [{"title": c["title"], "query": c["query"]} for c in cases[:5]],
         "hybrid_lost_to_embeddings_alone": failures[:10],

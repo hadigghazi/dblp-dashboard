@@ -62,6 +62,17 @@ def store_path(fingerprint) -> Path:
     return config.MODELS_DIR / f"search-store-{fingerprint}.duckdb"
 
 
+def match_coverage(con, pid):
+    """The share of the query's kept tokens that this paper's title actually contains."""
+    row = con.execute("""
+        SELECT count(*), count(*) FILTER (WHERE t.pid IS NOT NULL)
+        FROM q_used qu LEFT JOIN x.title_token t ON t.token = qu.token AND t.pid = ?""",
+                      [int(pid)]).fetchone()
+    if not row or not row[0]:
+        return 0.0
+    return row[1] / row[0]
+
+
 def query_stats(con):
     """How specific the last query_tokens() call was, as an IDF over the indexed papers.
 
@@ -84,13 +95,20 @@ def query_stats(con):
 
 
 def sparse_weight(stats):
-    """How much the word ranking is worth for this query, between SPARSE_FLOOR and 1."""
-    idf = (stats or {}).get("idf") or 0.0
-    if idf >= config.IDF_FULL:
+    """How much the word ranking is worth here, between SPARSE_FLOOR and 1.
+
+    Driven by coverage - how much of the query the best word match explains - because that is
+    the thing in doubt. The first version of this weighted by how rare the query's words were,
+    and made the fusion cost worse: a description is full of moderately-rare words, so it read
+    as specific while BM25 was returning papers that shared a word and nothing else."""
+    coverage = (stats or {}).get("coverage")
+    if coverage is None:
+        return 1.0                       # nothing measured: leave the ranking as it was
+    if coverage >= config.COVERAGE_FULL:
         return 1.0
-    if idf <= config.IDF_FLOOR:
+    if coverage <= config.COVERAGE_FLOOR:
         return config.SPARSE_FLOOR
-    span = (idf - config.IDF_FLOOR) / (config.IDF_FULL - config.IDF_FLOOR)
+    span = (coverage - config.COVERAGE_FLOOR) / (config.COVERAGE_FULL - config.COVERAGE_FLOOR)
     return round(config.SPARSE_FLOOR + span * (1.0 - config.SPARSE_FLOOR), 3)
 
 

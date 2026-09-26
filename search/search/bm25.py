@@ -22,6 +22,8 @@ def search(con, text, top=None, kind=None, year_from=None, year_to=None, stats=N
     if stats is not None:
         stats.update(S.query_stats(con))
     if not tokens:
+        if stats is not None:
+            stats["coverage"] = 0.0
         return []
     where = ["TRUE"]
     params = {"k1": config.BM25_K1, "b": config.BM25_B, "top": top or config.TOP_SPARSE}
@@ -48,4 +50,8 @@ def search(con, text, top=None, kind=None, year_from=None, year_to=None, stats=N
         SELECT h.pid, h.score FROM hit h JOIN x.paper p ON p.pid = h.pid
         WHERE {' AND '.join(where)}
         ORDER BY h.score DESC LIMIT $top""", params).fetchall()
-    return [(int(pid), float(score)) for pid, score in rows]
+    out = [(int(pid), float(score)) for pid, score in rows]
+    if stats is not None:
+        # how much of the query the best word match explains: the signal the fusion weights by
+        stats["coverage"] = S.match_coverage(con, out[0][0]) if out else 0.0
+    return out

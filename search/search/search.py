@@ -95,6 +95,7 @@ def search(con, fingerprint, encoder, text, top=20, kind=None, year_from=None, y
         "query": text, "results": results[:top],
         "sparse_candidates": len(sparse_hits), "dense_candidates": len(dense_hits),
         "sparse_used": bool(sparse), "sparse_weight": weight,
+        "word_match_coverage": round(stats.get("coverage") or 0.0, 3),
         "query_specificity": round(stats.get("idf") or 0.0, 2),
         "dense_available": dense and dense_error is None, "dense_error": dense_error,
     }

@@ -163,18 +163,6 @@ def test_a_query_of_common_words_is_bounded(con):
     assert tight == generous[:len(tight)], "the tokens kept are the rarest ones"
 
 
-def test_the_word_ranking_s_weight_follows_the_query_s_rarest_word():
-    """Stated in IDF, so it is tested in IDF: the thresholds assume a corpus of millions, where a
-    word held by 0.1% of papers is distinctive and one held by 5% is not."""
-    assert S.sparse_weight({"idf": config.IDF_FULL}) == 1.0
-    assert S.sparse_weight({"idf": config.IDF_FULL + 5}) == 1.0
-    assert S.sparse_weight({"idf": config.IDF_FLOOR}) == config.SPARSE_FLOOR
-    assert S.sparse_weight({"idf": 0.5}) == config.SPARSE_FLOOR
-    assert S.sparse_weight({}) == config.SPARSE_FLOOR          # no tokens matched at all
-    middle = S.sparse_weight({"idf": (config.IDF_FLOOR + config.IDF_FULL) / 2})
-    assert config.SPARSE_FLOOR < middle < 1.0
-
-
 def test_bigrams_do_not_make_a_vague_query_look_specific(con):
     """The bug this signal was nearly shipped with: "systems learning data" produces the bigrams
     systems_learning and learning_data, both rare, so the rarest token said "specific".
@@ -191,3 +179,36 @@ def test_bigrams_do_not_make_a_vague_query_look_specific(con):
     assert stats["word_df"] >= (stats["min_df"] or 0), "a word is never rarer than the bigrams it makes"
     assert stats["idf"] == pytest.approx(math.log(
         c.execute("SELECT count(*) FROM x.paper").fetchone()[0] / stats["word_df"]), rel=1e-6)
+
+
+def test_the_weight_follows_how_much_of_the_query_the_match_explains():
+    """Coverage, not rarity. Weighting by rarity made the fusion cost worse: a description is full of
+    moderately-rare words, so it read as specific while BM25 matched on one word and nothing else."""
+    assert S.sparse_weight({"coverage": 1.0}) == 1.0
+    assert S.sparse_weight({"coverage": config.COVERAGE_FULL}) == 1.0
+    assert S.sparse_weight({"coverage": config.COVERAGE_FLOOR}) == config.SPARSE_FLOOR
+    assert S.sparse_weight({"coverage": 0.0}) == config.SPARSE_FLOOR
+    assert S.sparse_weight({}) == 1.0                       # nothing measured: change nothing
+    middle = S.sparse_weight({"coverage": (config.COVERAGE_FLOOR + config.COVERAGE_FULL) / 2})
+    assert config.SPARSE_FLOOR < middle < 1.0
+
+
+def test_coverage_is_measured_against_the_paper_the_words_found(con):
+    c, _ = con
+    title, pid = c.execute("SELECT title, pid FROM x.paper ORDER BY pid LIMIT 1").fetchone()
+    S.query_tokens(c, title)
+    assert S.match_coverage(c, pid) > 0.8, "a paper's own title should cover nearly all of itself"
+
+    other = c.execute("SELECT pid FROM x.paper WHERE pid <> ? ORDER BY pid DESC LIMIT 1",
+                      [pid]).fetchone()[0]
+    assert S.match_coverage(c, other) < S.match_coverage(c, pid)
+
+
+def test_a_query_the_words_barely_matched_loses_most_of_its_weight(con):
+    """The paraphrase case, in miniature: words that exist in the index but not together in the
+    paper being looked for."""
+    c, _ = con
+    stats = {}
+    B.search(c, "analysis of systems using data", stats=stats)
+    assert "coverage" in stats
+    assert S.sparse_weight(stats) <= 1.0
