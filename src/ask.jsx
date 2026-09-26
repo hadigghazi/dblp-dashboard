@@ -263,6 +263,29 @@ export function PageAsk({ go }) {
           )}
         </Card>
       </div>
+      {d?.evaluation ? (
+        <Card title="How good it is, measured"
+              sub={`${d.evaluation.cases} questions across every kind this assistant claims to answer, each naming the tools it must use; the out-of-scope ones must be refused. Run ${d.evaluation.run_at?.slice(0, 10)} on this dump.`}>
+          {() => (
+            <>
+              <div className="answermeta">
+                <span><b>{Math.round(100 * d.evaluation.tool_choice_accuracy)}%</b> reached for the right tools</span>
+                <span><b>{Math.round(100 * d.evaluation.refusal_accuracy)}%</b> of out-of-scope questions refused</span>
+                <span><b>{Math.round(100 * d.evaluation.grounded_share)}%</b> of answers came after a tool call</span>
+                <span>median <b>{d.evaluation.median_seconds}s</b></span>
+                <span>${d.evaluation.total_cost_usd} for the whole run</span>
+              </div>
+              {d.evaluation.failures?.length ? (
+                <ul className="authorlist">
+                  {d.evaluation.failures.map((f, i) => (
+                    <li key={i}>{f.question} — <span className="muted">{f.reason}</span></li>
+                  ))}
+                </ul>
+              ) : <div className="toolnote">No case failed in that run.</div>}
+            </>
+          )}
+        </Card>
+      ) : null}
       {d?.examples?.length > 8 ? (
         <Card title="More things to try" sub="Click one to run it.">
           {() => (

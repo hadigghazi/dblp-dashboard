@@ -128,9 +128,23 @@ def health():
     return {"ok": True, "ready": state.ready(), "configured": state.client.configured()}
 
 
+def _evaluation():
+    """The gold-set report for this dump, if `chat.cli evaluate` has been run against it. The rest of
+    the site never shows a model's output without its measured accuracy; neither does this."""
+    path = config.MODELS_DIR / "chat-eval" / f"{data.pool.fingerprint()}.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8")).get("summary")
+    except (OSError, json.JSONDecodeError) as e:
+        log.warning("gold-set report unreadable: %s", e)
+        return None
+
+
 @app.get("/chat/status")
 def status(_ok=Depends(require_token)):
     return {
+        "evaluation": _evaluation(),
         "configured": state.client.configured(),
         "ready": state.ready(),
         "error": state.error,

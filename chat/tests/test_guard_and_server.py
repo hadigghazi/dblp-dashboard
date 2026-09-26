@@ -183,3 +183,14 @@ def duckdb_set_version(path, version):
         return con.execute("SELECT v FROM _meta WHERE k = 'version'").fetchone()[0]
     finally:
         con.close()
+
+
+def test_status_serves_the_gold_set_report_when_there_is_one(client, dump):
+    import json as _json
+    assert client.get("/chat/status").json()["evaluation"] is None
+    d = dump["models"] / "chat-eval"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{data.pool.fingerprint()}.json").write_text(
+        _json.dumps({"summary": {"cases": 38, "tool_choice_accuracy": 0.97, "refusal_accuracy": 1.0}}),
+        encoding="utf-8")
+    assert client.get("/chat/status").json()["evaluation"]["cases"] == 38
