@@ -31,11 +31,9 @@ def _floats(text):
         except ValueError:
             continue
         tail = (text[match.end():match.end() + 12] or "").strip().lower()
-        for word, factor in SCALE.items():          # "3.4 million" is the same claim as 3,400,000
-            if tail.startswith(word):
-                out.append(value * factor)
-                break
-        out.append(value)
+        scaled = next((value * factor for word, factor in SCALE.items() if tail.startswith(word)), None)
+        # "3.4 million" is one claim about 3,400,000 - the bare 3.4 is not a second claim
+        out.append(value if scaled is None else scaled)
     return out
 
 

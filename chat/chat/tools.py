@@ -465,14 +465,16 @@ def resolve_venue(ctx, name, kind=None, limit=8):
         if kind:
             where.append("kind = ?")
             params.append(kind)
+        # QUALIFY needs a window function in DuckDB; a plain filter belongs in a wrapping WHERE
         cols, rows = rows_of(cur, f"""
-            SELECT sid, kind, usual_name AS name, papers, first_year, last_year,
-                   round(100 * oa_share, 1) AS pct_oa, round(100 * doi_share, 1) AS pct_doi,
-                   name_variants,
-                   round(greatest(jaro_winkler_similarity(lower(usual_name), lower(?)),
-                                  jaro_winkler_similarity(lower(sid), lower(?))), 3) AS closeness
-            FROM s.series WHERE {' AND '.join(where)}
-            QUALIFY closeness >= {FUZZY_MIN}
+            SELECT * FROM (
+                SELECT sid, kind, usual_name AS name, papers, first_year, last_year,
+                       round(100 * oa_share, 1) AS pct_oa, round(100 * doi_share, 1) AS pct_doi,
+                       name_variants,
+                       round(greatest(jaro_winkler_similarity(lower(usual_name), lower(?)),
+                                      jaro_winkler_similarity(lower(sid), lower(?))), 3) AS closeness
+                FROM s.series WHERE {' AND '.join(where)})
+            WHERE closeness >= {FUZZY_MIN}
             ORDER BY closeness DESC, papers DESC LIMIT ?""", params + [int(limit)])
     if not rows:
         return result(f"No venue series matches “{q}”, and none is close to it.", rows=[],
