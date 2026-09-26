@@ -36,11 +36,16 @@ def test_invariant_and_behaviour_checks_pass_on_the_fixture(ctx):
 
 def test_the_cap_check_catches_a_tool_that_counts_its_rows(ctx, monkeypatch):
     """Re-introduce the Wei Wang bug and prove the harness sees it."""
-    def broken(_ctx, name, limit=25):
-        return {"summary": f"“{name}”: {1} separate people have a numbered page.",
-                "rows": [{"key": "x", "name": name, "page_kind": "numbered"}],
-                "meta": {"numbered_pages": 1, "pages": 1, "bins": 0}}
-    monkeypatch.setitem(T.HANDLERS, "namesakes", broken)
+    real = T.HANDLERS["namesakes"]
+
+    def counts_its_rows(_ctx, name, limit=25):
+        """The original bug, exactly: the count comes from the rows that fit in the answer."""
+        out = real(_ctx, name, limit=limit)
+        shown = sum(1 for r in out["rows"] if r["page_kind"] == "numbered")
+        out["meta"]["numbered_pages"] = shown
+        out["summary"] = f"“{name}”: {shown} separate people have a numbered page."
+        return out
+    monkeypatch.setitem(T.HANDLERS, "namesakes", counts_its_rows)
     report = qa.run(ctx, only="a capped list never becomes a count")
     assert report["summary"]["failed"] == 1, report["results"]
 

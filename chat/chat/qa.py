@@ -201,12 +201,16 @@ def _caps(ctx):
     ]
     out = []
     for tool, args, key in cases:
-        r = call(ctx, tool, **args)
-        total = r["meta"][key]
-        assert total >= len(r["rows"]), f"{tool}: total {total} < {len(r['rows'])} rows"
-        assert len(r["rows"]) <= args["limit"], f"{tool} ignored its limit"
-        assert str(total) in r["summary"].replace(",", ""), f"{tool} hides its total from the model"
-        out.append(f"{tool} {len(r['rows'])}/{total:,}")
+        small = call(ctx, tool, **args)
+        big = call(ctx, tool, **{**args, "limit": 30})
+        total, wide = small["meta"][key], big["meta"][key]
+        # the decisive one: a total computed by counting the rows on show moves when the cap moves.
+        # This is exactly how "how many people are called Wei Wang" answered 39 instead of 522.
+        assert total == wide, f"{tool}: total depends on the row limit ({total} at 1, {wide} at 30)"
+        assert total >= len(small["rows"]), f"{tool}: total {total} < {len(small['rows'])} rows"
+        assert len(small["rows"]) <= args["limit"], f"{tool} ignored its limit"
+        assert str(total) in small["summary"].replace(",", ""), f"{tool} hides its total from the model"
+        out.append(f"{tool} {len(small['rows'])} of {total:,}")
     return "; ".join(out)
 
 
