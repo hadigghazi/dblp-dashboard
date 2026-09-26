@@ -12,10 +12,12 @@ import { fmt } from "./charts.jsx";
  */
 const DEWEY = {
   name: "Dewey",
-  role: "asks the dump, not its memory",
   // named after the decimal classification: the one who knows where everything is filed
-  greeting: "Ask me about dblp and I will query the dump rather than guess. Counts, rankings, trends, "
-          + "a person, a venue, a paper, or a topic.",
+  role: "knows where every paper is filed",
+  greeting: "Ask me anything about the papers, people and venues in dblp — who publishes the most, "
+          + "how a topic grew, where a paper appeared, or what has been written on a subject. "
+          + "I look up the real records for every answer.",
+  working: "looking that up…",
 };
 
 /* ------------------------------------------------------------------ the character ---------- */
@@ -136,6 +138,23 @@ async function streamAnswer({ question, history, token, onEvent, signal }) {
 }
 
 /* ------------------------------------------------------------------ pieces ------------------ */
+/** What each lookup did, in words. The raw call stays inside the chip for anyone who wants it. */
+const TOOL_LABEL = {
+  dataset_facts: "checked how big dblp is", docs_lookup: "checked the definitions",
+  model_cards: "checked the measured accuracy", resolve_author: "found the author",
+  author_profile: "read the author’s record", author_papers: "listed their papers",
+  namesakes: "counted people with that name", coauthors: "listed co-authors",
+  pair_papers: "checked papers they wrote together", authors_in_both: "compared two venues’ authors",
+  resolve_venue: "found the venue", venue_profile: "read the venue’s record",
+  top_venues: "ranked venues", top_authors: "ranked authors",
+  most_shared_names: "ranked the most shared names", count_papers: "counted papers",
+  papers_timeseries: "traced it year by year", title_terms: "traced the words in titles",
+  rising_words: "compared title words between two periods", search_papers: "searched 5.4M titles",
+  paper_detail: "opened the record", predict_venue: "asked the venue model",
+  predict_coauthors: "asked the collaboration model", run_sql: "ran a one-off query",
+};
+const toolLabel = (name) => TOOL_LABEL[name] || name.replace(/_/g, " ");
+
 /** One tool call, collapsed to a single quiet line until asked. */
 function ToolCall({ event, go }) {
   const [open, setOpen] = useState(false);
@@ -145,13 +164,13 @@ function ToolCall({ event, go }) {
     <div className={"toolcall" + (event.refused ? " refused" : "")}>
       <button type="button" className="toolhead" onClick={() => setOpen(!open)} aria-expanded={open}>
         <span className="toolchevron" aria-hidden="true">{open ? "▾" : "▸"}</span>
-        <span className="toolname mono">{event.name}</span>
+        <span className="toolname">{toolLabel(event.name)}</span>
         <span className="toolms num">{event.ms} ms</span>
       </button>
       {open ? (
         <div className="toolbody">
           <div className="toolsummary">{event.summary}</div>
-          <div className="toolargs mono">{JSON.stringify(event.arguments || {})}</div>
+          <div className="toolargs mono">{event.name}({JSON.stringify(event.arguments || {})})</div>
           {event.sql ? <pre className="recordxml">{event.sql}</pre> : null}
           {rows.length && columns.length ? (
             <SortableTable rows={rows.slice(0, 8)}
@@ -216,8 +235,8 @@ function Unlock({ onUnlock }) {
                aria-label="Access token" onChange={(e) => setDraft(e.target.value)} />
         <button type="submit" className="btn" disabled={!draft.trim()}>Unlock</button>
       </form>
-      <p className="introfoot">Every question calls a language model, so {DEWEY.name} is behind a token.
-        It is kept in this browser only.</p>
+      <p className="introfoot">{DEWEY.name} uses a paid AI model for every question, so he is behind an
+        access token. It stays in this browser and nowhere else.</p>
     </div>
   );
 }
@@ -231,13 +250,14 @@ function About({ status }) {
     <details className="deweyabout">
       <summary>About {DEWEY.name}{ev ? ` · ${Math.round(100 * ev.tool_choice_accuracy)}% right query, median ${ev.median_seconds}s` : ""}</summary>
       <div className="aboutbody">
-        <p><b>How he answers.</b> A question is routed to typed queries over the dump: counts, rankings
-          and trends are SQL; “papers about …” is the hybrid search; predictions come from the three
-          models. Nothing is answered from the language model’s own memory, and every query is listed
-          above the answer.</p>
+        <p><b>How he answers.</b> Every answer comes from a fresh look at dblp itself: counts,
+          rankings and trends are worked out from the records, “papers about …” searches 5.4 million
+          titles by meaning as well as words, and predictions come from the models trained on this
+          data. Nothing is answered from the AI’s own memory, and you can open every lookup above an
+          answer to see exactly what it found.</p>
         {ev ? (
           <p><b>Measured on {ev.cases} questions</b> covering every kind he claims to answer, each naming
-            the queries it must use: {Math.round(100 * ev.tool_choice_accuracy)}% reached for the right
+            the lookups it must use: {Math.round(100 * ev.tool_choice_accuracy)}% reached for the right
             ones, {Math.round(100 * ev.refusal_accuracy)}% of out-of-scope questions were refused,
             {" "}{Math.round(100 * ev.grounded_share)}% of answers came after a query, median
             {" "}{ev.median_seconds}s, ${ev.total_cost_usd} for the run
@@ -322,7 +342,7 @@ export function DeweyPanel({ open, onClose, go, onBusy }) {
           <Dewey size={38} mood={busy ? "thinking" : "idle"} title="" />
           <div className="deweywho">
             <b>{DEWEY.name}</b>
-            <span>{busy ? "querying the dump…" : DEWEY.role}</span>
+            <span>{busy ? DEWEY.working : DEWEY.role}</span>
           </div>
           {turns.length ? (
             <button type="button" className="deweyicon" onClick={() => setTurns([])} title="Start over"
@@ -374,7 +394,7 @@ export function DeweyPanel({ open, onClose, go, onBusy }) {
             <form onSubmit={(e) => { e.preventDefault(); ask(); }}>
               <input ref={input} className="askinput" value={question}
                      maxLength={d?.limits?.question_chars || 400}
-                     placeholder={`Ask ${DEWEY.name} about dblp…`} aria-label="Your question"
+                     placeholder={`Ask ${DEWEY.name} anything about dblp…`} aria-label="Your question"
                      onChange={(e) => setQuestion(e.target.value)} />
               {busy
                 ? <button type="button" className="btn" onClick={() => abort.current?.abort()}>Stop</button>

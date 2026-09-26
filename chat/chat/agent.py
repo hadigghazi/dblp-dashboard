@@ -167,7 +167,7 @@ def answer(ctx, client, question, history=None, emit=None, ledger=None):
 
     direct = None
     for rounds in range(1, config.MAX_ROUNDS + 1):
-        emit({"type": "status", "text": "choosing tools" if rounds == 1 else "following up"})
+        emit({"type": "status", "text": "looking it up" if rounds == 1 else "checking one more thing"})
         try:
             step = client.complete(messages, model=config.MODEL_FAST, tools=T.schemas())
         except LLMError as e:
@@ -202,7 +202,7 @@ def answer(ctx, client, question, history=None, emit=None, ledger=None):
         text = direct
     else:
         model = config.MODEL_DEEP if rounds >= config.ESCALATE_AFTER_ROUNDS else config.MODEL_FAST
-        emit({"type": "status", "text": "writing"})
+        emit({"type": "status", "text": "writing the answer"})
         pieces = []
         try:
             for kind, value in client.stream(messages, model=model):
