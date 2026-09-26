@@ -159,7 +159,8 @@ RESOLVE_SELECT = """
         FROM res r"""
 
 FUZZY_MIN = 0.86          # jaro-winkler; below this the "closest name" is not a plausible typo
-FUZZY_PREFIX = 4          # how much of a query word must survive the typo to be a candidate
+FUZZY_PREFIX = 3          # how much of a query word must survive the typo to be a candidate
+FUZZY_LENGTH = 6          # and a typo does not change a name's length by much
 
 
 def _fuzzy_authors(cur, q, limit):
@@ -172,10 +173,14 @@ def _fuzzy_authors(cur, q, limit):
     words = [w for w in re.split(r"[^\w']+", q) if len(w) >= FUZZY_PREFIX]
     if not words:
         return [], []
+    # three letters, because a dropped letter in a short word ("Alpha" -> "Alpa") already breaks a
+    # four-letter prefix; the length guard is what keeps the candidate set small
     likes = [f"%{w[:FUZZY_PREFIX]}%" for w in words[:3]]
     clause = " OR ".join(["name ILIKE ?"] * len(likes))
     return rows_of(cur, f"""
-        WITH cand AS (SELECT person_id, name FROM s.person_names WHERE {clause}),
+        WITH cand AS (
+            SELECT person_id, name FROM s.person_names
+            WHERE ({clause}) AND abs(length(name) - {len(q)}) <= {FUZZY_LENGTH}),
         hits AS (
             SELECT person_id, max(jaro_winkler_similarity(lower(name), lower(?))) AS sim
             FROM cand GROUP BY person_id
