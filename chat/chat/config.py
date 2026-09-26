@@ -54,6 +54,8 @@ SEARCH_URL = os.environ.get("CHAT_SEARCH_URL", "http://searchapi:8003").rstrip("
 DASHBOARD_URL = os.environ.get("CHAT_DASHBOARD_URL", "http://api:8000").rstrip("/")
 ML_URL = os.environ.get("CHAT_ML_URL", "http://mlapi:8001").rstrip("/")
 UPSTREAM_TIMEOUT = float(os.environ.get("CHAT_UPSTREAM_TIMEOUT", "20"))
+# the first year the search index covers, so the paraphrase test samples the same population
+SEARCH_FIRST_YEAR = int(os.environ.get("SEARCH_FIRST_YEAR", "2010"))
 
 
 def configured() -> bool:

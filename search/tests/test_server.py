@@ -57,3 +57,14 @@ def test_search_endpoint_finds_a_preprint_by_exact_words(client):
 
 def test_search_endpoint_rejects_a_short_query(client):
     assert client.get("/search/papers", params={"q": "ab"}).status_code == 422
+
+
+def test_words_only_search_is_available_for_comparison(client):
+    """`dense=false` exists so the paraphrase test can run the same query with and without the
+    embeddings; without it there is no way to attribute a difference to them."""
+    both = client.get("/search/papers", params={"q": "graph learning", "top": 5}).json()
+    words = client.get("/search/papers", params={"q": "graph learning", "top": 5, "dense": "false"}).json()
+    assert words["dense_available"] is False
+    assert "as asked" in (words.get("dense_error") or "")
+    assert both.get("dense_candidates", 0) >= words.get("dense_candidates", 0)
+    assert all("dense" not in (r.get("sources") or []) for r in words["results"])

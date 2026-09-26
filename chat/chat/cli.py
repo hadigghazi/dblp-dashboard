@@ -7,6 +7,7 @@ Command line, for the VM.
   python -m chat.cli evaluate [--limit N]       run the gold set, write the report
   python -m chat.cli qa [--only X]              check the tools against the dashboard (no model calls)
   python -m chat.cli questions [--days N]      what people asked, and what the catalogue is missing
+  python -m chat.cli search-eval [--papers N]  can search find a paper from a description of it?
 
 `ask` is the same code path the web endpoint uses, so a question that works here works there.
 """
@@ -17,7 +18,7 @@ import sys
 
 import httpx
 
-from . import agent, budget, config, data, evaluate as E, qa as Q, store, tools as T, usage
+from . import agent, budget, config, data, evaluate as E, qa as Q, searcheval as SE, store, tools as T, usage
 from .llm import Client
 
 
@@ -99,6 +100,21 @@ def cmd_qa(args):
     sys.exit(1 if s["failed"] else 0)
 
 
+def cmd_search_eval(args):
+    ctx = _ready()
+    client = Client()
+    if not client.configured():
+        sys.exit("No OPENAI_API_KEY set: this test needs a model to write the descriptions.")
+    payload = SE.run(ctx, client, n_papers=args.papers, seed=args.seed)
+    path = SE.save(payload, ctx.meta.get("fingerprint", "unknown"))
+    print(json.dumps({k: v for k, v in payload.items() if k not in ("examples", "hybrid_missed")},
+                     indent=2))
+    print("\nexample generated queries:")
+    for e in payload["examples"]:
+        print(f"  {e['query']}\n      -> {e['title']}")
+    print(f"\nwritten to {path}")
+
+
 def cmd_questions(args):
     report = usage.summarize(args.days)
     if not report["questions"]:
@@ -143,6 +159,10 @@ def main():
     ev = sub.add_parser("evaluate", help="run the gold set")
     ev.add_argument("--limit", type=int, default=None)
     ev.set_defaults(fn=cmd_evaluate)
+    se = sub.add_parser("search-eval", help="can search find a paper from a description of it?")
+    se.add_argument("--papers", type=int, default=60)
+    se.add_argument("--seed", type=int, default=7)
+    se.set_defaults(fn=cmd_search_eval)
     ql = sub.add_parser("questions", help="what people asked, and what the catalogue is missing")
     ql.add_argument("--days", type=int, default=30)
     ql.set_defaults(fn=cmd_questions)

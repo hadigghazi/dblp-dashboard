@@ -104,12 +104,15 @@ def status():
         con.close()
     ev_path = S.eval_path(state.fingerprint)
     evaluation = json.loads(ev_path.read_text(encoding="utf-8")) if ev_path.exists() else None
+    # written by `chat.cli search-eval`: the paraphrase test, which needs a model to write the queries
+    para_path = ev_path.parent / f"paraphrase-{state.fingerprint}.json"
+    paraphrase = json.loads(para_path.read_text(encoding="utf-8")) if para_path.exists() else None
     return {
         "available": True,
         "dump": {"fingerprint": state.fingerprint, "built_at": state.meta.get("built_at"),
                  "papers": state.meta.get("papers"), "model": state.meta.get("model"),
                  "first_year": state.meta.get("first_year")},
-        "index": progress, "evaluation": evaluation,
+        "index": progress, "evaluation": evaluation, "paraphrase_evaluation": paraphrase,
     }
 
 
@@ -117,7 +120,8 @@ def status():
 def papers(q: str = Query(..., min_length=3, max_length=SR.MAX_TITLE), kind: Optional[str] = Query(None),
           frm: Optional[int] = Query(None, alias="from", ge=1900, le=2100),
           to: Optional[int] = Query(None, ge=1900, le=2100),
-          top: int = Query(20, ge=1, le=50), refresh: bool = False):
+          top: int = Query(20, ge=1, le=50), refresh: bool = False,
+          dense: bool = Query(True, description="set false to answer with words alone, for comparison")):
     if state.fingerprint is None:
         raise HTTPException(503, detail=f"No search index yet ({state.error}). Run: python -m search.cli store")
     with state.lock:   # one search at a time: a dense query is a full pass over the index
@@ -129,7 +133,7 @@ def papers(q: str = Query(..., min_length=3, max_length=SR.MAX_TITLE), kind: Opt
             # slice of dense results, stay BM25 + exact-word only until embedding is complete, and
             # fold that flag into the cache key so a cached "not ready" answer cannot outlive the
             # build finishing
-            complete = V.progress(con, state.fingerprint)["complete"]
+            complete = V.progress(con, state.fingerprint)["complete"] and dense
             path = state.cache_path(q.strip().lower(), kind, frm, to, top, complete)
             if refresh:
                 path.unlink(missing_ok=True)
@@ -141,7 +145,8 @@ def papers(q: str = Query(..., min_length=3, max_length=SR.MAX_TITLE), kind: Opt
             out = SR.search(con, state.fingerprint, encoder, q, top=top, kind=kind, year_from=frm, year_to=to,
                             dense=complete)
             if not complete:
-                out["dense_error"] = "the embedding index is still building"
+                out["dense_error"] = ("answered with words alone, as asked" if not dense
+                                      else "the embedding index is still building")
         finally:
             con.close()
     if "error" in out:
