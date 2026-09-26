@@ -45,7 +45,10 @@ LLM_TIMEOUT = float(os.environ.get("CHAT_LLM_TIMEOUT", "40"))
 TOKEN = os.environ.get("CHAT_TOKEN", "")
 RATE_PER_MINUTE = int(os.environ.get("CHAT_RATE_PER_MINUTE", "6"))
 RATE_PER_DAY = int(os.environ.get("CHAT_RATE_PER_DAY", "200"))
-BUDGET_USD_PER_DAY = float(os.environ.get("CHAT_BUDGET_USD_PER_DAY", "2.00"))
+# the terminal has its own allowance: an evaluation run is 57 questions, and exhausting the page's
+# allowance from a maintenance task is a self-inflicted outage
+RATE_PER_DAY_CLI = int(os.environ.get("CHAT_RATE_PER_DAY_CLI", "1000"))
+BUDGET_USD_PER_DAY = float(os.environ.get("CHAT_BUDGET_USD_PER_DAY", "5.00"))
 
 # ---- the other services -----------------------------------------------------
 SEARCH_URL = os.environ.get("CHAT_SEARCH_URL", "http://searchapi:8003").rstrip("/")

@@ -121,14 +121,25 @@ def _run(con, sql, params):
     con.execute(sql, used)
 
 
-def query_tokens(con, text, max_tokens=None):
-    """The query's rarest known tokens, for BM25 - same tokenizer as the index."""
+def query_tokens(con, text, max_tokens=None, max_postings=None):
+    """The query's rarest known tokens, for BM25 - same tokenizer as the index.
+
+    Two limits, not one. The token count bounds the join's width; the cumulative document frequency
+    bounds its depth, which is what a query made entirely of common words ("systems for learning
+    from data") otherwise blows through: its rarest sixteen tokens can still be a million postings
+    each. The rarest tokens are always kept, so a query is never left with nothing to match on."""
     con.execute(f"""
         CREATE OR REPLACE TEMP TABLE q_token AS
         WITH w AS (SELECT {words_expr('?')} AS w)
         SELECT unnest({TOKENS_OF_WORDS}) AS token FROM w""", [text])
     con.execute("""
         CREATE OR REPLACE TEMP TABLE q_used AS
-        SELECT qt.token, d.df FROM q_token qt JOIN x.token_df d USING (token)
-        QUALIFY row_number() OVER (ORDER BY d.df) <= ?""", [max_tokens or config.MAX_QUERY_TOKENS])
+        SELECT token, df FROM (
+            SELECT qt.token, d.df,
+                   row_number() OVER (ORDER BY d.df) AS rank,
+                   sum(d.df) OVER (ORDER BY d.df, qt.token ROWS UNBOUNDED PRECEDING) AS postings
+            FROM q_token qt JOIN x.token_df d USING (token))
+        WHERE rank <= ? AND (postings <= ? OR rank <= ?)""",
+                [max_tokens or config.MAX_QUERY_TOKENS, max_postings or config.MAX_POSTINGS,
+                 config.MIN_QUERY_TOKENS])
     return [r[0] for r in con.execute("SELECT token FROM q_used ORDER BY df").fetchall()]

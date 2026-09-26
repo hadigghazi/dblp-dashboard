@@ -145,3 +145,18 @@ def test_evaluate_runs_and_reports_honest_coverage(con):
         assert s["papers"] == out["substitutable"] and 0 <= s["found"] <= s["papers"]
         for k in ("acc@1", "acc@5", "acc@10"):
             assert s[k] is None or 0.0 <= s[k] <= 1.0
+
+
+def test_a_query_of_common_words_is_bounded(con):
+    """A description has no rare words, so BM25's rarest tokens are still expensive ones. The
+    cumulative document frequency is what has to be capped - a paraphrase query timed out in
+    production with only the token count limited."""
+    c, _ = con
+    common = c.execute("SELECT token FROM x.token_df ORDER BY df DESC LIMIT 8").fetchall()
+    query = " ".join(t[0].replace("_", " ") for t in common)
+
+    generous = S.query_tokens(c, query, max_postings=10 ** 9)
+    tight = S.query_tokens(c, query, max_postings=1)
+    assert len(tight) == config.MIN_QUERY_TOKENS, "a query must never be left with nothing to match"
+    assert len(tight) <= len(generous)
+    assert tight == generous[:len(tight)], "the tokens kept are the rarest ones"

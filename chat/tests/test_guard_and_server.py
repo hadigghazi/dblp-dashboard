@@ -181,3 +181,29 @@ def test_status_serves_the_gold_set_report_when_there_is_one(client, dump):
         _json.dumps({"summary": {"cases": 38, "tool_choice_accuracy": 0.97, "refusal_accuracy": 1.0}}),
         encoding="utf-8")
     assert client.get("/chat/status").json()["evaluation"]["cases"] == 38
+
+
+def test_the_terminal_does_not_use_up_the_page_s_allowance(dump, monkeypatch):
+    """A 57-case evaluation run from the terminal once locked the assistant out of its own site."""
+    ledger = budget.Ledger(path=dump["models"] / "budget-channels.json")
+    monkeypatch.setattr(config, "RATE_PER_DAY", 3)
+    monkeypatch.setattr(config, "RATE_PER_DAY_CLI", 50)
+    monkeypatch.setattr(config, "RATE_PER_MINUTE", 100)
+    for _ in range(10):
+        ledger.finish_request(config.MODEL_FAST, channel="cli")
+    ok, why = ledger.check("web")
+    assert ok, f"the terminal blocked the page: {why}"
+    for _ in range(3):
+        ledger.finish_request(config.MODEL_FAST, channel="web")
+    blocked, why = ledger.check("web")
+    assert not blocked and "web" in why and "midnight UTC" in why
+    assert ledger.check("cli")[0], "the terminal has its own allowance"
+
+
+def test_the_money_ceiling_is_shared_by_every_channel(dump, monkeypatch):
+    ledger = budget.Ledger(path=dump["models"] / "budget-money.json")
+    monkeypatch.setattr(config, "BUDGET_USD_PER_DAY", 0.0001)
+    ledger.record(config.MODEL_FAST, {"input_tokens": 1_000_000, "output_tokens": 1_000_000})
+    for channel in ("web", "cli"):
+        ok, why = ledger.check(channel)
+        assert not ok and "budget" in why, channel

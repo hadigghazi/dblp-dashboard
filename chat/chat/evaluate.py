@@ -40,11 +40,11 @@ def run_case(ctx, client, case):
     turns = case.get("turns") or [case["q"]]
     history = []
     for earlier in turns[:-1]:
-        prior = agent.answer(ctx, client, earlier, history=history, ledger=budget.ledger)
+        prior = agent.answer(ctx, client, earlier, history=history, ledger=budget.ledger, channel="cli")
         history += [{"role": "user", "content": earlier},
                     {"role": "assistant", "content": prior.get("answer", "")}]
     out = agent.answer(ctx, client, turns[-1], history=history, emit=emit, ledger=budget.ledger,
-                       collect=payloads)
+                       collect=payloads, channel="cli")
     answer_text = out.get("answer", "")
     want_all = set(case.get("all_of", []))
     want_any = set(case.get("any_of", []))

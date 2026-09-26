@@ -74,10 +74,13 @@ def _rank(results, key):
     return None
 
 
+SEARCH_TIMEOUT = 90     # a description is a long query, and the service answers one search at a time
+
+
 def _search(ctx, query, dense, top=20):
     r = ctx.http.get(f"{config.SEARCH_URL}/search/papers",
                      params={"q": query, "top": top, "dense": str(bool(dense)).lower()},
-                     timeout=config.UPSTREAM_TIMEOUT)
+                     timeout=SEARCH_TIMEOUT)
     r.raise_for_status()
     return r.json()
 
@@ -91,13 +94,15 @@ def _summary(ranks, n, ks=(1, 5, 10, 20)):
     return out
 
 
-def run(ctx, client, n_papers=60, seed=None, model=None):
+def run(ctx, client, n_papers=60, seed=None, model=None, ledger=None):
     papers = sample_papers(ctx, n_papers, seed)
     cases, skipped, tokens = [], 0, {"input_tokens": 0, "output_tokens": 0}
     for paper in papers:
         query, usage = describe(client, paper["title"], model)
         tokens["input_tokens"] += usage.get("input_tokens", 0)
         tokens["output_tokens"] += usage.get("output_tokens", 0)
+        if ledger is not None:                      # writing the queries costs money like anything else
+            ledger.record(model or config.MODEL_FAST, usage)
         if not query:
             skipped += 1
             continue

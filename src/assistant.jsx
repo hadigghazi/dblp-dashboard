@@ -273,7 +273,14 @@ function Turn({ turn, go }) {
           ) : null}
           {busy ? <div className="thinkingline">{turn.status || "thinking"}<span className="dots" /></div> : null}
           {turn.answer ? <div className="answer">{turn.answer}</div> : null}
-          {turn.error ? <div className="cardmsg error" role="alert">{turn.error}</div> : null}
+          {turn.error ? (
+            <div className="cardmsg error" role="alert">
+              {turn.error}
+              {/[Ll]imit|budget/.test(turn.error)
+                ? " Earlier answers are still here, and anything asked before is served from cache for free."
+                : null}
+            </div>
+          ) : null}
           {turn.done ? (
             <div className="answermeta" title={`${turn.done.usage?.input_tokens || 0} in / `
                   + `${turn.done.usage?.output_tokens || 0} out tokens · ${turn.done.model}`}>

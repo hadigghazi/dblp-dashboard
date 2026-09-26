@@ -28,6 +28,12 @@ VECTOR_DTYPE = "float16"
 TOP_SPARSE = int(os.environ.get("SEARCH_TOP_SPARSE", "300"))
 TOP_DENSE = int(os.environ.get("SEARCH_TOP_DENSE", "2000"))   # over-fetched, then filtered by kind/year
 MAX_QUERY_TOKENS = int(os.environ.get("SEARCH_MAX_QUERY_TOKENS", "16"))
+# A title query's rarest tokens are rare, so BM25 touches few postings. A description ("papers about
+# making transformers cheaper to run") can consist entirely of common words, where even the rarest
+# sixteen are each held by hundreds of thousands of papers and the join becomes millions of rows.
+# Bounding the postings, rather than the token count, keeps a long query as cheap as a short one.
+MAX_POSTINGS = int(os.environ.get("SEARCH_MAX_POSTINGS", "3000000"))
+MIN_QUERY_TOKENS = 3
 RRF_K = 60   # standard reciprocal-rank-fusion constant; results are not sensitive to small changes
 
 MIN_DF = int(os.environ.get("SEARCH_MIN_DF", "2"))

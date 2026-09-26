@@ -39,12 +39,13 @@ class Ledger:
         if self._state is not None and self._state.get("date") == today:
             return self._state
         state = {"date": today, "requests": 0, "input_tokens": 0, "output_tokens": 0, "usd": 0.0,
-                 "by_model": {}}
+                 "by_model": {}, "by_channel": {}}
         try:
             if self.path.exists():
                 stored = json.loads(self.path.read_text(encoding="utf-8"))
                 if stored.get("date") == today:
                     state.update(stored)
+                    state.setdefault("by_channel", {})
         except (OSError, json.JSONDecodeError) as e:
             log.warning("budget ledger unreadable (%s); starting the day at zero", e)
         self._state = state
@@ -60,22 +61,32 @@ class Ledger:
             log.warning("could not write the budget ledger: %s", e)
 
     # ---- checks ----
-    def check(self):
-        """(ok, reason). Called before a question is sent to the provider."""
+    def check(self, channel="web"):
+        """(ok, reason). Called before a question is sent to the provider.
+
+        The request cap is an abuse guard for the page, so it counts the page's own questions: a
+        57-case evaluation run from the terminal used to exhaust the day's allowance and lock the
+        assistant out of its own site. The money ceiling is not per channel - a dollar spent from the
+        terminal is the same dollar."""
         with self._lock:
             state = self._load()
             now = time.time()
             while self._recent and now - self._recent[0] > 60:
                 self._recent.popleft()
-            if len(self._recent) >= config.RATE_PER_MINUTE:
+            if channel == "web" and len(self._recent) >= config.RATE_PER_MINUTE:
                 return False, (f"too many questions in the last minute "
                                f"(limit {config.RATE_PER_MINUTE}); try again shortly")
-            if state["requests"] >= config.RATE_PER_DAY:
-                return False, f"the daily question limit ({config.RATE_PER_DAY}) is used up; it resets at UTC midnight"
+            used = state["by_channel"].get(channel, 0)
+            cap = config.RATE_PER_DAY if channel == "web" else config.RATE_PER_DAY_CLI
+            if used >= cap:
+                return False, (f"the daily question limit for the {channel} ({cap}) is used up; "
+                               f"it resets at midnight UTC")
             if state["usd"] >= config.BUDGET_USD_PER_DAY:
-                return False, (f"today's model budget (${config.BUDGET_USD_PER_DAY:.2f}) is used up; "
-                               f"it resets at midnight")
-            self._recent.append(now)
+                return False, (f"today's model budget (${config.BUDGET_USD_PER_DAY:.2f}) is used up "
+                               f"across everything that asks - the page, the terminal and the "
+                               f"evaluations; it resets at midnight UTC")
+            if channel == "web":
+                self._recent.append(now)
             return True, ""
 
     def record(self, model, usage):
@@ -94,10 +105,11 @@ class Ledger:
             self._save()
             return cost
 
-    def finish_request(self, model):
+    def finish_request(self, model, channel="web"):
         with self._lock:
             state = self._load()
             state["requests"] += 1
+            state["by_channel"][channel] = state["by_channel"].get(channel, 0) + 1
             state["by_model"].setdefault(model, {"requests": 0, "input_tokens": 0, "output_tokens": 0,
                                                 "usd": 0.0})["requests"] += 1
             self._save()
@@ -108,7 +120,7 @@ class Ledger:
         state["usd_limit"] = config.BUDGET_USD_PER_DAY
         state["usd_left"] = round(max(0.0, config.BUDGET_USD_PER_DAY - state["usd"]), 4)
         state["requests_limit"] = config.RATE_PER_DAY
-        state["requests_left"] = max(0, config.RATE_PER_DAY - state["requests"])
+        state["requests_left"] = max(0, config.RATE_PER_DAY - state["by_channel"].get("web", 0))
         return state
 
 

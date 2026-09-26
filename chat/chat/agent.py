@@ -147,7 +147,8 @@ def run_tools(ctx, calls, emit, budget_left, collect=None):
     return messages
 
 
-def answer(ctx, client, question, history=None, emit=None, ledger=None, collect=None):
+def answer(ctx, client, question, history=None, emit=None, ledger=None, collect=None,
+           channel="web"):
     """Run one question. `emit` receives events; returns a summary of the run."""
     emit = emit or (lambda _e: None)
     started = time.time()
@@ -224,7 +225,7 @@ def answer(ctx, client, question, history=None, emit=None, ledger=None, collect=
         text = "".join(pieces)
 
     if ledger is not None:
-        ledger.finish_request(model)
+        ledger.finish_request(model, channel)
     done = {"type": "done", "answer": text, "rounds": rounds, "tools": used_tools,
             "usage": usage_total, "cost_usd": round(cost_total, 5),
             "seconds": round(time.time() - started, 2), "model": model,

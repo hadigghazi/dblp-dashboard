@@ -68,7 +68,7 @@ def cmd_ask(args):
                   f"{event['usage']['input_tokens']}+{event['usage']['output_tokens']} tokens, "
                   f"${event['cost_usd']}, tools: {', '.join(event['tools']) or 'none'}]", file=sys.stderr)
 
-    agent.answer(ctx, client, args.question, emit=emit, ledger=budget.ledger)
+    agent.answer(ctx, client, args.question, emit=emit, ledger=budget.ledger, channel="cli")
     usage.record(usage.from_events(args.question, events, ctx.meta.get("fingerprint")))
 
 
@@ -105,7 +105,7 @@ def cmd_search_eval(args):
     client = Client()
     if not client.configured():
         sys.exit("No OPENAI_API_KEY set: this test needs a model to write the descriptions.")
-    payload = SE.run(ctx, client, n_papers=args.papers, seed=args.seed)
+    payload = SE.run(ctx, client, n_papers=args.papers, seed=args.seed, ledger=budget.ledger)
     path = SE.save(payload, ctx.meta.get("fingerprint", "unknown"))
     print(json.dumps({k: v for k, v in payload.items() if k not in ("examples", "hybrid_missed")},
                      indent=2))
