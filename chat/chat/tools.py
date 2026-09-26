@@ -323,30 +323,32 @@ def pair_papers(ctx, key_a, key_b, limit=20):
     return result(f"{a['name']} and {b['name']} share {len(rows)} paper(s).", cols, rows)
 
 
+# Counting each side first and joining is both simpler and faster than an INTERSECT plus correlated
+# subqueries - and DuckDB will not ORDER BY an alias whose expression contains a subquery anyway.
+IN_BOTH_CTE = """
+    WITH ca AS (
+        SELECT sl.person_id, count(*) AS papers_a
+        FROM s.slots sl JOIN s.pubs b ON b.pid = sl.pid
+        WHERE b.sid = ? AND b.type IN ('article', 'inproceedings') AND NOT b.is_preprint
+          AND sl.person_id IS NOT NULL AND NOT sl.on_bin
+        GROUP BY 1),
+    cb AS (
+        SELECT sl.person_id, count(*) AS papers_b
+        FROM s.slots sl JOIN s.pubs b ON b.pid = sl.pid
+        WHERE b.sid = ? AND b.type IN ('article', 'inproceedings') AND NOT b.is_preprint
+          AND sl.person_id IS NOT NULL AND NOT sl.on_bin
+        GROUP BY 1)
+"""
+
+
 def authors_in_both(ctx, sid_a, sid_b, limit=15):
     cur = ctx.cursor()
-    cols, rows = rows_of(cur, f"""
-        WITH pa AS (SELECT pid FROM s.pubs WHERE sid = ? AND {JOURNAL_CONF}),
-             pb AS (SELECT pid FROM s.pubs WHERE sid = ? AND {JOURNAL_CONF}),
-             ia AS (SELECT DISTINCT person_id FROM s.slots sl JOIN pa USING (pid)
-                    WHERE person_id IS NOT NULL AND NOT on_bin),
-             ib AS (SELECT DISTINCT person_id FROM s.slots sl JOIN pb USING (pid)
-                    WHERE person_id IS NOT NULL AND NOT on_bin),
-             shared AS (SELECT person_id FROM ia INTERSECT SELECT person_id FROM ib)
-        SELECT p.key, p.name,
-               (SELECT count(*) FROM s.slots sl JOIN pa USING (pid) WHERE sl.person_id = p.person_id) AS papers_a,
-               (SELECT count(*) FROM s.slots sl JOIN pb USING (pid) WHERE sl.person_id = p.person_id) AS papers_b
-        FROM shared JOIN s.persons p USING (person_id)
-        ORDER BY papers_a + papers_b DESC, p.name LIMIT ?""", [sid_a, sid_b, int(limit)])
-    total = one_of(cur, f"""
-        WITH pa AS (SELECT pid FROM s.pubs WHERE sid = ? AND {JOURNAL_CONF}),
-             pb AS (SELECT pid FROM s.pubs WHERE sid = ? AND {JOURNAL_CONF}),
-             ia AS (SELECT DISTINCT person_id FROM s.slots sl JOIN pa USING (pid)
-                    WHERE person_id IS NOT NULL AND NOT on_bin),
-             ib AS (SELECT DISTINCT person_id FROM s.slots sl JOIN pb USING (pid)
-                    WHERE person_id IS NOT NULL AND NOT on_bin)
-        SELECT count(*) AS n FROM (SELECT person_id FROM ia INTERSECT SELECT person_id FROM ib)""",
-                     [sid_a, sid_b])
+    cols, rows = rows_of(cur, IN_BOTH_CTE + """
+        SELECT p.key, p.name, ca.papers_a, cb.papers_b, ca.papers_a + cb.papers_b AS papers_total
+        FROM ca JOIN cb USING (person_id) JOIN s.persons p USING (person_id)
+        ORDER BY papers_total DESC, p.name LIMIT ?""", [sid_a, sid_b, int(limit)])
+    total = one_of(cur, IN_BOTH_CTE + """
+        SELECT count(*) AS n FROM ca JOIN cb USING (person_id)""", [sid_a, sid_b])
     return result(f"{total['n']:,} people have published in both {sid_a} and {sid_b}; the most active are listed.",
                   cols, rows, note=BINS_NOTE + " " + JC_NOTE)
 
