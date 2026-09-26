@@ -192,7 +192,12 @@ Served at `/api/search/papers` (a query, with `kind`/`from`/`to` filters) and `/
 Each result carries which signal(s) found it (`bm25`, `dense`, or `exact_word`); the Papers page
 tags a result found by meaning alone.
 
-## Ask dblp (the assistant)
+## Dewey, the assistant
+
+**Dewey** is the floating button in the corner of every page: a cartoon researcher, drawn as inline
+SVG so he inherits the theme and changes expression while a query runs. He opens a docked panel
+rather than a page of his own, so there is one chat implementation for the whole dashboard;
+`#ask` still works as a deep link and opens him over whichever page is showing.
 
 `chat/` answers natural-language questions - "which author has the most papers?", "papers about
 learning from few demonstrations", "does this include preprints?" - by **calling typed tools over the
@@ -335,6 +340,7 @@ chat/chat/store.py      precomputed leaderboards, so a superlative is a lookup
 chat/chat/goldset.py    the gold set: required tools per question, and what must be refused
 chat/chat/budget.py     rate limits and the daily spend ledger
 chat/tests/             a fixture whose answers are written down + a scripted model client
+src/assistant.jsx      Dewey: the character (SVG), the launcher, the panel, the thread
 src/api.js             fetch hooks (loading, warming-up, errors)
 src/pages.jsx          the eight findings pages + overview
 src/explore.jsx        author, venue and paper explorers
