@@ -5,6 +5,7 @@ Command line, for the VM.
   python -m chat.cli tools                      list the tool catalogue
   python -m chat.cli ask "who has most papers"  one question, printed as it happens
   python -m chat.cli evaluate [--limit N]       run the gold set, write the report
+  python -m chat.cli qa [--only X]              check the tools against the dashboard (no model calls)
 
 `ask` is the same code path the web endpoint uses, so a question that works here works there.
 """
@@ -15,7 +16,7 @@ import sys
 
 import httpx
 
-from . import agent, budget, config, data, evaluate as E, store, tools as T
+from . import agent, budget, config, data, evaluate as E, qa as Q, store, tools as T
 from .llm import Client
 
 
@@ -77,6 +78,23 @@ def cmd_evaluate(args):
     print(f"\nwritten to {path}")
 
 
+def cmd_qa(args):
+    ctx = _ready()
+    report = Q.run(ctx, only=args.only)
+    width = max(len(r["name"]) for r in report["results"]) + 2
+    for r in report["results"]:
+        mark = {"pass": "ok  ", "FAIL": "FAIL", "skip": "skip"}[r["status"]]
+        print(f"{mark} {r['name']:<{width}} {r['seconds']:>5.2f}s  {r['detail']}")
+    s = report["summary"]
+    print(f"\n{s['passed']}/{s['checks']} passed, {s['failed']} failed, "
+          f"{s['skipped']} skipped in {s['seconds']}s")
+    path = config.MODELS_DIR / "chat-eval" / f"qa-{ctx.meta.get('fingerprint', 'unknown')}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
+    print(f"written to {path}")
+    sys.exit(1 if s["failed"] else 0)
+
+
 def main():
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
     parser = argparse.ArgumentParser(prog="chat.cli", description=__doc__,
@@ -90,6 +108,10 @@ def main():
     ev = sub.add_parser("evaluate", help="run the gold set")
     ev.add_argument("--limit", type=int, default=None)
     ev.set_defaults(fn=cmd_evaluate)
+    q = sub.add_parser("qa", help="check the tools against the dashboard, without a model")
+    q.add_argument("--only", default=None, help="a check name fragment, or a group: "
+                                                "dashboard, invariant, behaviour")
+    q.set_defaults(fn=cmd_qa)
     args = parser.parse_args()
     args.fn(args)
 

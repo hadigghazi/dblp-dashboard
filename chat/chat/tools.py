@@ -249,7 +249,9 @@ def author_papers(ctx, key, frm=None, to=None, kind=None, sid=None, limit=20):
                    [pid["person_id"]] + params)
     return result(f"{total['n']:,} matching records; the {min(int(limit), total['n'])} most recent are listed.",
                   cols, rows, link={"page": "authors", "key": key},
-                  note="position is the author's slot on the paper.")
+                  note="Quote the total above, not the number of rows. position is the author's slot "
+                       "on the paper.",
+                  matching=total["n"])
 
 
 def namesakes(ctx, name, limit=25):
@@ -300,9 +302,9 @@ def coauthors(ctx, key, sid=None, min_papers=1, limit=15):
     params = [pid["person_id"], pid["person_id"]]
     extra = ""
     if sid:
-        extra = """AND sl.person_id IN (
+        extra = f"""AND sl.person_id IN (
                        SELECT sl2.person_id FROM s.slots sl2 JOIN s.pubs b2 ON b2.pid = sl2.pid
-                       WHERE b2.sid = ?)"""
+                       WHERE b2.sid = ? AND b2.{JOURNAL_CONF})"""
         params.append(sid)
     params.append(int(min_papers))
     cols, rows = rows_of(cur, f"""
@@ -381,7 +383,8 @@ def authors_in_both(ctx, sid_a, sid_b, limit=15):
     total = one_of(cur, IN_BOTH_CTE + """
         SELECT count(*) AS n FROM ca JOIN cb USING (person_id)""", [sid_a, sid_b])
     return result(f"{total['n']:,} people have published in both {sid_a} and {sid_b}; the most active are listed.",
-                  cols, rows, note=BINS_NOTE + " " + JC_NOTE)
+                  cols, rows, note="Quote the total above, not the number of rows. " + BINS_NOTE + " " + JC_NOTE,
+                  people_in_both=total["n"])
 
 
 # --------------------------------------------------------------------------- venues
@@ -559,18 +562,24 @@ def count_papers(ctx, frm=None, to=None, kind=None, sid=None, author_key=None, m
                   total=total)
 
 
+# (expression, population, what the population actually is). The third element exists because a note
+# that says "preprints excluded" above a preprint count is a lie the model would faithfully repeat.
 METRICS = {
-    "papers": ("count(*)", JOURNAL_CONF),
-    "mean_authors": ("round(avg(n_authors), 3)", JOURNAL_CONF + " AND n_authors > 0"),
-    "median_authors": ("median(n_authors)", JOURNAL_CONF + " AND n_authors > 0"),
-    "single_author_share": ("round(100 * avg((n_authors = 1)::INT), 2)", JOURNAL_CONF + " AND n_authors > 0"),
-    "share_10plus_authors": ("round(100 * avg((n_authors >= 10)::INT), 2)", JOURNAL_CONF + " AND n_authors > 0"),
-    "open_access_share": ("round(100 * avg(has_oa::INT), 2)", JOURNAL_CONF),
-    "doi_share": ("round(100 * avg(has_doi::INT), 2)", JOURNAL_CONF),
-    "orcid_share": ("round(100 * avg((n_orcids > 0)::INT), 2)", JOURNAL_CONF),
+    "papers": ("count(*)", JOURNAL_CONF, JC_NOTE),
+    "mean_authors": ("round(avg(n_authors), 3)", JOURNAL_CONF + " AND n_authors > 0", JC_NOTE + " Papers with no author listed are excluded."),
+    "median_authors": ("median(n_authors)", JOURNAL_CONF + " AND n_authors > 0", JC_NOTE + " Papers with no author listed are excluded."),
+    "single_author_share": ("round(100 * avg((n_authors = 1)::INT), 2)", JOURNAL_CONF + " AND n_authors > 0", JC_NOTE),
+    "share_10plus_authors": ("round(100 * avg((n_authors >= 10)::INT), 2)", JOURNAL_CONF + " AND n_authors > 0", JC_NOTE),
+    "open_access_share": ("round(100 * avg(has_oa::INT), 2)", JOURNAL_CONF, JC_NOTE + " The flag is dblp's own open-access marker."),
+    "doi_share": ("round(100 * avg(has_doi::INT), 2)", JOURNAL_CONF, JC_NOTE),
+    "orcid_share": ("round(100 * avg((n_orcids > 0)::INT), 2)", JOURNAL_CONF, JC_NOTE + " A paper counts if ANY author carries an ORCID."),
     "unidentified_author_share": ("round(100 * avg((n_unidentified > 0)::INT), 2)",
-                                  "type IN ('article', 'inproceedings')"),
-    "preprints": ("count(*)", "is_preprint"),
+                                  "type IN ('article', 'inproceedings')",
+                                  "Journal, conference AND preprint records - preprints are included here, "
+                                  "unlike the other metrics. A paper counts if any of its author slots "
+                                  "lands on a disambiguation bin."),
+    "preprints": ("count(*)", "is_preprint", "Preprints ONLY (CoRR/arXiv and records marked informal); "
+                                             "this metric counts the population the others exclude."),
 }
 
 
@@ -578,7 +587,7 @@ def papers_timeseries(ctx, metric="papers", frm=None, to=None, sid=None, kind=No
     cur = ctx.cursor()
     if metric not in METRICS:
         return refusal(f"unknown metric {metric!r}", f"one of: {', '.join(METRICS)}")
-    expr, base = METRICS[metric]
+    expr, base, population = METRICS[metric]
     frm, to = _years(ctx, frm, to)
     where, params = [base, "year BETWEEN ? AND ?"], [frm, to]
     if sid:
@@ -596,7 +605,7 @@ def papers_timeseries(ctx, metric="papers", frm=None, to=None, sid=None, kind=No
     return result(f"{metric.replace('_', ' ')} per year, {frm}–{to}: "
                   f"{first['value']} in {first['year']} → {last['value']} in {last['year']} "
                   f"({len(rows)} years).",
-                  cols, rows[-40:], note=JC_NOTE + f" The last complete year is {ctx.last_full_year()}.",
+                  cols, rows[-40:], note=population + f" The last complete year is {ctx.last_full_year()}.",
                   link={"page": "publishing"}, series_length=len(rows),
                   first=first, last=last, peak=_best(rows, "value"))
 

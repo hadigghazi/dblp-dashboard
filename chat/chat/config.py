@@ -49,6 +49,9 @@ BUDGET_USD_PER_DAY = float(os.environ.get("CHAT_BUDGET_USD_PER_DAY", "2.00"))
 
 # ---- the other services -----------------------------------------------------
 SEARCH_URL = os.environ.get("CHAT_SEARCH_URL", "http://searchapi:8003").rstrip("/")
+# the dashboard's own api: used only by the QA harness, as the reference for any number
+# the assistant also computes
+DASHBOARD_URL = os.environ.get("CHAT_DASHBOARD_URL", "http://api:8000").rstrip("/")
 ML_URL = os.environ.get("CHAT_ML_URL", "http://mlapi:8001").rstrip("/")
 UPSTREAM_TIMEOUT = float(os.environ.get("CHAT_UPSTREAM_TIMEOUT", "20"))
 
