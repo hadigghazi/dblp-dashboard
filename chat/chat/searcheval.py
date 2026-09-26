@@ -77,9 +77,10 @@ def _rank(results, key):
 SEARCH_TIMEOUT = 90     # a description is a long query, and the service answers one search at a time
 
 
-def _search(ctx, query, dense, top=20):
+def _search(ctx, query, dense=True, sparse=True, top=20):
     r = ctx.http.get(f"{config.SEARCH_URL}/search/papers",
-                     params={"q": query, "top": top, "dense": str(bool(dense)).lower()},
+                     params={"q": query, "top": top, "dense": str(bool(dense)).lower(),
+                             "sparse": str(bool(sparse)).lower()},
                      timeout=SEARCH_TIMEOUT)
     r.raise_for_status()
     return r.json()
@@ -109,21 +110,27 @@ def run(ctx, client, n_papers=60, seed=None, model=None, ledger=None):
         cases.append({"key": paper["key"], "title": paper["title"], "query": query})
     log.info("%s usable descriptions from %s papers", len(cases), len(papers))
 
-    hybrid, sparse, failures = [], [], []
+    hybrid, words, dense_only, failures = [], [], [], []
     t0 = time.time()
     for case in cases:
         try:
-            both = _search(ctx, case["query"], dense=True)
-            words_only = _search(ctx, case["query"], dense=False)
+            both = _search(ctx, case["query"])
+            words_arm = _search(ctx, case["query"], dense=False)
+            dense_arm = _search(ctx, case["query"], sparse=False)
         except Exception as e:
             log.warning("search failed for %r: %s", case["query"], e)
             skipped += 1
             continue
-        h, s = _rank(both.get("results", []), case["key"]), _rank(words_only.get("results", []), case["key"])
+        h = _rank(both.get("results", []), case["key"])
+        w = _rank(words_arm.get("results", []), case["key"])
+        d = _rank(dense_arm.get("results", []), case["key"])
         hybrid.append(h)
-        sparse.append(s)
-        if h is None or (s is not None and s < h):
-            failures.append({**case, "hybrid_rank": h, "words_only_rank": s})
+        words.append(w)
+        dense_only.append(d)
+        # fusion losing to the embeddings alone is the interesting failure: blending in a
+        # ranking that found nothing is then costing the answer
+        if h is None or (d is not None and d < h):
+            failures.append({**case, "hybrid_rank": h, "words_only_rank": w, "dense_only_rank": d})
 
     n = len(hybrid) or 1
     return {
@@ -133,12 +140,17 @@ def run(ctx, client, n_papers=60, seed=None, model=None, ledger=None):
         "caveat": "the queries are generated, not collected from users: they show whether meaning "
                   "survives a paraphrase, not what real users type",
         "sampled": len(papers), "usable": len(cases), "skipped": skipped,
-        "hybrid": _summary(hybrid, n), "words_only": _summary(sparse, n),
-        "gain_acc@10": round((_summary(hybrid, n)["acc@10"] or 0) - (_summary(sparse, n)["acc@10"] or 0), 4),
+        "hybrid": _summary(hybrid, n), "words_only": _summary(words, n),
+        "embeddings_only": _summary(dense_only, n),
+        "gain_over_words_acc@10": round((_summary(hybrid, n)["acc@10"] or 0)
+                                        - (_summary(words, n)["acc@10"] or 0), 4),
+        # negative means fusion is diluting the embeddings with a ranking that found nothing
+        "fusion_cost_acc@10": round((_summary(hybrid, n)["acc@10"] or 0)
+                                    - (_summary(dense_only, n)["acc@10"] or 0), 4),
         "seconds": round(time.time() - t0, 1),
         "query_tokens": tokens,
         "examples": [{"title": c["title"], "query": c["query"]} for c in cases[:5]],
-        "hybrid_missed": failures[:10],
+        "hybrid_lost_to_embeddings_alone": failures[:10],
     }
 
 

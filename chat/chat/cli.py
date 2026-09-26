@@ -107,7 +107,7 @@ def cmd_search_eval(args):
         sys.exit("No OPENAI_API_KEY set: this test needs a model to write the descriptions.")
     payload = SE.run(ctx, client, n_papers=args.papers, seed=args.seed, ledger=budget.ledger)
     path = SE.save(payload, ctx.meta.get("fingerprint", "unknown"))
-    print(json.dumps({k: v for k, v in payload.items() if k not in ("examples", "hybrid_missed")},
+    print(json.dumps({k: v for k, v in payload.items() if k not in ("examples", "hybrid_lost_to_embeddings_alone")},
                      indent=2))
     print("\nexample generated queries:")
     for e in payload["examples"]:

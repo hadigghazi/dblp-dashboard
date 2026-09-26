@@ -68,3 +68,15 @@ def test_words_only_search_is_available_for_comparison(client):
     assert "as asked" in (words.get("dense_error") or "")
     assert both.get("dense_candidates", 0) >= words.get("dense_candidates", 0)
     assert all("dense" not in (r.get("sources") or []) for r in words["results"])
+
+
+def test_the_embeddings_can_be_asked_on_their_own(client):
+    """Fusing a good ranking with one that found nothing is not the same as asking the good one, and
+    a paraphrase query is where that difference shows: BM25 finds nothing, so RRF spends half its
+    slots on noise. Measuring it needs this switch."""
+    dense_only = client.get("/search/papers",
+                            params={"q": "graph learning", "top": 5, "sparse": "false"}).json()
+    assert dense_only["sparse_used"] is False
+    assert dense_only["sparse_candidates"] == 0
+    assert all(r["sources"] == ["dense"] for r in dense_only["results"]), \
+        "no word match may leak in, not even the exact-word top-up"

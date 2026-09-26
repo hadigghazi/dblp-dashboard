@@ -121,7 +121,8 @@ def papers(q: str = Query(..., min_length=3, max_length=SR.MAX_TITLE), kind: Opt
           frm: Optional[int] = Query(None, alias="from", ge=1900, le=2100),
           to: Optional[int] = Query(None, ge=1900, le=2100),
           top: int = Query(20, ge=1, le=50), refresh: bool = False,
-          dense: bool = Query(True, description="set false to answer with words alone, for comparison")):
+          dense: bool = Query(True, description="set false to answer with words alone, for comparison"),
+          sparse: bool = Query(True, description="set false to answer with the embeddings alone")):
     if state.fingerprint is None:
         raise HTTPException(503, detail=f"No search index yet ({state.error}). Run: python -m search.cli store")
     with state.lock:   # one search at a time: a dense query is a full pass over the index
@@ -134,7 +135,7 @@ def papers(q: str = Query(..., min_length=3, max_length=SR.MAX_TITLE), kind: Opt
             # fold that flag into the cache key so a cached "not ready" answer cannot outlive the
             # build finishing
             complete = V.progress(con, state.fingerprint)["complete"] and dense
-            path = state.cache_path(q.strip().lower(), kind, frm, to, top, complete)
+            path = state.cache_path(q.strip().lower(), kind, frm, to, top, complete, sparse)
             if refresh:
                 path.unlink(missing_ok=True)
             if path.exists():
@@ -142,8 +143,8 @@ def papers(q: str = Query(..., min_length=3, max_length=SR.MAX_TITLE), kind: Opt
                 cached["cached"] = True
                 return JSONResponse(cached)
             t = time.time()
-            out = SR.search(con, state.fingerprint, encoder, q, top=top, kind=kind, year_from=frm, year_to=to,
-                            dense=complete)
+            out = SR.search(con, state.fingerprint, encoder, q, top=top, kind=kind, year_from=frm,
+                            year_to=to, dense=complete, sparse=sparse)
             if not complete:
                 out["dense_error"] = ("answered with words alone, as asked" if not dense
                                       else "the embedding index is still building")

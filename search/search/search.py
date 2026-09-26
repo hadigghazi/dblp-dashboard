@@ -49,12 +49,15 @@ def _hydrate(con, pids):
     return {r[0]: dict(zip(COLUMNS, r)) for r in rows}
 
 
-def search(con, fingerprint, encoder, text, top=20, kind=None, year_from=None, year_to=None, dense=True):
+def search(con, fingerprint, encoder, text, top=20, kind=None, year_from=None, year_to=None,
+           dense=True, sparse=True):
     text = (text or "").strip()[:MAX_TITLE]
     if len(text) < 3:
         return {"error": "type at least 3 characters"}
 
-    sparse = B.search(con, text, kind=kind, year_from=year_from, year_to=year_to)
+    # `sparse=False` exists to measure the embeddings alone: fusing them with a word ranking
+    # that found nothing is not the same as asking them on their own
+    sparse_hits = B.search(con, text, kind=kind, year_from=year_from, year_to=year_to) if sparse else []
     dense_hits, dense_error = [], None
     if dense:
         try:
@@ -63,8 +66,8 @@ def search(con, fingerprint, encoder, text, top=20, kind=None, year_from=None, y
         except FileNotFoundError as e:
             dense_error = str(e)
 
-    fused = F.rrf(sparse, dense_hits)[:top]
-    sparse_rank = {pid: r for r, (pid, _) in enumerate(sparse, start=1)}
+    fused = F.rrf(sparse_hits, dense_hits)[:top]
+    sparse_rank = {pid: r for r, (pid, _) in enumerate(sparse_hits, start=1)}
     dense_rank = {pid: r for r, (pid, _) in enumerate(dense_hits, start=1)}
     meta = _hydrate(con, [pid for pid, _ in fused])
 
@@ -77,7 +80,8 @@ def search(con, fingerprint, encoder, text, top=20, kind=None, year_from=None, y
         results.append({**{k: v for k, v in m.items() if k != "pid"}, "score": round(score, 5),
                         "sources": sources, "bm25_rank": sparse_rank.get(pid), "dense_rank": dense_rank.get(pid)})
 
-    remaining = max(0, top - len(results))
+    # the exact-word top-up is word matching too, so it stays out of a dense-only measurement
+    remaining = max(0, top - len(results)) if sparse else 0
     extra = _lexical(con, text, kind, year_from, year_to, limit=remaining, exclude=set(meta.keys()))
     for row in extra:
         results.append({**{k: v for k, v in row.items() if k != "pid"}, "score": None,
@@ -85,6 +89,7 @@ def search(con, fingerprint, encoder, text, top=20, kind=None, year_from=None, y
 
     return {
         "query": text, "results": results[:top],
-        "sparse_candidates": len(sparse), "dense_candidates": len(dense_hits),
+        "sparse_candidates": len(sparse_hits), "dense_candidates": len(dense_hits),
+        "sparse_used": bool(sparse),
         "dense_available": dense and dense_error is None, "dense_error": dense_error,
     }
