@@ -162,22 +162,32 @@ def test_a_query_of_common_words_is_bounded(con):
     assert tight == generous[:len(tight)], "the tokens kept are the rarest ones"
 
 
-def test_a_distinctive_query_trusts_the_word_ranking(con):
-    """A title carries a rare word, so BM25 is reliable and keeps its full say."""
+def test_the_word_ranking_s_weight_follows_the_query_s_rarest_word():
+    """Stated in IDF, so it is tested in IDF: the thresholds assume a corpus of millions, where a
+    word held by 0.1% of papers is distinctive and one held by 5% is not."""
+    assert S.sparse_weight({"idf": config.IDF_FULL}) == 1.0
+    assert S.sparse_weight({"idf": config.IDF_FULL + 5}) == 1.0
+    assert S.sparse_weight({"idf": config.IDF_FLOOR}) == config.SPARSE_FLOOR
+    assert S.sparse_weight({"idf": 0.5}) == config.SPARSE_FLOOR
+    assert S.sparse_weight({}) == config.SPARSE_FLOOR          # no tokens matched at all
+    middle = S.sparse_weight({"idf": (config.IDF_FLOOR + config.IDF_FULL) / 2})
+    assert config.SPARSE_FLOOR < middle < 1.0
+
+
+def test_a_rarer_query_trusts_the_word_ranking_more(con):
+    """Against the fixture, only the ordering is meaningful: in a corpus of a couple of hundred
+    papers nothing is rare, which is itself the right answer."""
     c, _ = con
     rare = c.execute("SELECT token FROM x.token_df ORDER BY df ASC LIMIT 1").fetchone()[0]
-    S.query_tokens(c, rare.replace("_", " "))
-    assert S.sparse_weight(S.query_stats(c)) == 1.0
-
-
-def test_a_query_of_only_common_words_does_not(con):
-    """A description can be built entirely of words hundreds of thousands of papers share. Giving
-    that ranking equal say cost every top-1 hit the embeddings had found."""
-    c, _ = con
     common = [t[0] for t in c.execute("SELECT token FROM x.token_df ORDER BY df DESC LIMIT 4").fetchall()]
+
+    S.query_tokens(c, rare.replace("_", " "))
+    distinctive = S.sparse_weight(S.query_stats(c))
     S.query_tokens(c, " ".join(t.replace("_", " ") for t in common))
-    weight = S.sparse_weight(S.query_stats(c))
-    assert config.SPARSE_FLOOR <= weight < 1.0
+    vague = S.sparse_weight(S.query_stats(c))
+
+    assert distinctive > vague, f"rare {distinctive} should outweigh common {vague}"
+    assert config.SPARSE_FLOOR <= vague < 1.0
 
 
 def test_weighted_fusion_lets_the_better_list_win():
