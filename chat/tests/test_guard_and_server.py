@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from chat import budget, config, data, server, sqlguard
+from chat.llm import Client, FakeClient
 
 
 # ------------------------------------------------------------------ the guard
@@ -126,7 +127,6 @@ def test_a_token_is_required_when_one_is_set(loaded, monkeypatch):
 
 def test_no_provider_key_is_a_clear_503(loaded, monkeypatch):
     monkeypatch.setattr(config, "TOKEN", "")
-    from chat.llm import Client
     server.state.client = Client(api_key="")
     c = TestClient(server.app)
     r = c.post("/chat/ask", json={"question": "who has the most papers?"})
