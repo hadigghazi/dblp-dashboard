@@ -5,7 +5,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from chat import budget, config, data, server, sqlguard
-from chat.llm import FakeClient
 
 
 # ------------------------------------------------------------------ the guard
@@ -72,18 +71,6 @@ def test_budget_survives_a_corrupt_ledger(dump):
 
 
 # ------------------------------------------------------------------ the server
-@pytest.fixture
-def client(loaded, dump, monkeypatch):
-    monkeypatch.setattr(config, "TOKEN", "")
-    monkeypatch.setattr(budget, "ledger", budget.Ledger(path=dump["models"] / "budget-server.json"))
-    server.state.client = FakeClient(
-        script=[{"tool_calls": [{"id": "c1", "name": "dataset_facts", "arguments": {}}]}],
-        answer="The snapshot holds 26 publications.")
-    server.state.store_meta = loaded["store_meta"]
-    server.state.error = None
-    return TestClient(server.app)
-
-
 def events_of(response):
     return [json.loads(line[5:]) for line in response.text.splitlines() if line.startswith("data:")]
 

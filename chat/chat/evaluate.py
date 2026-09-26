@@ -34,7 +34,17 @@ def run_case(ctx, client, case):
         if event.get("type") == "tool":
             tools_called.append(event["name"])
 
-    out = agent.answer(ctx, client, case["q"], emit=emit, ledger=budget.ledger, collect=payloads)
+    # A case may be a conversation. Only the last turn is measured; the ones before it exist to give
+    # the last one something to refer to ("and his co-authors?"), which is where a chatbot that looks
+    # fine on single questions usually breaks.
+    turns = case.get("turns") or [case["q"]]
+    history = []
+    for earlier in turns[:-1]:
+        prior = agent.answer(ctx, client, earlier, history=history, ledger=budget.ledger)
+        history += [{"role": "user", "content": earlier},
+                    {"role": "assistant", "content": prior.get("answer", "")}]
+    out = agent.answer(ctx, client, turns[-1], history=history, emit=emit, ledger=budget.ledger,
+                       collect=payloads)
     answer_text = out.get("answer", "")
     want_all = set(case.get("all_of", []))
     want_any = set(case.get("any_of", []))
@@ -46,9 +56,9 @@ def run_case(ctx, client, case):
     else:
         passed = ok_tools
         reason = "" if passed else f"missing tools: all_of={sorted(want_all - called)} any_of={sorted(want_any)}"
-    lint = grounding.check(answer_text, payloads, question=case["q"])
+    lint = grounding.check(answer_text, payloads, question=" ".join(turns))
     return {
-        "question": case["q"], "passed": bool(passed), "reason": reason, "grounding": lint,
+        "question": " -> ".join(turns), "passed": bool(passed), "reason": reason, "grounding": lint,
         "tools": tools_called, "grounded": bool(tools_called) or bool(case.get("refuses")),
         "refused": _refused(answer_text), "answer": answer_text,
         "seconds": round(time.time() - t0, 2), "cost_usd": out.get("cost_usd", 0.0),

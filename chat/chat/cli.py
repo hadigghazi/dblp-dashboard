@@ -6,6 +6,7 @@ Command line, for the VM.
   python -m chat.cli ask "who has most papers"  one question, printed as it happens
   python -m chat.cli evaluate [--limit N]       run the gold set, write the report
   python -m chat.cli qa [--only X]              check the tools against the dashboard (no model calls)
+  python -m chat.cli questions [--days N]      what people asked, and what the catalogue is missing
 
 `ask` is the same code path the web endpoint uses, so a question that works here works there.
 """
@@ -16,7 +17,7 @@ import sys
 
 import httpx
 
-from . import agent, budget, config, data, evaluate as E, qa as Q, store, tools as T
+from . import agent, budget, config, data, evaluate as E, qa as Q, store, tools as T, usage
 from .llm import Client
 
 
@@ -45,11 +46,13 @@ def cmd_tools(_args):
 
 def cmd_ask(args):
     ctx = _ready()
+    events = []
     client = Client()
     if not client.configured():
         sys.exit("No OPENAI_API_KEY set: the tools work, but nothing can route a question.")
 
     def emit(event):
+        events.append(event)
         kind = event.get("type")
         if kind == "tool":
             print(f"\n  · {event['name']}({json.dumps(event['arguments'], default=str)[:90]}) "
@@ -65,6 +68,7 @@ def cmd_ask(args):
                   f"${event['cost_usd']}, tools: {', '.join(event['tools']) or 'none'}]", file=sys.stderr)
 
     agent.answer(ctx, client, args.question, emit=emit, ledger=budget.ledger)
+    usage.record(usage.from_events(args.question, events, ctx.meta.get("fingerprint")))
 
 
 def cmd_evaluate(args):
@@ -95,6 +99,37 @@ def cmd_qa(args):
     sys.exit(1 if s["failed"] else 0)
 
 
+def cmd_questions(args):
+    report = usage.summarize(args.days)
+    if not report["questions"]:
+        print(f"No questions logged in the last {args.days} days.")
+        return
+    print(f"{report['questions']} questions in {args.days} days, median {report['median_seconds']}s, "
+          f"${report['cost_usd']}, {report['cached_share']:.0%} served from cache\n")
+    print("tools used:")
+    for name, count in list(report["tools"].items())[:12]:
+        print(f"  {count:>4}  {name}")
+    if report["refused_tool_calls"]:
+        print("\nrefused tool calls (the model gets these arguments wrong):")
+        for name, count in report["refused_tool_calls"].items():
+            print(f"  {count:>4}  {name}")
+    if report["fell_back_to_sql"]:
+        print("\nanswered with ad-hoc SQL - each of these is a tool the catalogue is missing:")
+        for q in report["fell_back_to_sql"][-10:]:
+            print(f"  - {q}")
+    if report["answered_without_a_tool"]:
+        print("\nanswered with no tool at all:")
+        for q in report["answered_without_a_tool"][-10:]:
+            print(f"  - {q}")
+    if report["errors"]:
+        print("\nerrors:")
+        for e in report["errors"][-5:]:
+            print(f"  - {e['question']}: {e['error']}")
+    print("\nslowest:")
+    for e in report["slowest"]:
+        print(f"  {e['seconds']:>5.1f}s  {e['question']}")
+
+
 def main():
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
     parser = argparse.ArgumentParser(prog="chat.cli", description=__doc__,
@@ -108,6 +143,9 @@ def main():
     ev = sub.add_parser("evaluate", help="run the gold set")
     ev.add_argument("--limit", type=int, default=None)
     ev.set_defaults(fn=cmd_evaluate)
+    ql = sub.add_parser("questions", help="what people asked, and what the catalogue is missing")
+    ql.add_argument("--days", type=int, default=30)
+    ql.set_defaults(fn=cmd_questions)
     q = sub.add_parser("qa", help="check the tools against the dashboard, without a model")
     q.add_argument("--only", default=None, help="a check name fragment, or a group: "
                                                 "dashboard, invariant, behaviour")

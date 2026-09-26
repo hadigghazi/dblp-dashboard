@@ -22,7 +22,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import agent, budget, config, data, docs, store, tools as T
+from . import agent, budget, config, data, docs, store, tools as T, usage
 from .llm import Client
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -225,6 +225,8 @@ def ask_stream(question, history, refresh=False):
         if event.get("type") == "done":
             finished = True
         yield _sse(event)
+    # what was asked, and what it took - the only record of which tools the catalogue is missing
+    usage.record(usage.from_events(question, collected, data.pool.fingerprint()))
     if path and finished:
         try:
             path.write_text(json.dumps(collected, default=str), encoding="utf-8")

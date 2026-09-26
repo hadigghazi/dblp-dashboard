@@ -92,6 +92,18 @@ CASES = [
     dict(q="What is the average team size in theory conferences?",
          any_of=["run_sql", "papers_timeseries", "top_venues"]),
 
+    # ---- follow-ups: the previous turn is the only place the subject is named
+    dict(turns=["Who has the most papers in dblp?", "How many co-authors does he have?"],
+         any_of=["coauthors", "author_profile"]),
+    dict(turns=["Tell me about CVPR", "How has it grown since 2015?"],
+         any_of=["papers_timeseries", "venue_profile", "count_papers"]),
+    dict(turns=["How many papers were published in 2024?", "And in 2014?"],
+         any_of=["count_papers", "papers_timeseries"]),
+    dict(turns=["What does Jürgen Schmidhuber publish?", "Only the journal papers since 2020, please"],
+         any_of=["author_papers", "count_papers"]),
+    dict(turns=["Which venues are the biggest?", "Who publishes most in the first one?"],
+         any_of=["top_authors"]),
+
     # ---- out of scope: the answer must say the data cannot support it
     dict(q="What is the most cited paper in dblp?", refuses=True),
     dict(q="What is Geoffrey Hinton's h-index?", refuses=True),
