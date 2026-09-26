@@ -28,7 +28,7 @@ services:
     container_name: dblp-dashboard
     ports:
       - "8090:80"     # 8080 was already taken on this machine; change freely
-    depends_on: [api, mlapi, searchapi]
+    depends_on: [api, mlapi, searchapi, chatapi]
     restart: unless-stopped
 
   dev:
@@ -131,8 +131,50 @@ services:
       - ./api/fixture:/out
     profiles: ["fixture"]
 
+  # The assistant behind /api/chat/. Needs OPENAI_API_KEY in the environment (or a .env file next to
+  # this compose file) to answer; without it the page explains that it is not configured.
+  chatapi:
+    build:
+      context: ./chat
+      target: runtime
+      network: host
+    image: dblp-dashboard-chat:latest
+    container_name: dblp-chatapi
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      CHAT_MODEL_FAST: ${CHAT_MODEL_FAST:-gpt-4.1-mini}
+      CHAT_MODEL_DEEP: ${CHAT_MODEL_DEEP:-gpt-4.1}
+      CHAT_TOKEN: ${CHAT_TOKEN:-}
+      CHAT_BUDGET_USD_PER_DAY: ${CHAT_BUDGET_USD_PER_DAY:-1.00}
+      DUCKDB_MEMORY: ${CHAT_DUCKDB_MEMORY:-1GB}
+      DUCKDB_THREADS: ${CHAT_DUCKDB_THREADS:-2}
+      CHAT_TMP_DIR: /tmp/duckdb
+    volumes:
+      - api_cache:/cache:ro
+      - chat_models:/models
+    restart: unless-stopped
+
+  # The same image for the terminal: docker compose run --rm chat python -m chat.cli tools
+  chat:
+    build:
+      context: ./chat
+      target: runtime
+      network: host
+    image: dblp-dashboard-chat:latest
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      CHAT_MODEL_FAST: ${CHAT_MODEL_FAST:-gpt-4.1-mini}
+      DUCKDB_MEMORY: ${CHAT_DUCKDB_MEMORY:-1GB}
+      CHAT_TMP_DIR: /tmp/duckdb
+    volumes:
+      - api_cache:/cache:ro
+      - chat_models:/models
+    profiles: ["chat"]
+
 volumes:
   api_cache:
   dev_node_modules:
   ml_models:
   search_models:
+  chat_models:

@@ -2,12 +2,16 @@
 
 Interactive dashboard over the complete [dblp](https://dblp.org) dump, queried live: publishing trends,
 author identity, the co-authorship network, titles, venues, data quality and an OpenAlex check, plus
-explorers for any author, venue series or publication.
+explorers for any author, venue series or publication, four ML features and an assistant that
+answers questions in plain language by querying the dump.
 
 **https://dblp.hadighazi.com**
 
 ```
-browser ──► Caddy (TLS) ──► web (nginx + React/ECharts) ──/api/──► api (FastAPI + DuckDB) ──► ~/dblp (read-only)
+browser ──► Caddy (TLS) ──► web (nginx + React/ECharts) ──/api/──────► api    (FastAPI + DuckDB) ──► ~/dblp (read-only)
+                                                        ├─/api/ml/────► mlapi  (3 sklearn models)
+                                                        ├─/api/search/► searchapi (BM25 + embeddings)
+                                                        └─/api/chat/──► chatapi (tool-calling assistant)
 ```
 
 ## How the data flows
@@ -188,6 +192,62 @@ Served at `/api/search/papers` (a query, with `kind`/`from`/`to` filters) and `/
 Each result carries which signal(s) found it (`bm25`, `dense`, or `exact_word`); the Papers page
 tags a result found by meaning alone.
 
+## Ask dblp (the assistant)
+
+`chat/` answers natural-language questions - "which author has the most papers?", "papers about
+learning from few demonstrations", "does this include preprints?" - by **calling typed tools over the
+dump**, not by retrieving text chunks. That choice is the whole design: a superlative, a count or a
+trend lives in an `ORDER BY` over millions of rows, and no amount of embedding similarity will
+produce it. Chunk retrieval is used for exactly one thing here, the questions about the data's own
+definitions, where a few dozen documentation paragraphs are ranked by idf-weighted overlap.
+
+Three retrieval paths, one router:
+
+| Question | Path |
+|---|---|
+| counts, rankings, trends, entity facts, two-step joins | 20 typed SQL tools over the api's serving tables |
+| "papers about ..." | the hybrid search service (BM25 + embeddings) |
+| "what is a bin?", "how accurate is the model?" | the documentation corpus, and the live model cards |
+
+```bash
+docker compose run --rm chat python -m chat.cli tools                      # the catalogue
+docker compose run --rm chat python -m chat.cli ask "who has the most papers?"
+docker compose run --rm chat python -m chat.cli evaluate                   # the gold set
+```
+
+**How a question is answered.** One call to the model picks tools (several at once where they are
+independent); they run in parallel against a read-only DuckDB cursor; the results go back; the answer
+streams as server-sent events. Two model calls in the common case, three when a question needs a
+second round. Rounds, tool calls and wall-clock are all capped, and a question that runs out of time
+is answered with what is in hand rather than abandoned.
+
+**Latency.** The tools are the fast part (5-80 ms; the serving tables are already built and cached),
+so the budget goes to the model. The superlatives that would otherwise sort four million rows -
+authors by papers, authors by co-authors, venues by size, the most-shared names - are precomputed once
+per dump into `chat-store-<fingerprint>.duckdb`, and identical questions are answered from a disk
+cache keyed on the dump, so a repeated demo costs nothing.
+
+**Grounding, and what it will not do.** Every tool returns its own counting rules ("bins excluded",
+"preprints excluded", "this counts every record type") and the system prompt requires them to be
+carried into the answer. Nothing may be stated that did not come from a tool in that turn. Questions
+that need citations, abstracts, affiliations, impact factors, awards or author demographics are
+refused with a sentence about why, because dblp has none of those.
+
+**The escape hatch is real but caged.** When no typed tool fits, the model may write one `SELECT`:
+checked against a keyword denylist on the comment- and string-stripped statement, run on a read-only
+connection with external access disabled, row-capped, interrupted after five seconds, and shown in the
+UI next to the answer.
+
+**How it is evaluated.** `chat/chat/goldset.py` holds ~37 questions across every class the taxonomy
+covers, each naming the tools that must be involved; six of them are out of scope and must be refused.
+`evaluate` reports tool-choice accuracy, refusal accuracy, the share of answers that were grounded in
+at least one tool call, median latency and total cost. A chatbot without this file is a demo.
+
+**Access and spend.** `CHAT_TOKEN` gates the page (unset in dev means open); a per-minute rate limit,
+a daily request cap and a daily dollar ceiling all fail closed, and the ledger survives a restart.
+`OPENAI_API_KEY` and `OPENAI_BASE_URL` select the provider - any OpenAI-compatible endpoint works,
+and without a key the service starts and says it is not configured instead of failing.
+
 ## Run locally (Docker only)
 
 ```bash
@@ -205,6 +265,7 @@ API docs: `/api/docs`.
 docker build --target test -t dblp-api:test    api    && docker run --rm dblp-api:test
 docker build --target test -t dblp-ml:test     ml     && docker run --rm dblp-ml:test
 docker build --target test -t dblp-search:test search && docker run --rm dblp-search:test
+docker build --target test -t dblp-chat:test   chat   && docker run --rm dblp-chat:test
 ```
 
 The suite builds a synthetic dump with the exact 28-column schema of `parse_dblp.py` (bins, numbered
@@ -215,7 +276,7 @@ exercises every endpoint, input validation, and rebuild-on-new-dump.
 
 `.github/workflows/deploy.yml`:
 
-1. **test-api** runs the suite above.
+1. **test-api**, **test-ml**, **test-search** and **test-chat** run the suites above.
 2. **build** builds both images; on `main` pushes `ghcr.io/hadigghazi/dblp-dashboard` and
    `ghcr.io/hadigghazi/dblp-dashboard-api` (tags `latest` and the commit SHA).
 3. **deploy** (`main` only) SSHes into the VM, writes `~/dblp-dashboard/.env` on first run, pulls both
@@ -266,6 +327,14 @@ search/search/fuse.py      reciprocal rank fusion of the two rankings
 search/search/evaluate.py  synonym-substitution self-retrieval check (BM25 vs. dense vs. fused)
 search/search/search.py    orchestration + exact-word fallback for out-of-index records
 search/tests/           synthetic serving db with per-topic title vocabularies + a fake encoder
+chat/chat/tools.py      the tool catalogue: one typed, bounded question per tool
+chat/chat/agent.py      the loop: pick tools, run them in parallel, stream the answer
+chat/chat/sqlguard.py   the guarded ad-hoc SELECT (denylist, read-only, row cap, timeout)
+chat/chat/docs.py       the documentation corpus for definitional questions
+chat/chat/store.py      precomputed leaderboards, so a superlative is a lookup
+chat/chat/goldset.py    the gold set: required tools per question, and what must be refused
+chat/chat/budget.py     rate limits and the daily spend ledger
+chat/tests/             a fixture whose answers are written down + a scripted model client
 src/api.js             fetch hooks (loading, warming-up, errors)
 src/pages.jsx          the eight findings pages + overview
 src/explore.jsx        author, venue and paper explorers

@@ -30,3 +30,6 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .env
+
+# the deploy directory's writable state (model artifacts, stores, ledgers) never belongs in git
+models/

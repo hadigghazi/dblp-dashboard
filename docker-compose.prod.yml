@@ -23,7 +23,7 @@ services:
     container_name: dblp-dashboard
     ports:
       - "127.0.0.1:8081:80"   # Caddy on the VM owns :80/:443 and forwards the catch-all here
-    depends_on: [api, mlapi, searchapi]
+    depends_on: [api, mlapi, searchapi, chatapi]
     restart: unless-stopped
 
   # The model server behind /api/ml/ (same image as the batch job below).
@@ -91,3 +91,50 @@ services:
       - ./cache:/cache:ro
       - ./models:/models
     profiles: ["search"]
+
+  # The assistant behind /api/chat/. It reads the api's serving tables, keeps a small leaderboard
+  # store of its own, and calls an OpenAI-compatible endpoint - so it is the only container that
+  # needs outbound internet and an API key. Without OPENAI_API_KEY it starts and reports
+  # "not configured" rather than failing.
+  chatapi:
+    image: ghcr.io/hadigghazi/dblp-dashboard-chat:latest
+    container_name: dblp-chatapi
+    user: "${DATA_UID:-1000}:${DATA_GID:-1000}"
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      CHAT_MODEL_FAST: ${CHAT_MODEL_FAST:-gpt-4.1-mini}
+      CHAT_MODEL_DEEP: ${CHAT_MODEL_DEEP:-gpt-4.1}
+      CHAT_TOKEN: ${CHAT_TOKEN:-}                      # unset = open; set = the page asks for it
+      CHAT_BUDGET_USD_PER_DAY: ${CHAT_BUDGET_USD_PER_DAY:-2.00}
+      CHAT_RATE_PER_MINUTE: ${CHAT_RATE_PER_MINUTE:-6}
+      CHAT_RATE_PER_DAY: ${CHAT_RATE_PER_DAY:-200}
+      DUCKDB_MEMORY: ${CHAT_DUCKDB_MEMORY:-2GB}
+      DUCKDB_THREADS: ${CHAT_DUCKDB_THREADS:-2}
+      CHAT_TMP_DIR: /tmp/duckdb
+    volumes:
+      - ./cache:/cache:ro     # the api's serving tables, read-only
+      - ./models:/models      # its leaderboard store, answer cache, spend ledger, gold-set report
+    restart: unless-stopped
+
+  # The same image as a batch job, for the terminal:
+  #   docker compose -f docker-compose.prod.yml run --rm chat python -m chat.cli ask "who has most papers?"
+  #   docker compose -f docker-compose.prod.yml run --rm chat python -m chat.cli evaluate
+  chat:
+    image: ghcr.io/hadigghazi/dblp-dashboard-chat:latest
+    pull_policy: missing
+    user: "${DATA_UID:-1000}:${DATA_GID:-1000}"
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      CHAT_MODEL_FAST: ${CHAT_MODEL_FAST:-gpt-4.1-mini}
+      CHAT_MODEL_DEEP: ${CHAT_MODEL_DEEP:-gpt-4.1}
+      DUCKDB_MEMORY: ${CHAT_DUCKDB_MEMORY:-4GB}
+      DUCKDB_THREADS: ${CHAT_DUCKDB_THREADS:-4}
+      CHAT_TMP_DIR: /tmp/duckdb
+      # the defaults (searchapi:8003, mlapi:8001) resolve on this compose network, so a question
+      # asked from the terminal reaches the same services the web endpoint uses
+    volumes:
+      - ./cache:/cache:ro
+      - ./models:/models
+    profiles: ["chat"]

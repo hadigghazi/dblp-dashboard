@@ -11,6 +11,7 @@ env:
   API_IMAGE: ghcr.io/${{ github.repository }}-api
   ML_IMAGE: ghcr.io/${{ github.repository }}-ml
   SEARCH_IMAGE: ghcr.io/${{ github.repository }}-search
+  CHAT_IMAGE: ghcr.io/${{ github.repository }}-chat
 
 jobs:
   # The API test suite runs against a synthetic dump with the real parquet schema.
@@ -70,9 +71,28 @@ jobs:
       - name: Run tests
         run: docker run --rm dblp-search:test
 
+  # The assistant's tools run against a synthetic dump whose answers are written down, and the agent
+  # loop runs against a scripted model client - so no API key and no network are needed here.
+  test-chat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build test image
+        uses: docker/build-push-action@v6
+        with:
+          context: chat
+          target: test
+          load: true
+          tags: dblp-chat:test
+          cache-from: type=gha,scope=chat-test
+          cache-to: type=gha,scope=chat-test,mode=max
+      - name: Run tests
+        run: docker run --rm dblp-chat:test
+
   # Every push and PR: prove the images build. On main, also push them to GHCR.
   build:
-    needs: [test-api, test-ml, test-search]
+    needs: [test-api, test-ml, test-search, test-chat]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -96,6 +116,10 @@ jobs:
             context: search
             target: runtime
             image_env: SEARCH_IMAGE
+          - name: chat
+            context: chat
+            target: runtime
+            image_env: CHAT_IMAGE
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -167,13 +191,24 @@ jobs:
                 echo "DATA_GID=$(id -g)"
               } > .env
             fi
+            # the assistant's secrets: written when the repo has them, otherwise whatever is
+            # already in .env is left alone (so a hand-edited key survives a deploy)
+            set_env() {
+              [ -n "$2" ] || return 0
+              grep -v "^$1=" .env > .env.next || true
+              echo "$1=$2" >> .env.next
+              mv .env.next .env
+            }
+            set_env OPENAI_API_KEY '${{ secrets.OPENAI_API_KEY }}'
+            set_env CHAT_TOKEN '${{ secrets.CHAT_TOKEN }}'
+            chmod 600 .env
             test -f "$(grep '^DBLP_DIR=' .env | cut -d= -f2)/parquet/dblp.parquet" \
               || { echo "dblp.parquet not found under DBLP_DIR in ~/dblp-dashboard/.env"; exit 1; }
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
             # --profile ml/search also pulls the batch-job images, so running one later needs no
             # registry credentials on the VM (the packages are private); `up` without the profiles
             # still starts web, api, mlapi and searchapi
-            docker compose -f docker-compose.prod.yml --profile ml --profile search pull
+            docker compose -f docker-compose.prod.yml --profile ml --profile search --profile chat pull
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
             docker logout ghcr.io
             docker image prune -f >/dev/null
@@ -187,8 +222,9 @@ jobs:
             set -e
             for i in $(seq 1 30); do
               if curl -fsS -o /dev/null http://127.0.0.1:8081/ && curl -fsS http://127.0.0.1:8081/api/health \
-                 && curl -fsS http://127.0.0.1:8081/api/ml/health && curl -fsS http://127.0.0.1:8081/api/search/health; then
-                echo; echo "dashboard, api and both model servers are up"; exit 0
+                 && curl -fsS http://127.0.0.1:8081/api/ml/health && curl -fsS http://127.0.0.1:8081/api/search/health \
+                 && curl -fsS http://127.0.0.1:8081/api/chat/health; then
+                echo; echo "dashboard, api, both model servers and the assistant are up"; exit 0
               fi
               sleep 2
             done

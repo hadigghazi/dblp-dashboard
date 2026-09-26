@@ -2,10 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 import { PageOverview, PagePublishing, PageIdentity, PageNetwork, PageTitles, PageVenues, PageQuality, PageEnrichment, PageTails } from "./pages.jsx";
 import { PageAuthors, PageVenueExplorer, PagePapers } from "./explore.jsx";
 import { PageDisambiguation, PageCollaborators, PageWhereToPublish } from "./ml.jsx";
+import { PageAsk } from "./ask.jsx";
 import { useStatus } from "./api.js";
 
 const PAGES = [
   { id: "overview", no: "–", label: "Overview", group: null, Comp: PageOverview },
+  { id: "ask", no: "★", label: "Ask dblp", group: null, Comp: PageAsk },
   { id: "publishing", no: "01", label: "Publishing", group: "Findings", Comp: PagePublishing },
   { id: "identity", no: "02", label: "Author identity", group: "Findings", Comp: PageIdentity },
   { id: "network", no: "03", label: "Co-author network", group: "Findings", Comp: PageNetwork },
