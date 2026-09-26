@@ -17,7 +17,6 @@ search endpoint takes `dense=false` for exactly this.
 """
 import json
 import logging
-import random
 import re
 import time
 from datetime import datetime, timezone
@@ -41,6 +40,12 @@ STOP = set("a an the of for and or in on to with from into over under via using 
 
 def _words(text):
     return {w for w in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(w) > 2 and w not in STOP}
+
+
+def queries_path(fingerprint, seed, n):
+    d = config.MODELS_DIR / "search-eval"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"queries-{fingerprint}-{seed}-{n}.json"
 
 
 def sample_papers(ctx, n, seed=None):
@@ -95,7 +100,9 @@ def _summary(ranks, n, ks=(1, 5, 10, 20)):
     return out
 
 
-def run(ctx, client, n_papers=60, seed=None, model=None, ledger=None):
+def build_queries(ctx, client, n_papers, seed, model=None, ledger=None):
+    """The descriptions, generated once and kept: a test whose questions change between runs
+    cannot answer whether a change to the ranker helped."""
     papers = sample_papers(ctx, n_papers, seed)
     cases, skipped, tokens = [], 0, {"input_tokens": 0, "output_tokens": 0}
     for paper in papers:
@@ -108,10 +115,26 @@ def run(ctx, client, n_papers=60, seed=None, model=None, ledger=None):
             skipped += 1
             continue
         cases.append({"key": paper["key"], "title": paper["title"], "query": query})
+    return {"sampled": len(papers), "skipped_unusable": skipped, "cases": cases,
+            "query_tokens": tokens, "seed": seed, "model": model or config.MODEL_FAST}
+
+
+def run(ctx, client, n_papers=60, seed=None, model=None, ledger=None, regenerate=False):
+    seed = 7 if seed is None else seed
+    path = queries_path(ctx.meta.get("fingerprint", "unknown"), seed, n_papers)
+    if path.exists() and not regenerate:
+        built = json.loads(path.read_text(encoding="utf-8"))
+        log.info("reusing %s descriptions from %s", len(built["cases"]), path.name)
+    else:
+        built = build_queries(ctx, client, n_papers, seed, model, ledger)
+        path.write_text(json.dumps(built, indent=2, default=str), encoding="utf-8")
+    cases, skipped = built["cases"], built["skipped_unusable"]
+    papers, tokens = [None] * built["sampled"], built["query_tokens"]
     log.info("%s usable descriptions from %s papers", len(cases), len(papers))
 
     hybrid, words, dense_only, failures = [], [], [], []
     weights, coverages = [], []          # did the fusion weighting actually fire on these?
+    paired = {"hybrid_better": 0, "embeddings_better": 0, "same": 0}
     t0 = time.time()
     for case in cases:
         try:
@@ -134,6 +157,13 @@ def run(ctx, client, n_papers=60, seed=None, model=None, ledger=None):
         # ranking that found nothing is then costing the answer
         if h is None or (d is not None and d < h):
             failures.append({**case, "hybrid_rank": h, "words_only_rank": w, "dense_only_rank": d})
+        # paired, because that is the comparison the summaries cannot make honestly at this size
+        if (h or 10 ** 6) < (d or 10 ** 6):
+            paired["hybrid_better"] += 1
+        elif (d or 10 ** 6) < (h or 10 ** 6):
+            paired["embeddings_better"] += 1
+        else:
+            paired["same"] += 1
 
     n = len(hybrid) or 1
     return {
@@ -142,7 +172,9 @@ def run(ctx, client, n_papers=60, seed=None, model=None, ledger=None):
                   "description is then searched for, with the embeddings and without them",
         "caveat": "the queries are generated, not collected from users: they show whether meaning "
                   "survives a paraphrase, not what real users type",
+        "queries_from": path.name, "regenerated": bool(regenerate) or not path.exists(),
         "sampled": len(papers), "usable": len(cases), "skipped": skipped,
+        "hybrid_vs_embeddings_per_query": paired,
         "hybrid": _summary(hybrid, n), "words_only": _summary(words, n),
         "embeddings_only": _summary(dense_only, n),
         "gain_over_words_acc@10": round((_summary(hybrid, n)["acc@10"] or 0)
@@ -155,6 +187,7 @@ def run(ctx, client, n_papers=60, seed=None, model=None, ledger=None):
                                     / max(1, len([w for w in weights if w is not None])), 3),
         "mean_word_match_coverage": round(sum(c for c in coverages if c is not None)
                                           / max(1, len([c for c in coverages if c is not None])), 3),
+        "queries_with_no_word_weight": sum(1 for w in weights if not w),
         "query_tokens": tokens,
         "examples": [{"title": c["title"], "query": c["query"]} for c in cases[:5]],
         "hybrid_lost_to_embeddings_alone": failures[:10],

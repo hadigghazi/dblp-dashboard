@@ -105,7 +105,8 @@ def cmd_search_eval(args):
     client = Client()
     if not client.configured():
         sys.exit("No OPENAI_API_KEY set: this test needs a model to write the descriptions.")
-    payload = SE.run(ctx, client, n_papers=args.papers, seed=args.seed, ledger=budget.ledger)
+    payload = SE.run(ctx, client, n_papers=args.papers, seed=args.seed, ledger=budget.ledger,
+                     regenerate=args.regenerate)
     path = SE.save(payload, ctx.meta.get("fingerprint", "unknown"))
     print(json.dumps({k: v for k, v in payload.items() if k not in ("examples", "hybrid_lost_to_embeddings_alone")},
                      indent=2))
@@ -162,6 +163,8 @@ def main():
     se = sub.add_parser("search-eval", help="can search find a paper from a description of it?")
     se.add_argument("--papers", type=int, default=60)
     se.add_argument("--seed", type=int, default=7)
+    se.add_argument("--regenerate", action="store_true",
+                    help="write new descriptions instead of reusing the saved ones")
     se.set_defaults(fn=cmd_search_eval)
     ql = sub.add_parser("questions", help="what people asked, and what the catalogue is missing")
     ql.add_argument("--days", type=int, default=30)

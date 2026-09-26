@@ -39,3 +39,17 @@ def test_the_sample_comes_from_the_indexed_population(ctx):
     papers = SE.sample_papers(ctx, 5)
     assert papers, "the fixture has no paper long enough to sample"
     assert all(len(p["title"]) >= 30 and p["year"] >= 2010 for p in papers)
+
+
+def test_the_same_query_set_is_reused_between_runs(ctx, tmp_path, monkeypatch):
+    """Four runs of this test disagreed by up to five points and I read that as the effect of my
+    changes. It was the sample: the model writes fresh descriptions every time."""
+    monkeypatch.setattr(SE.config, "MODELS_DIR", tmp_path)
+    client = FakeClient(script=[{"content": "A description of something entirely different."}] * 20)
+    first = SE.build_queries(ctx, client, n_papers=3, seed=7)
+    path = SE.queries_path(ctx.meta.get("fingerprint", "unknown"), 7, 3)
+    path.write_text(SE.json.dumps(first), encoding="utf-8")
+
+    reread = SE.json.loads(path.read_text(encoding="utf-8"))
+    assert [c["query"] for c in reread["cases"]] == [c["query"] for c in first["cases"]]
+    assert reread["cases"], "the fixture should yield at least one usable description"
