@@ -74,6 +74,19 @@ CASES = [
     dict(q="How fresh is this data?", any_of=["docs_lookup", "dataset_facts"]),
     dict(q="Does this include preprints?", any_of=["docs_lookup"]),
 
+    # ---- harder shapes: filters on a superlative, comparisons, ambiguity, exact records
+    dict(q="Who published most at CVPR since 2020?", all_of=["resolve_venue"], any_of=["top_authors"]),
+    dict(q="Is NeurIPS bigger than ICML?", all_of=["resolve_venue"],
+         any_of=["venue_profile", "top_venues", "count_papers"]),
+    dict(q="How many journal papers came out in 2015?", any_of=["count_papers", "papers_timeseries"]),
+    dict(q="How many papers have exactly two authors?", any_of=["count_papers", "run_sql"]),
+    dict(q="Which venues are the most open access?", any_of=["top_venues", "run_sql"]),
+    dict(q="Show me the record conf/nips/VaswaniSPUJGKP17", any_of=["paper_detail"]),
+    dict(q="What do Yang Liu's papers look like?", any_of=["resolve_author", "namesakes"]),
+    dict(q="When did conference papers overtake journal papers?", any_of=["papers_timeseries"]),
+    dict(q="What is the average team size in theory conferences?",
+         any_of=["run_sql", "papers_timeseries", "top_venues"]),
+
     # ---- out of scope: the answer must say the data cannot support it
     dict(q="What is the most cited paper in dblp?", refuses=True),
     dict(q="What is Geoffrey Hinton's h-index?", refuses=True),
@@ -81,6 +94,10 @@ CASES = [
     dict(q="Show me the abstract of that paper", refuses=True),
     dict(q="Which journal has the highest impact factor?", refuses=True),
     dict(q="How many women publish at NeurIPS?", refuses=True),
+    dict(q="What is NeurIPS's acceptance rate?", refuses=True),          # no submission data exists
+    dict(q="Which authors work at Google?", refuses=True),               # no per-paper affiliation
+    dict(q="Which paper won best paper at CVPR 2020?", refuses=True),    # no awards
+    dict(q="How many times was 'Attention is All you Need' downloaded?", refuses=True),
 ]
 
 # Phrases that count as an honest refusal. The answer must say the data cannot support the question,
