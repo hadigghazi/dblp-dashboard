@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import sys
 import tempfile
@@ -176,10 +177,15 @@ def test_the_word_ranking_s_weight_follows_the_query_s_rarest_word():
 
 def test_a_rarer_query_trusts_the_word_ranking_more(con):
     """Against the fixture, only the ordering is meaningful: in a corpus of a couple of hundred
-    papers nothing is rare, which is itself the right answer."""
+    papers nothing is rare, which is itself the right answer.
+
+    This test failed first on a real bug: both queries scored the same, because the tokenizer
+    emits bigrams and a bigram of common words is rare. Specificity is a property of the words."""
     c, _ = con
-    rare = c.execute("SELECT token FROM x.token_df ORDER BY df ASC LIMIT 1").fetchone()[0]
-    common = [t[0] for t in c.execute("SELECT token FROM x.token_df ORDER BY df DESC LIMIT 4").fetchall()]
+    rare = c.execute("SELECT token FROM x.token_df WHERE NOT contains(token, '_') "
+                     "ORDER BY df ASC LIMIT 1").fetchone()[0]
+    common = [t[0] for t in c.execute("SELECT token FROM x.token_df WHERE NOT contains(token, '_') "
+                                      "ORDER BY df DESC LIMIT 4").fetchall()]
 
     S.query_tokens(c, rare.replace("_", " "))
     distinctive = S.sparse_weight(S.query_stats(c))
@@ -196,3 +202,17 @@ def test_weighted_fusion_lets_the_better_list_win():
     assert F.rrf(noise, strong)[0][0] in ("x", "a")            # equal weights: a tie at the top
     assert F.rrf(noise, strong, weights=(0.15, 1.0))[0][0] == "a"
     assert [pid for pid, _ in F.rrf(noise, strong, weights=(0, 1.0))] == ["a", "b"]
+
+
+def test_bigrams_do_not_make_a_vague_query_look_specific(con):
+    """The bug this signal was nearly shipped with: "systems learning data" produces the bigrams
+    systems_learning and learning_data, both rare, so the rarest token said "specific"."""
+    c, _ = con
+    common = [t[0] for t in c.execute("SELECT token FROM x.token_df WHERE NOT contains(token, '_') "
+                                      "ORDER BY df DESC LIMIT 3").fetchall()]
+    S.query_tokens(c, " ".join(common))
+    stats = S.query_stats(c)
+    assert stats["word_df"] is not None
+    assert stats["word_df"] >= (stats["min_df"] or 0), "a word is never rarer than the bigrams it makes"
+    assert stats["idf"] == pytest.approx(math.log(
+        c.execute("SELECT count(*) FROM x.paper").fetchone()[0] / stats["word_df"]), rel=1e-6)

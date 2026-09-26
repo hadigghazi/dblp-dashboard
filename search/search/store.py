@@ -63,15 +63,24 @@ def store_path(fingerprint) -> Path:
 
 
 def query_stats(con):
-    """How specific the last query_tokens() call was: the rarest token it kept, as an IDF over
-    the indexed papers. High means the query named something; low means it used only words that
-    hundreds of thousands of papers share."""
-    row = con.execute("SELECT count(*), min(df), max(df) FROM q_used").fetchone()
+    """How specific the last query_tokens() call was, as an IDF over the indexed papers.
+
+    Measured on the query's WORDS, deliberately. The index also holds bigrams, and a bigram of
+    two ordinary words is itself rare - so "the rarest token" calls a description of common
+    words specific, which is the opposite of the truth and exactly the case this signal exists
+    to catch. A title names something ("byzantine"); a description of the same paper does not."""
+    row = con.execute("""
+        SELECT count(*), min(df), max(df),
+               min(df) FILTER (WHERE NOT contains(token, '_')) AS word_df
+        FROM q_used""").fetchone()
     n = con.execute("SELECT count(*) FROM x.paper").fetchone()[0] or 1
-    if not row or not row[0] or not row[1]:
-        return {"tokens": 0, "min_df": None, "max_df": None, "idf": 0.0}
-    return {"tokens": int(row[0]), "min_df": int(row[1]), "max_df": int(row[2]),
-            "idf": math.log(n / row[1])}
+    if not row or not row[0]:
+        return {"tokens": 0, "min_df": None, "max_df": None, "word_df": None, "idf": 0.0}
+    df = row[3] or row[1]          # no single word matched: fall back to whatever did
+    return {"tokens": int(row[0]), "min_df": int(row[1]) if row[1] else None,
+            "max_df": int(row[2]) if row[2] else None,
+            "word_df": int(row[3]) if row[3] else None,
+            "idf": math.log(n / df) if df else 0.0}
 
 
 def sparse_weight(stats):
