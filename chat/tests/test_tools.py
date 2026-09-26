@@ -162,7 +162,7 @@ def test_coauthors_reports_the_real_degree(ctx):
     out = call(ctx, "coauthors", key="homepages/a/Ada", limit=2)
     assert len(out["rows"]) == 2
     assert out["meta"]["coauthors_total"] == EXPECTED["ada_coauthors"]
-    assert f"{EXPECTED['ada_coauthors']:,} distinct co-authors" in out["summary"]
+    assert f"{EXPECTED['ada_coauthors']:,} identified co-authors" in out["summary"]
 
 
 def test_coauthors_and_pairs(ctx):
