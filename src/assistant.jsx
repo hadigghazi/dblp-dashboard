@@ -28,42 +28,45 @@ export function Dewey({ size = 44, mood = "idle", title = DEWEY.name }) {
   return (
     <svg className={"dewey dewey-" + mood} width={size} height={size} viewBox="0 0 64 64"
          role="img" aria-label={title}>
+      {/* Shapes are kept few and bold, because this is read at 40px on the launcher as often as at
+          104px on the introduction: an arc that reads as a lab coat at full size is a smudge small. */}
       {/* antenna: the only thing that says "not a person" */}
-      <line x1="32" y1="12" x2="32" y2="6" stroke="var(--rule)" strokeWidth="2" strokeLinecap="round" />
-      <circle className="dewey-bulb" cx="32" cy="5" r="2.6" fill="var(--s3)" />
-      {/* head */}
-      <rect x="13" y="12" width="38" height="31" rx="11" fill="var(--surface-2)"
+      <line x1="32" y1="10" x2="32" y2="6" stroke="var(--ink-2)" strokeWidth="2" strokeLinecap="round" />
+      <circle className="dewey-bulb" cx="32" cy="4.5" r="2.8" fill="var(--s3)" />
+      {/* the shoulders, drawn first so the head sits on them */}
+      <path d="M8 62c0-10.5 10-16 24-16s24 5.5 24 16z" fill="var(--surface-2)"
+            stroke="var(--ink-2)" strokeWidth="2" strokeLinejoin="round" />
+      <path d="M25 47.5 32 55l7-7.5" fill="none" stroke="var(--ink-2)" strokeWidth="2" strokeLinejoin="round" />
+      {/* a pocket with a pen: a researcher, not an appliance */}
+      <rect x="41" y="52" width="8" height="7" rx="1.5" fill="none" stroke="var(--ink-2)" strokeWidth="1.6" />
+      <line x1="45" y1="50" x2="45" y2="56" stroke="var(--s2)" strokeWidth="2.4" strokeLinecap="round" />
+      {/* head, with the earpieces that give the silhouette its width */}
+      <rect x="11" y="22" width="6" height="11" rx="3" fill="var(--surface-2)" stroke="var(--ink-2)" strokeWidth="2" />
+      <rect x="47" y="22" width="6" height="11" rx="3" fill="var(--surface-2)" stroke="var(--ink-2)" strokeWidth="2" />
+      <rect x="15" y="10" width="34" height="33" rx="12" fill="var(--surface-2)"
             stroke="var(--ink-2)" strokeWidth="2" />
-      {/* a tuft of hair, so he is a researcher and not an appliance */}
-      <path d="M22 13c2-5 7-7 11-5" fill="none" stroke="var(--ink-2)" strokeWidth="2" strokeLinecap="round" />
       {/* glasses */}
       <g stroke="var(--accent)" strokeWidth="2" fill="none">
-        <circle cx="24" cy="27" r="6.5" />
-        <circle cx="40" cy="27" r="6.5" />
-        <path d="M30.5 27h3" strokeLinecap="round" />
-        <path d="M17.5 25.5 13 24" strokeLinecap="round" />
-        <path d="M46.5 25.5 51 24" strokeLinecap="round" />
+        <circle cx="24.5" cy="25" r="6" />
+        <circle cx="39.5" cy="25" r="6" />
+        <path d="M30.5 25h3" strokeLinecap="round" />
       </g>
       {/* eyes: dots at rest, a level gaze while thinking */}
       {thinking ? (
         <g stroke="var(--ink)" strokeWidth="2.4" strokeLinecap="round">
-          <path d="M21.5 27.5h5" />
-          <path d="M37.5 27.5h5" />
+          <path d="M22 25.5h5" />
+          <path d="M37 25.5h5" />
         </g>
       ) : (
         <g fill="var(--ink)">
-          <circle cx="24" cy="27.5" r="2.1" />
-          <circle cx="40" cy="27.5" r="2.1" />
+          <circle cx="24.5" cy="25.5" r="2.2" />
+          <circle cx="39.5" cy="25.5" r="2.2" />
         </g>
       )}
       {/* mouth */}
       {mood === "talking"
-        ? <path d="M28 36q4 4 8 0" fill="none" stroke="var(--ink-2)" strokeWidth="2" strokeLinecap="round" />
-        : <path d="M28.5 36.5q3.5 2.5 7 0" fill="none" stroke="var(--ink-2)" strokeWidth="2" strokeLinecap="round" />}
-      {/* lab coat, collar and a pen in the pocket */}
-      <path d="M12 62c1.5-9 9-14 20-14s18.5 5 20 14" fill="var(--surface-2)" stroke="var(--ink-2)" strokeWidth="2" />
-      <path d="M26 49l6 7 6-7" fill="none" stroke="var(--ink-2)" strokeWidth="2" strokeLinejoin="round" />
-      <line x1="43" y1="54" x2="43" y2="60" stroke="var(--s2)" strokeWidth="2.4" strokeLinecap="round" />
+        ? <path d="M27.5 34.5q4.5 5 9 0" fill="none" stroke="var(--ink-2)" strokeWidth="2" strokeLinecap="round" />
+        : <path d="M28 35q4 3 8 0" fill="none" stroke="var(--ink-2)" strokeWidth="2" strokeLinecap="round" />}
     </svg>
   );
 }

@@ -324,7 +324,9 @@ code { font-size: .92em; }
 }
 .deweyicon:hover { background: var(--surface-2); border-color: var(--rule); color: var(--ink); }
 
-.deweybody { flex: 1; overflow-y: auto; padding: 14px 14px 4px; }
+/* a column, so the introduction can sit in the middle of an empty panel while a
+   conversation stays anchored to the top */
+.deweybody { flex: 1; overflow-y: auto; padding: 14px 14px 4px; display: flex; flex-direction: column; }
 .deweyfoot { border-top: 1px solid var(--rule); padding: 10px 12px; background: var(--surface); }
 .deweyfoot form { display: flex; gap: 8px; align-items: center; }
 .askinput {
@@ -335,7 +337,8 @@ code { font-size: .92em; }
 .btn.primary { padding: 6px 16px; }
 
 /* the introduction: a character and a purpose, not a lonely password box */
-.deweyintro { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 26px 8px 14px; }
+.deweyintro { display: flex; flex-direction: column; align-items: center; text-align: center;
+  padding: 16px 8px; margin-block: auto; }
 .deweyintro.compact { padding: 14px 8px 8px; }
 .deweyintro h3 { font-size: 19px; margin: 10px 0 2px; }
 .introrole { font-size: 12px; color: var(--accent-ink); margin: 0 0 10px; letter-spacing: .01em; }
