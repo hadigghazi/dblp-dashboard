@@ -399,3 +399,16 @@ code { font-size: .92em; }
   .deweyfab { padding: 5px; right: 16px; bottom: 16px; }
   .deweypanel { width: 100vw; border-left: none; }
 }
+
+/* earlier chats */
+.deweyicon.on { background: var(--tint); color: var(--accent-ink); border-color: var(--rule); }
+.chatlist { list-style: none; margin: 0 0 14px; padding: 0 0 12px; border-bottom: 1px solid var(--rule-2); }
+.chatlist li { display: flex; align-items: center; gap: 4px; border-radius: 7px; }
+.chatlist li:hover { background: var(--surface-2); }
+.chatlist li.on { background: var(--tint); }
+.chatopen {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; padding: 7px 9px;
+  background: none; border: none; cursor: pointer; font: inherit; text-align: left;
+}
+.chattitle { font-size: 12.5px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chatwhen { font-size: 11px; color: var(--muted); }

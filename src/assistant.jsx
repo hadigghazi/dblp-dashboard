@@ -137,6 +137,74 @@ async function streamAnswer({ question, history, token, onEvent, signal }) {
   }
 }
 
+
+/* ------------------------------------------------------------------ chats -------------------- */
+const CHATS_KEY = "dblp-dewey-chats";
+const MAX_CHATS = 20;
+const MAX_TURNS = 20;
+
+/** A turn as it is kept between visits: the tables are dropped (they can be large and the chips
+ *  still read without them), everything that explains the answer is kept. */
+function slim(turn) {
+  return {
+    question: turn.question,
+    answer: turn.answer,
+    error: turn.error || null,
+    done: turn.done ? { seconds: turn.done.seconds, tools: turn.done.tools, cached: turn.done.cached,
+                        cost_usd: turn.done.cost_usd, model: turn.done.model, usage: turn.done.usage } : null,
+    tools: (turn.tools || []).map((t) => ({ type: "tool", name: t.name, arguments: t.arguments,
+                                            ms: t.ms, summary: t.summary, note: t.note, link: t.link,
+                                            refused: t.refused, sql: t.sql })),
+  };
+}
+
+const title = (q) => (q.length > 48 ? q.slice(0, 47).trimEnd() + "…" : q);
+
+/**
+ * Conversations live in this browser, not on the server: the question log deliberately records
+ * nothing that identifies anyone, and a chat history is exactly that. One list of chats, one active.
+ */
+function useChats() {
+  const [chats, setChats] = useState(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(CHATS_KEY) || "[]");
+      return Array.isArray(raw) ? raw : [];
+    } catch { return []; }
+  });
+  const [activeId, setActiveId] = useState(null);
+
+  const persist = useCallback((next) => {
+    setChats(next);
+    try { localStorage.setItem(CHATS_KEY, JSON.stringify(next.slice(0, MAX_CHATS))); }
+    catch { /* private mode, or the quota: the conversation still works, it just will not come back */ }
+  }, []);
+
+  const active = chats.find((c) => c.id === activeId) || null;
+
+  const save = useCallback((id, turns) => {
+    setChats((all) => {
+      const first = turns[0];
+      const existing = all.find((c) => c.id === id);
+      const chat = {
+        id,
+        title: existing?.title || (first ? title(first.question) : "New chat"),
+        at: Date.now(),
+        turns: turns.slice(-MAX_TURNS).map(slim),
+      };
+      const next = [chat, ...all.filter((c) => c.id !== id)].slice(0, MAX_CHATS);
+      try { localStorage.setItem(CHATS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
+
+  const remove = useCallback((id) => {
+    persist(chats.filter((c) => c.id !== id));
+    setActiveId((current) => (current === id ? null : current));
+  }, [chats, persist]);
+
+  return { chats, active, activeId, setActiveId, save, remove, clear: () => persist([]) };
+}
+
 /* ------------------------------------------------------------------ pieces ------------------ */
 /** What each lookup did, in words. The raw call stays inside the chip for anyone who wants it. */
 const TOOL_LABEL = {
@@ -280,6 +348,9 @@ export function DeweyPanel({ open, onClose, go, onBusy }) {
   const [question, setQuestion] = useState("");
   const [turns, setTurns] = useState([]);
   const [busy, setBusy] = useState(false);
+  const { chats, active, activeId, setActiveId, save, remove } = useChats();
+  const [listOpen, setListOpen] = useState(false);
+  const chatsRef = useRef(chats);
   const abort = useRef(null);
   const bottom = useRef(null);
   const input = useRef(null);
@@ -287,6 +358,14 @@ export function DeweyPanel({ open, onClose, go, onBusy }) {
   useEffect(() => { onBusy?.(busy); }, [busy, onBusy]);
   useEffect(() => { bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [turns]);
   useEffect(() => { if (open) input.current?.focus(); }, [open]);
+  useEffect(() => { chatsRef.current = chats; }, [chats]);
+  // Switching chats replaces what the panel shows, from a store that lives outside React
+  // (localStorage); a new chat (no id) starts empty. Keyed on the id alone on purpose: re-running
+  // this when the chat's own turns change would overwrite the answer being streamed into it.
+  useEffect(() => {
+    const saved = chatsRef.current.find((c) => c.id === activeId);
+    setTurns(saved ? saved.turns.map((t) => ({ ...t, tools: t.tools || [] })) : []);
+  }, [activeId]);
   useEffect(() => {
     if (!open) return undefined;
     const onKey = (e) => { if (e.key === "Escape") onClose(); };
@@ -300,11 +379,18 @@ export function DeweyPanel({ open, onClose, go, onBusy }) {
     if (!q || busy) return;
     setQuestion("");
     setBusy(true);
+    setListOpen(false);
+    const chatId = activeId || `c${Date.now().toString(36)}`;
+    if (!activeId) setActiveId(chatId);
     const index = turns.length;
     const history = turns.flatMap((t) => (t.answer
       ? [{ role: "user", content: t.question }, { role: "assistant", content: t.answer }] : []));
     setTurns((all) => [...all, { question: q, tools: [], answer: "", status: "thinking", done: null, error: null }]);
-    const patch = (fn) => setTurns((all) => all.map((t, i) => (i === index ? fn(t) : t)));
+    const patch = (fn) => setTurns((all) => {
+      const next = all.map((t, i) => (i === index ? fn(t) : t));
+      if (next[index]?.done || next[index]?.error) save(chatId, next);   // keep it once it is settled
+      return next;
+    });
     const ctrl = new AbortController();
     abort.current = ctrl;
     try {
@@ -328,7 +414,7 @@ export function DeweyPanel({ open, onClose, go, onBusy }) {
       setBusy(false);
       abort.current = null;
     }
-  }, [question, busy, turns, token]);
+  }, [question, busy, turns, token, activeId, setActiveId, save]);
 
   const d = status.data;
   const needsToken = status.error === "needs-token";
@@ -342,17 +428,39 @@ export function DeweyPanel({ open, onClose, go, onBusy }) {
           <Dewey size={38} mood={busy ? "thinking" : "idle"} title="" />
           <div className="deweywho">
             <b>{DEWEY.name}</b>
-            <span>{busy ? DEWEY.working : DEWEY.role}</span>
+            <span>{busy ? DEWEY.working : (active ? active.title : DEWEY.role)}</span>
           </div>
           {turns.length ? (
-            <button type="button" className="deweyicon" onClick={() => setTurns([])} title="Start over"
-                    aria-label="Start over">⟳</button>
+            <button type="button" className="deweyicon" title="New chat" aria-label="New chat"
+                    onClick={() => { setActiveId(null); setTurns([]); setListOpen(false); }}>＋</button>
+          ) : null}
+          {chats.length ? (
+            <button type="button" className={"deweyicon" + (listOpen ? " on" : "")} title="Earlier chats"
+                    aria-label="Earlier chats" aria-expanded={listOpen}
+                    onClick={() => setListOpen(!listOpen)}>☰</button>
           ) : null}
           <button type="button" className="deweyicon" onClick={onClose} title="Close"
                   aria-label="Close">✕</button>
         </header>
 
         <div className="deweybody">
+          {listOpen && chats.length ? (
+            <ul className="chatlist">
+              {chats.map((c) => (
+                <li key={c.id} className={c.id === activeId ? "on" : undefined}>
+                  <button type="button" className="chatopen"
+                          onClick={() => { setActiveId(c.id); setListOpen(false); }}>
+                    <span className="chattitle">{c.title}</span>
+                    <span className="chatwhen">{c.turns.length} question{c.turns.length === 1 ? "" : "s"}
+                      {" · "}{new Date(c.at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
+                  </button>
+                  <button type="button" className="deweyicon" title="Delete this chat"
+                          aria-label={`Delete ${c.title}`}
+                          onClick={() => { remove(c.id); if (c.id === activeId) setTurns([]); }}>✕</button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
           {needsToken ? (
             <Unlock onUnlock={(t) => { writeToken(t); setToken(t); setBump((b) => b + 1); }} />
           ) : (
