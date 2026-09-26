@@ -8,8 +8,9 @@ from chat import tools as T
 from tests.make_serving import EXPECTED, PAPERS
 
 
-def call(ctx, name, **args):
-    return T.call(ctx, name, args)
+def call(ctx, tool, **args):
+    """`tool` rather than `name`: several tools take a `name` argument of their own."""
+    return T.call(ctx, tool, args)
 
 
 def test_every_tool_has_a_handler_and_a_schema():

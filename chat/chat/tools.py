@@ -332,11 +332,11 @@ def authors_in_both(ctx, sid_a, sid_b, limit=15):
                     WHERE person_id IS NOT NULL AND NOT on_bin),
              ib AS (SELECT DISTINCT person_id FROM s.slots sl JOIN pb USING (pid)
                     WHERE person_id IS NOT NULL AND NOT on_bin),
-             both AS (SELECT person_id FROM ia INTERSECT SELECT person_id FROM ib)
+             shared AS (SELECT person_id FROM ia INTERSECT SELECT person_id FROM ib)
         SELECT p.key, p.name,
                (SELECT count(*) FROM s.slots sl JOIN pa USING (pid) WHERE sl.person_id = p.person_id) AS papers_a,
                (SELECT count(*) FROM s.slots sl JOIN pb USING (pid) WHERE sl.person_id = p.person_id) AS papers_b
-        FROM both JOIN s.persons p USING (person_id)
+        FROM shared JOIN s.persons p USING (person_id)
         ORDER BY papers_a + papers_b DESC, p.name LIMIT ?""", [sid_a, sid_b, int(limit)])
     total = one_of(cur, f"""
         WITH pa AS (SELECT pid FROM s.pubs WHERE sid = ? AND {JOURNAL_CONF}),

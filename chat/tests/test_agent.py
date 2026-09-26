@@ -52,7 +52,10 @@ def test_parallel_tool_calls_in_one_round(ctx, ledger):
     assert sum(1 for e in events if e["type"] == "tool") == 2
 
 
-def test_two_rounds_escalate_to_the_deep_model(ctx, ledger):
+def test_two_rounds_escalate_to_the_deep_model(ctx, ledger, monkeypatch):
+    # two rounds of tools and no round left to answer in: the loop must fall through to the
+    # streamed synthesis, and a multi-round question is answered by the deep model
+    monkeypatch.setattr(config, "MAX_ROUNDS", 2)
     client = FakeClient(script=[
         {"tool_calls": [tool_call("resolve_author", {"name": "Ada"}, "a")]},
         {"tool_calls": [tool_call("author_profile", {"key": "homepages/a/Ada"}, "b")]},
@@ -61,6 +64,20 @@ def test_two_rounds_escalate_to_the_deep_model(ctx, ledger):
     assert out["rounds"] == 2
     assert out["model"] == config.MODEL_DEEP
     assert [c["kind"] for c in client.calls][-1] == "stream"
+    assert out["tools"] == ["resolve_author", "author_profile"]
+
+
+def test_a_model_that_answers_after_tools_is_not_asked_twice(ctx, ledger):
+    """The cheap path: if the model returns prose in a tool round, that IS the answer - streaming a
+    second call would cost a request for nothing."""
+    client = FakeClient(script=[
+        {"tool_calls": [tool_call("dataset_facts", {}, "a")]},
+        {"content": "The snapshot holds 26 publications."},
+    ])
+    events, out = collect(ctx, client, "how big is it?", ledger=ledger)
+    assert [c["kind"] for c in client.calls] == ["complete", "complete"]
+    assert "26 publications" in "".join(e["text"] for e in events if e["type"] == "token")
+    assert out["model"] == config.MODEL_FAST
 
 
 def test_a_failing_tool_does_not_kill_the_turn(ctx, ledger):
