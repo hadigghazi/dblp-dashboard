@@ -796,9 +796,14 @@ def author_detail(cur, key):
         FROM slots s JOIN mine USING (pid) JOIN persons p USING (person_id)
         WHERE s.person_id <> ?
         GROUP BY ALL ORDER BY papers DESC, p.name LIMIT 15""", [pid, pid])
+    # A disambiguation bin is not a person, so it is not a co-author either - the same rule the
+    # network job and the ego network apply. The names that land on one are counted separately
+    # rather than dropped silently: they are real collaborators dblp cannot name.
     n_coauthors = one(cur, """
         WITH mine AS (SELECT pid FROM slots WHERE person_id = ? AND n_authors BETWEEN 2 AND 50)
-        SELECT count(DISTINCT s.person_id) AS n FROM slots s JOIN mine USING (pid)
+        SELECT count(DISTINCT s.person_id) FILTER (WHERE NOT s.on_bin) AS n,
+               count(DISTINCT s.person_id) FILTER (WHERE s.on_bin) AS on_bins
+        FROM slots s JOIN mine USING (pid)
         WHERE s.person_id <> ?""", [pid, pid])
     venues = rows(cur, """
         WITH mine AS (SELECT pid FROM slots WHERE person_id = ?)
@@ -818,7 +823,10 @@ def author_detail(cur, key):
         WHERE p.base_name = ? AND p.key <> ?
         ORDER BY papers DESC LIMIT 12""", [person["base_name"], key])
     total_namesakes = one(cur, "SELECT count(*) AS n FROM persons WHERE base_name = ?", [person["base_name"]])
-    return {"person": person, "stats": {**stats, "coauthors": n_coauthors["n"]}, "yearly": yearly,
+    return {"person": person,
+            "stats": {**stats, "coauthors": n_coauthors["n"],
+                      "coauthor_names_on_bins": n_coauthors["on_bins"]},
+            "yearly": yearly,
             "coauthors": coauthors, "venues": venues, "papers": papers,
             "namesakes": namesakes, "namesake_count": total_namesakes["n"]}
 

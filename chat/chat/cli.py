@@ -24,8 +24,8 @@ def _ready():
     """The same state the server builds: serving database attached, leaderboard store attached."""
     if not data.pool.load():
         sys.exit(data.pool.error)
-    store.attach(data.pool.connection(), data.pool.meta)
-    return agent.Ctx(data.pool, httpx.Client(timeout=config.UPSTREAM_TIMEOUT))
+    store_meta = store.attach(data.pool.connection(), data.pool.meta)
+    return agent.Ctx(data.pool, httpx.Client(timeout=config.UPSTREAM_TIMEOUT), store_meta)
 
 
 def cmd_store(_args):

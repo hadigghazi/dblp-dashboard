@@ -76,8 +76,10 @@ CASES = [
 
     # ---- harder shapes: filters on a superlative, comparisons, ambiguity, exact records
     dict(q="Who published most at CVPR since 2020?", all_of=["resolve_venue"], any_of=["top_authors"]),
+    # comparing two per-venue series is as valid as two counts, as long as the tool hands over the
+    # window total rather than leaving the model to add years up
     dict(q="Is NeurIPS bigger than ICML?", all_of=["resolve_venue"],
-         any_of=["venue_profile", "top_venues", "count_papers"]),
+         any_of=["venue_profile", "top_venues", "count_papers", "papers_timeseries"]),
     dict(q="How many journal papers came out in 2015?", any_of=["count_papers", "papers_timeseries"]),
     dict(q="How many papers have exactly two authors?", any_of=["count_papers", "run_sql"]),
     dict(q="Which venues are the most open access?", any_of=["top_venues", "run_sql"]),

@@ -312,3 +312,14 @@ def test_validate_skips_missing_csvs(serving, capsys):
     from app import validate
     assert validate.main() == 0
     assert "CSV not found" in capsys.readouterr().out
+
+
+def test_an_author_has_one_co_author_count(client):
+    """The stats card and the ego network on the same page used to disagree: one counted names that
+    resolve to a disambiguation bin as co-authors, the other did not."""
+    key = client.get("/api/authors/search", params={"q": "Wei Wang 0001"}).json()["data"][0]["key"]
+    stats = client.get("/api/authors/detail", params={"key": key}).json()["data"]["stats"]
+    ego = client.get("/api/authors/ego", params={"key": key, "limit": 60}).json()["data"]
+    assert stats["coauthors"] == ego["degree"]
+    assert stats["coauthor_names_on_bins"] >= 0
+    assert ego["shown"] <= stats["coauthors"]

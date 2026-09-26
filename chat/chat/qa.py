@@ -384,7 +384,9 @@ def _docs(ctx):
 
 @check("the leaderboard store is current", "behaviour")
 def _store(ctx):
-    meta = ctx.store_meta or {}
+    # read the attached store, not the caller's copy: a context that forgot to pass it would
+    # otherwise look like a store built by unknown code
+    meta = dict(ctx.cursor().execute("SELECT k, v FROM c._meta").fetchall())
     assert meta.get("version") == store.VERSION, \
         f"store built by version {meta.get('version')}, code is {store.VERSION}"
     assert not meta.get("skipped"), f"a leaderboard step was skipped: {meta['skipped']}"

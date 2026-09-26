@@ -296,3 +296,27 @@ def test_dataset_facts_still_works_without_the_parquet(ctx):
     out = T.call(Blind(ctx.pool, ctx.http, ctx.store_meta), "dataset_facts", {})
     values = {r["measure"]: r["value"] for r in out["rows"]}
     assert values["publications"] == EXPECTED["papers_total"]
+
+
+def test_a_bin_is_not_counted_as_a_co_author(ctx):
+    """Cleo publishes with the bin and with Sam Same 0001: the bin must not count as a person, and
+    the names it swallows must be reported rather than dropped."""
+    profile = call(ctx, "author_profile", key="homepages/c/Cleo")
+    assert profile["meta"]["coauthors"] == 3                 # Ada, Dan, Sam Same 0001
+    assert profile["meta"]["coauthor_names_on_bins"] == 1     # the Sam Same bin
+    assert "identified co-authors" in profile["summary"]
+    assert "disambiguation bins" in profile["summary"]
+
+    tool = call(ctx, "coauthors", key="homepages/c/Cleo")
+    assert tool["meta"]["coauthors_total"] == 3
+    assert tool["meta"]["coauthor_names_on_bins"] == 1
+    assert all(r["page_kind"] != "disambiguation" for r in tool["rows"])
+
+
+def test_a_timeseries_hands_over_its_window_total(ctx):
+    """Otherwise "is X bigger than Y" becomes arithmetic inside the language model."""
+    out = call(ctx, "papers_timeseries", metric="papers", frm=2010, to=2025)
+    assert out["meta"]["window_total"] == sum(r["papers"] for r in out["rows"])
+    assert f"{out['meta']['window_total']:,} in total" in out["summary"]
+    share = call(ctx, "papers_timeseries", metric="open_access_share", frm=2010)
+    assert share["meta"]["window_total"] is None, "a share has no meaningful window total"

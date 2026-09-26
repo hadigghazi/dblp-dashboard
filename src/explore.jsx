@@ -143,7 +143,7 @@ function EgoNetwork({ authorKey, go }) {
           : `<b>${a?.name}</b> — <b>${b?.name}</b><br>${q.data.value} paper${q.data.value === 1 ? "" : "s"} together`;
       }
       const n = q.data;
-      if (n.id === "ego") return `<b>${n.name}</b><br>${d.degree.toLocaleString()} distinct co-authors`;
+      if (n.id === "ego") return `<b>${n.name}</b><br>${d.degree.toLocaleString()} identified co-authors`;
       if (n.predicted) return `<b>${n.name}</b><br>predicted next co-author (score ${n.predicted.score})<br>${n.predicted.common_coauthors} shared co-authors`;
       return `<b>${n.name}</b><br>${n.value} paper${n.value === 1 ? "" : "s"} with ${d.author.name}`;
     };
@@ -151,7 +151,7 @@ function EgoNetwork({ authorKey, go }) {
   }, [p, d, pred.data, pred.loading]);
   return (
     <Card span2 state={ego} height={420} title="Collaboration groups"
-          sub={d ? `${d.degree.toLocaleString()} distinct co-authors; the ${d.shown} strongest shown. An edge joins two co-authors who also publish together; the colours are ${built?.groups ?? 0} communit${built?.groups === 1 ? "y" : "ies"} found among them (label propagation), local clustering ${d.clustering ?? "—"}. Drag to rearrange, click to open.`
+          sub={d ? `${d.degree.toLocaleString()} identified co-authors; the ${d.shown} strongest shown. An edge joins two co-authors who also publish together; the colours are ${built?.groups ?? 0} communit${built?.groups === 1 ? "y" : "ies"} found among them (label propagation), local clustering ${d.clustering ?? "—"}. Drag to rearrange, click to open.`
                  : "The strongest co-authors, and which of them also work with each other."}>
       {() => (d.coauthors.length
         ? <Chart option={built?.option} height={420} label="Ego network" onClick={(e) => { if (e.dataType === "node" && e.data.key) go("authors", { key: e.data.key }); }} />
@@ -234,7 +234,10 @@ function AuthorDetail({ authorKey, go, back }) {
       <KpiStrip items={[
         { n: fmt.comma(stats.papers), l: "publications (all types)" },
         { n: stats.first_year ? `${stats.first_year}–${stats.last_year}` : "—", l: "years with publications" },
-        { n: fmt.comma(stats.coauthors), l: "distinct co-authors (papers with 2–50 authors)" },
+        { n: fmt.comma(stats.coauthors),
+          l: stats.coauthor_names_on_bins
+            ? `identified co-authors (papers with 2–50 authors); ${fmt.comma(stats.coauthor_names_on_bins)} further co-author names sit on a disambiguation bin`
+            : "identified co-authors (papers with 2–50 authors)" },
         { n: stats.on_3plus ? `${Math.round((100 * stats.first_author) / stats.on_3plus)}% / ${Math.round((100 * stats.last_author) / stats.on_3plus)}%` : "—", l: "first / last author on 3+ author papers" },
         { n: `${stats.pct_with_orcid ?? 0}%`, l: "of their author slots carry an ORCID" },
         { n: fmt.comma(data.namesake_count), l: `author pages named “${person.base_name}”` },

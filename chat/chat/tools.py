@@ -196,7 +196,9 @@ def author_profile(ctx, key):
         FROM s.slots WHERE person_id = ?""", [pid])
     degree = one_of(cur, """
         WITH mine AS (SELECT pid FROM s.slots WHERE person_id = ? AND n_authors BETWEEN 2 AND 50)
-        SELECT count(DISTINCT sl.person_id) AS coauthors FROM s.slots sl JOIN mine USING (pid)
+        SELECT count(DISTINCT sl.person_id) FILTER (WHERE NOT sl.on_bin) AS coauthors,
+               count(DISTINCT sl.person_id) FILTER (WHERE sl.on_bin) AS on_bins
+        FROM s.slots sl JOIN mine USING (pid)
         WHERE sl.person_id <> ?""", [pid, pid])
     _, venues = rows_of(cur, """
         WITH mine AS (SELECT pid FROM s.slots WHERE person_id = ?)
@@ -215,13 +217,17 @@ def author_profile(ctx, key):
         FROM s.pubs b JOIN mine USING (pid) ORDER BY b.year DESC NULLS LAST, b.key DESC LIMIT 8""", [pid])
     aff = [n[len("affiliation: "):] for n in (person.get("notes") or []) if n.startswith("affiliation: ")]
     summary = (f"{person['name']} ({person['page_kind']} page): {stats['papers']:,} records "
-               f"{stats['first_year']}–{stats['last_year']}, {degree['coauthors']:,} distinct co-authors, "
-               f"mean team {stats['mean_team']}.")
+               f"{stats['first_year']}–{stats['last_year']}, {degree['coauthors']:,} identified "
+               f"co-authors, mean team {stats['mean_team']}.")
+    if degree["on_bins"]:
+        summary += (f" A further {degree['on_bins']:,} co-author names sit on disambiguation bins, so "
+                    f"they cannot be counted as individual people.")
     return result(summary, rows=recent,
                   note="Paper count covers every record type including preprints; the career table counts "
                        "only journal and conference papers. " + BINS_NOTE,
                   link={"page": "authors", "key": key},
-                  stats=stats, coauthors=degree["coauthors"], affiliations=aff,
+                  stats=stats, coauthors=degree["coauthors"],
+                  coauthor_names_on_bins=degree["on_bins"], affiliations=aff,
                   name_variants=person.get("names"), top_venues=venues, top_coauthors=top_co)
 
 
@@ -323,15 +329,20 @@ def coauthors(ctx, key, sid=None, min_papers=1, limit=15):
     # the true degree, so the answer never mistakes the length of a capped list for the total
     total = one_of(cur, """
         WITH mine AS (SELECT pid FROM s.slots WHERE person_id = ? AND n_authors BETWEEN 2 AND 50)
-        SELECT count(DISTINCT sl.person_id) AS n FROM s.slots sl JOIN mine USING (pid)
-        WHERE sl.person_id <> ? AND NOT sl.on_bin""", [pid["person_id"], pid["person_id"]])
-    return result(f"{pid['name']} has {total['n']:,} distinct co-authors"
+        SELECT count(DISTINCT sl.person_id) FILTER (WHERE NOT sl.on_bin) AS n,
+               count(DISTINCT sl.person_id) FILTER (WHERE sl.on_bin) AS on_bins
+        FROM s.slots sl JOIN mine USING (pid)
+        WHERE sl.person_id <> ?""", [pid["person_id"], pid["person_id"]])
+    return result(f"{pid['name']} has {total['n']:,} identified co-authors"
                   + (f"; of those, {len(rows)} also publish in {sid} (listed)" if sid
                      else f"; the {len(rows)} most frequent are listed") + ".",
                   cols, rows,
                   note="Quote the total above, not the number of rows: the list is capped. "
-                       "Co-authorship counts papers with 2–50 authors. " + BINS_NOTE,
-                  link={"page": "authors", "key": key}, coauthors_total=total["n"])
+                       "Co-authorship counts papers with 2–50 authors. " + BINS_NOTE
+                       + (f" {total['on_bins']:,} further co-author names resolve to a bin and are "
+                          f"not counted as people." if total["on_bins"] else ""),
+                  link={"page": "authors", "key": key}, coauthors_total=total["n"],
+                  coauthor_names_on_bins=total["on_bins"])
 
 
 def pair_papers(ctx, key_a, key_b, limit=20):
@@ -608,12 +619,17 @@ def papers_timeseries(ctx, metric="papers", frm=None, to=None, sid=None, kind=No
     if not rows:
         return result("No papers in that window.", rows=[])
     first, last = rows[0], rows[-1]
+    # the total over the window, so "is X bigger than Y" never becomes arithmetic in the model
+    papers_total = sum(r["papers"] or 0 for r in rows)
+    counted = metric in ("papers", "preprints")
     return result(f"{metric.replace('_', ' ')} per year, {frm}–{to}: "
-                  f"{first['value']} in {first['year']} → {last['value']} in {last['year']} "
-                  f"({len(rows)} years).",
+                  f"{first['value']} in {first['year']} → {last['value']} in {last['year']}"
+                  + (f"; {papers_total:,} in total over the window" if counted else "")
+                  + f" ({len(rows)} years).",
                   cols, rows[-40:], note=population + f" The last complete year is {ctx.last_full_year()}.",
                   link={"page": "publishing"}, series_length=len(rows),
-                  first=first, last=last, peak=_best(rows, "value"))
+                  first=first, last=last, peak=_best(rows, "value"),
+                  window_total=papers_total if counted else None)
 
 
 def title_terms(ctx, terms, frm=None, to=None):
