@@ -74,12 +74,16 @@ def evaluate(con, fingerprint, encoder, n_papers=None, seed=None):
         return {"sampled": len(rows), "substitutable": 0}
 
     bm25_ranks, dense_ranks, hybrid_ranks = [], [], []
+    weights, coverages = [], []      # what the fusion made of the word ranking on THIS population
     for pid, q in cases:
         stats = {}
         sparse = B.search(con, q, stats=stats)
         qvec = encoder.encode_query(q)
         dense_hits = V.search(con, fingerprint, qvec)
-        fused = F.rrf(sparse, dense_hits, weights=(S.sparse_weight(stats), 1.0))
+        weight = S.sparse_weight(stats)
+        weights.append(weight)
+        coverages.append(stats.get("coverage"))
+        fused = F.rrf(sparse, dense_hits, weights=(weight, 1.0))
         bm25_ranks.append(_rank_of(sparse, pid))
         dense_ranks.append(_rank_of(dense_hits, pid))
         hybrid_ranks.append(_rank_of(fused, pid))
@@ -90,5 +94,8 @@ def evaluate(con, fingerprint, encoder, n_papers=None, seed=None):
         "bm25_only": _summary(bm25_ranks, n),
         "dense_only": _summary(dense_ranks, n),
         "hybrid": _summary(hybrid_ranks, n),
+        "mean_sparse_weight": round(sum(weights) / len(weights), 3) if weights else None,
+        "mean_word_match_coverage": (round(sum(c for c in coverages if c is not None)
+                                           / max(1, len([c for c in coverages if c is not None])), 3)),
         "example_substitutions": [f"{w} -> {s}" for w, s in list(SYNONYMS.items())[:8]],
     }

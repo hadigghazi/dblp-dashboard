@@ -43,7 +43,11 @@ MIN_QUERY_TOKENS = 3
 # description of the same paper leaves a hit covering two tokens out of a dozen.
 COVERAGE_FLOOR = float(os.environ.get("SEARCH_COVERAGE_FLOOR", "0.3"))
 COVERAGE_FULL = float(os.environ.get("SEARCH_COVERAGE_FULL", "0.7"))
-SPARSE_FLOOR = float(os.environ.get("SEARCH_SPARSE_FLOOR", "0.1"))
+# Zero, not a small number. Measured on paraphrase queries: the word ranking found the right paper
+# 0 times in 56, at any rank - so it is not weak evidence there, it is no evidence. At a tenth of a
+# vote a word hit at rank 1 still outranks a semantic hit at rank 100, which is where the right
+# paper sits when somebody describes it. The exact-word top-up still guarantees recall.
+SPARSE_FLOOR = float(os.environ.get("SEARCH_SPARSE_FLOOR", "0.0"))
 RRF_K = 60   # standard reciprocal-rank-fusion constant; results are not sensitive to small changes
 
 MIN_DF = int(os.environ.get("SEARCH_MIN_DF", "2"))

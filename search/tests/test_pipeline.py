@@ -188,6 +188,9 @@ def test_the_weight_follows_how_much_of_the_query_the_match_explains():
     assert S.sparse_weight({"coverage": config.COVERAGE_FULL}) == 1.0
     assert S.sparse_weight({"coverage": config.COVERAGE_FLOOR}) == config.SPARSE_FLOOR
     assert S.sparse_weight({"coverage": 0.0}) == config.SPARSE_FLOOR
+    # and a weight of zero must actually drop the ranking, not merely shrink it
+    assert F.rrf([("noise", 1.0)], [("right", 1.0)],
+                 weights=(S.sparse_weight({"coverage": 0.0}), 1.0)) == [("right", 1 / 61)]
     assert S.sparse_weight({}) == 1.0                       # nothing measured: change nothing
     middle = S.sparse_weight({"coverage": (config.COVERAGE_FLOOR + config.COVERAGE_FULL) / 2})
     assert config.SPARSE_FLOOR < middle < 1.0
