@@ -143,13 +143,7 @@ def model_cards(ctx):
 
 
 # --------------------------------------------------------------------------- people
-def resolve_author(ctx, name, limit=8):
-    cur = ctx.cursor()
-    q = (name or "").strip()
-    if len(q) < 2:
-        return refusal("an author name needs at least two characters")
-    cols, rows = rows_of(cur, """
-        WITH hits AS (SELECT DISTINCT person_id FROM s.person_names WHERE name ILIKE ?),
+RESOLVE_SELECT = """
         res AS (
             SELECT p.person_id, p.key, p.name, p.base_name, p.page_kind,
                    coalesce(ps.n_pubs, 0) AS papers, c.first_year, c.last_year,
@@ -157,26 +151,72 @@ def resolve_author(ctx, name, limit=8):
             FROM hits JOIN s.persons p USING (person_id)
             LEFT JOIN s.person_stats ps USING (person_id)
             LEFT JOIN s.career c USING (person_id)
-            ORDER BY (lower(p.base_name) = lower(?)) DESC, papers DESC, p.name
+            ORDER BY {order}
             LIMIT ?)
         SELECT r.key, r.name, r.page_kind, r.papers, r.first_year, r.last_year,
                substr(r.aff, 14) AS affiliation,
                (SELECT count(*) FROM s.persons x WHERE x.base_name = r.base_name) AS pages_with_this_name
-        FROM res r""", [f"%{q}%", q, int(limit)])
+        FROM res r"""
+
+FUZZY_MIN = 0.86          # jaro-winkler; below this the "closest name" is not a plausible typo
+FUZZY_PREFIX = 4          # how much of a query word must survive the typo to be a candidate
+
+
+def _fuzzy_authors(cur, q, limit):
+    """The closest names when nothing contains the query: people mistype names constantly, and
+    "no author page matches" is a correct but useless answer.
+
+    Candidates come from a cheap contains-match on the first few letters of each query word (a typo
+    usually survives its own prefix: "Schmidthuber" still contains "Schmid"), and only then are they
+    scored with Jaro-Winkler, which is too expensive to run over four million names."""
+    words = [w for w in re.split(r"[^\w']+", q) if len(w) >= FUZZY_PREFIX]
+    if not words:
+        return [], []
+    likes = [f"%{w[:FUZZY_PREFIX]}%" for w in words[:3]]
+    clause = " OR ".join(["name ILIKE ?"] * len(likes))
+    return rows_of(cur, f"""
+        WITH cand AS (SELECT person_id, name FROM s.person_names WHERE {clause}),
+        hits AS (
+            SELECT person_id, max(jaro_winkler_similarity(lower(name), lower(?))) AS sim
+            FROM cand GROUP BY person_id
+            HAVING max(jaro_winkler_similarity(lower(name), lower(?))) >= {FUZZY_MIN}),
+        """ + RESOLVE_SELECT.format(order="(SELECT sim FROM hits h WHERE h.person_id = p.person_id) DESC, "
+                                          "papers DESC, p.name"),
+                   likes + [q, q, int(limit)])
+
+
+def resolve_author(ctx, name, limit=8):
+    cur = ctx.cursor()
+    q = (name or "").strip()
+    if len(q) < 2:
+        return refusal("an author name needs at least two characters")
+    cols, rows = rows_of(cur, """
+        WITH hits AS (SELECT DISTINCT person_id FROM s.person_names WHERE name ILIKE ?),
+        """ + RESOLVE_SELECT.format(order="(lower(p.base_name) = lower(?)) DESC, papers DESC, p.name"),
+                         [f"%{q}%", q, int(limit)])
+    matched = "contains"
     if not rows:
-        return result(f"No author page matches “{q}”.", rows=[],
-                      note="A name may be spelled differently in dblp, or the person may have no page. "
-                           "Try a surname alone.")
+        matched = "close"
+        cols, rows = _fuzzy_authors(cur, q, limit)
+    if not rows:
+        return result(f"No author page matches “{q}”, and no name in dblp is close to it.", rows=[],
+                      note="dblp may spell the name differently, or the person may have no page. "
+                           "A surname alone is the best second try.")
     bins = [r for r in rows if r["page_kind"] == "disambiguation"]
     many = max((r["pages_with_this_name"] or 1) for r in rows)
     note = [BINS_NOTE]
+    if matched == "close":
+        note.insert(0, f"No name contains “{q}”; these are the closest spellings dblp has. Say which "
+                       f"one you used, and offer the others if the choice is not obvious.")
     if bins:
         note.append(f"“{bins[0]['name']}” is a disambiguation bin: its papers belong to several people.")
     if many > 1:
         note.append(f"{many} different pages share this base name - if the question is about one person, "
                     f"ask which, or say which page the answer uses.")
-    return result(f"{len(rows)} candidate page(s) for “{q}”; the first is the best match.",
-                  cols, rows, note=" ".join(note))
+    return result(f"{len(rows)} candidate page(s) for “{q}”"
+                  + (" by closest spelling, since nothing contains it" if matched == "close" else "")
+                  + "; the first is the best match.",
+                  cols, rows, note=" ".join(note), matched=matched)
 
 
 def author_profile(ctx, key):
@@ -417,12 +457,35 @@ def resolve_venue(ctx, name, kind=None, limit=8):
                round(100 * oa_share, 1) AS pct_oa, round(100 * doi_share, 1) AS pct_doi, name_variants
         FROM s.series WHERE {' AND '.join(where)}
         ORDER BY (lower(usual_name) = lower(?)) DESC, papers DESC LIMIT ?""", params + [q, int(limit)])
+    matched = "contains"
     if not rows:
-        return result(f"No venue series matches “{q}”.", rows=[],
+        # only ~15,000 series, so every one can be scored: no prefix trick needed here
+        matched = "close"
+        where, params = ["TRUE"], [q, q]
+        if kind:
+            where.append("kind = ?")
+            params.append(kind)
+        cols, rows = rows_of(cur, f"""
+            SELECT sid, kind, usual_name AS name, papers, first_year, last_year,
+                   round(100 * oa_share, 1) AS pct_oa, round(100 * doi_share, 1) AS pct_doi,
+                   name_variants,
+                   round(greatest(jaro_winkler_similarity(lower(usual_name), lower(?)),
+                                  jaro_winkler_similarity(lower(sid), lower(?))), 3) AS closeness
+            FROM s.series WHERE {' AND '.join(where)}
+            QUALIFY closeness >= {FUZZY_MIN}
+            ORDER BY closeness DESC, papers DESC LIMIT ?""", params + [int(limit)])
+    if not rows:
+        return result(f"No venue series matches “{q}”, and none is close to it.", rows=[],
                       note="Venues are identified by series key like conf/cvpr or journals/tit; the name "
-                           "string in a record may differ from the usual name.")
-    return result(f"{len(rows)} venue series match “{q}”; the first is the best match.", cols, rows,
-                  note="A series covers a conference or journal across all its years.")
+                           "string in a record may differ from the usual name. An acronym often works "
+                           "better than a full title.")
+    return result(f"{len(rows)} venue series match “{q}”"
+                  + (" by closest spelling, since nothing contains it" if matched == "close" else "")
+                  + "; the first is the best match.", cols, rows,
+                  note=("No venue name contains that text; these are the closest. Say which one you "
+                        "used. " if matched == "close" else "")
+                       + "A series covers a conference or journal across all its years.",
+                  matched=matched)
 
 
 def venue_profile(ctx, sid):
@@ -876,7 +939,8 @@ SPECS = [
     _fn("model_cards", "Live measured accuracy of the three ML models and of paper search, with their "
         "baselines. Call this before quoting any accuracy number.", {}, remote=True),
 
-    _fn("resolve_author", "Turn an author name into dblp author-page keys. ALWAYS call this before "
+    _fn("resolve_author", "Turn an author name into dblp author-page keys, tolerating misspellings "
+        "(it falls back to the closest names and says so). ALWAYS call this before "
         "any author tool. It also reports each candidate's record count - enough to answer a plain "
         "'how many papers does X have' outright - plus how many different people share the name and "
         "whether a disambiguation bin exists, which decides whether the question is even well posed. "
@@ -906,7 +970,7 @@ SPECS = [
         ["sid_a", "sid_b"], heavy=True),
 
     _fn("resolve_venue", "Turn a conference or journal name into dblp series keys (conf/cvpr, "
-        "journals/tit). ALWAYS call this before any venue tool. It returns only enough to pick the "
+        "journals/tit), tolerating misspellings. ALWAYS call this before any venue tool. It returns only enough to pick the "
         "right series - for anything ABOUT a venue ('tell me about X', 'what is X like', how it has "
         "changed, who publishes there) call venue_profile with the key it gives you.",
         {"name": {"type": "string"}, "kind": {"type": "string", "enum": ["journal", "conference"]},

@@ -17,7 +17,7 @@ import logging
 import time
 from datetime import datetime, timezone
 
-from . import agent, budget, config, goldset
+from . import agent, budget, config, goldset, grounding
 
 log = logging.getLogger("dblp.chat.evaluate")
 
@@ -28,11 +28,12 @@ def _refused(text):
 
 
 def run_case(ctx, client, case):
-    tools_called, t0 = [], time.time()
+    tools_called, tool_events, t0 = [], [], time.time()
 
     def emit(event):
         if event.get("type") == "tool":
             tools_called.append(event["name"])
+            tool_events.append(event)
 
     out = agent.answer(ctx, client, case["q"], emit=emit, ledger=budget.ledger)
     answer_text = out.get("answer", "")
@@ -46,8 +47,9 @@ def run_case(ctx, client, case):
     else:
         passed = ok_tools
         reason = "" if passed else f"missing tools: all_of={sorted(want_all - called)} any_of={sorted(want_any)}"
+    lint = grounding.check(answer_text, tool_events)
     return {
-        "question": case["q"], "passed": bool(passed), "reason": reason,
+        "question": case["q"], "passed": bool(passed), "reason": reason, "grounding": lint,
         "tools": tools_called, "grounded": bool(tools_called) or bool(case.get("refuses")),
         "refused": _refused(answer_text), "answer": answer_text,
         "seconds": round(time.time() - t0, 2), "cost_usd": out.get("cost_usd", 0.0),
@@ -67,11 +69,16 @@ def run(ctx, client, cases=None, limit=None):
         "tool_choice_accuracy": round(sum(r["passed"] for r in scoped) / (len(scoped) or 1), 3),
         "refusal_accuracy": round(sum(r["passed"] for r in out_of_scope) / (len(out_of_scope) or 1), 3),
         "grounded_share": round(sum(r["grounded"] for r in results) / n, 3),
+        # every figure in the answer traced back to something a tool returned
+        "numbers_grounded_share": round(sum(r["grounding"]["ok"] for r in results) / n, 3),
         "median_seconds": sorted(r["seconds"] for r in results)[len(results) // 2] if results else None,
         "total_cost_usd": round(sum(r["cost_usd"] or 0 for r in results), 4),
         "models": {"router": config.MODEL_FAST, "answers": config.MODEL_DEEP},
         "failures": [{"question": r["question"], "reason": r["reason"], "tools": r["tools"]}
                      for r in results if not r["passed"]],
+        "numbers_without_a_source": [{"question": r["question"], "numbers": r["grounding"]["ungrounded"],
+                                      "answer": r["answer"]}
+                                     for r in results if not r["grounding"]["ok"]],
     }
     return {"summary": summary, "results": results}
 

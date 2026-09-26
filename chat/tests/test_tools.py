@@ -320,3 +320,26 @@ def test_a_timeseries_hands_over_its_window_total(ctx):
     assert f"{out['meta']['window_total']:,} in total" in out["summary"]
     share = call(ctx, "papers_timeseries", metric="open_access_share", frm=2010)
     assert share["meta"]["window_total"] is None, "a share has no meaningful window total"
+
+
+def test_a_misspelled_name_still_finds_the_person(ctx):
+    """People mistype names constantly; "no author page matches" is correct and useless."""
+    exact = call(ctx, "resolve_author", name="Ada Alpha")
+    assert exact["meta"]["matched"] == "contains"
+
+    for typo in ["Ada Alpa", "Ada Alphaa", "Adda Alpha"]:
+        out = call(ctx, "resolve_author", name=typo)
+        assert out["rows"], f"{typo} found nobody"
+        assert out["rows"][0]["key"] == "homepages/a/Ada", f"{typo} -> {out['rows'][0]['name']}"
+        assert out["meta"]["matched"] == "close"
+        assert "closest spellings" in out["note"], "the model must say the name was corrected"
+
+    nobody = call(ctx, "resolve_author", name="Qwertyuiop Zxcvbnm")
+    assert nobody["rows"] == [] and "close to it" in nobody["summary"]
+
+
+def test_a_misspelled_venue_still_resolves(ctx):
+    out = call(ctx, "resolve_venue", name="AAA Conferance")
+    assert out["rows"] and out["rows"][0]["sid"] == "conf/aaa"
+    assert out["meta"]["matched"] == "close"
+    assert call(ctx, "resolve_venue", name="AAA Conference")["meta"]["matched"] == "contains"

@@ -1,0 +1,77 @@
+"""
+Grounding lint: did every number in the answer come from a lookup?
+
+The system prompt forbids stating a figure no tool produced, and the gold set checks that a tool was
+called - neither checks that the sentence agrees with the table. The gap is where a model quietly
+does arithmetic: asked whether one venue is bigger than another it can add up two per-year series
+and report a total nobody computed, which is right until it is not.
+
+So: pull every number out of the answer, and look for it in what the tools actually returned.
+Rounding is allowed (a tool says 3,351 and the answer may say "about 3,400"), because insisting on
+exact digits would flag good writing. What stays flagged is a number with no plausible source at all.
+
+This is a measurement, not a gate: `evaluate` reports the share of answers whose numbers are all
+accounted for, and names the ones that are not, so a regression is visible.
+"""
+import json
+import re
+
+NUMBER = re.compile(r"(?<![\w.])(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)(?![\w])")
+SCALE = {"thousand": 1e3, "k": 1e3, "million": 1e6, "m": 1e6, "billion": 1e9, "bn": 1e9}
+SMALL = 24          # ordinals, list lengths, "the top 10": never worth flagging
+YEARS = range(1900, 2101)
+
+
+def _floats(text):
+    out = []
+    for match in NUMBER.finditer(text or ""):
+        raw = match.group(1).replace(",", "")
+        try:
+            value = float(raw)
+        except ValueError:
+            continue
+        tail = (text[match.end():match.end() + 12] or "").strip().lower()
+        for word, factor in SCALE.items():          # "3.4 million" is the same claim as 3,400,000
+            if tail.startswith(word):
+                out.append(value * factor)
+                break
+        out.append(value)
+    return out
+
+
+def _sources(tool_events):
+    """Every number the tools put in front of the model, including the ones inside their tables."""
+    found = set()
+    for event in tool_events:
+        payload = {k: v for k, v in event.items() if k in ("summary", "rows", "note", "meta", "columns")}
+        for value in _floats(json.dumps(payload, default=str)):
+            found.add(value)
+    return found
+
+
+def _accounted_for(value, sources):
+    if value in sources:
+        return True
+    if value == int(value) and abs(value) <= SMALL:
+        return True                                  # counts of listed things, ranks, "top 5"
+    if value == int(value) and int(value) in YEARS:
+        return True                                  # years are everywhere in this data
+    for source in sources:
+        if source == 0:
+            continue
+        ratio = value / source
+        if 0.995 <= ratio <= 1.005:                  # rounded, or a percentage of the same thing
+            return True
+        for digits in (1, 2, 3):                     # "about 3,400" for 3,351
+            if round(source, -max(0, len(str(int(abs(source)))) - digits)) == value:
+                return True
+    return False
+
+
+def check(answer, tool_events):
+    """{ok, numbers, ungrounded}. `tool_events` are the emitted tool results for that question."""
+    sources = _sources(tool_events)
+    numbers = _floats(answer)
+    ungrounded = sorted({v for v in numbers if not _accounted_for(v, sources)})
+    return {"ok": not ungrounded, "numbers": len(numbers), "ungrounded": ungrounded,
+            "sources": len(sources)}
