@@ -108,7 +108,7 @@ def _trim(payload):
     return text[:MAX_RESULT_CHARS] + '..." (truncated)'
 
 
-def run_tools(ctx, calls, emit, budget_left):
+def run_tools(ctx, calls, emit, budget_left, collect=None):
     """Execute tool calls in parallel; returns the tool messages for the next model call."""
     messages = []
     with ThreadPoolExecutor(max_workers=min(4, max(1, len(calls)))) as pool:
@@ -135,12 +135,16 @@ def run_tools(ctx, calls, emit, budget_left):
                 event["rows"] = out.get("rows")
             emit(event)
             log.info("tool %s %s -> %sms", call["name"], call["arguments"], ms)
+            if collect is not None:
+                # the whole payload, including the `meta` the UI event drops: anything checking the
+                # answer against its sources has to see exactly what the model was given
+                collect.append({"name": call["name"], "arguments": call["arguments"], "result": out})
             messages.append({"role": "tool", "tool_call_id": call["id"], "name": call["name"],
                              "content": _trim(out)})
     return messages
 
 
-def answer(ctx, client, question, history=None, emit=None, ledger=None):
+def answer(ctx, client, question, history=None, emit=None, ledger=None, collect=None):
     """Run one question. `emit` receives events; returns a summary of the run."""
     emit = emit or (lambda _e: None)
     started = time.time()
@@ -188,7 +192,7 @@ def answer(ctx, client, question, history=None, emit=None, ledger=None):
                                                       "arguments": json.dumps(c["arguments"])}}
                                         for c in calls]})
         used_tools += [c["name"] for c in calls]
-        messages += run_tools(ctx, calls, emit, budget_left)
+        messages += run_tools(ctx, calls, emit, budget_left, collect)
         if calls_made >= config.MAX_TOOL_CALLS or budget_left() < 5:
             messages.append({"role": "user", "content":
                              "Answer now with the tool results above; there is no time for more tools. "

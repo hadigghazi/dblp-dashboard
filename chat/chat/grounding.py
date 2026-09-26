@@ -37,12 +37,14 @@ def _floats(text):
     return out
 
 
-def _sources(tool_events):
-    """Every number the tools put in front of the model, including the ones inside their tables."""
-    found = set()
-    for event in tool_events:
-        payload = {k: v for k, v in event.items() if k in ("summary", "rows", "note", "meta", "columns")}
-        for value in _floats(json.dumps(payload, default=str)):
+def _sources(payloads, question=None):
+    """Every number the model was given: the whole tool result (summary, rows, note AND meta - the
+    page range of a record and a model card's accuracy live only there), the arguments it called the
+    tool with, and the question itself, because echoing "more than 50 authors" back is not a claim
+    the tools have to support."""
+    found = set(_floats(question or ""))
+    for entry in payloads:
+        for value in _floats(json.dumps(entry, default=str)):
             found.add(value)
     return found
 
@@ -57,18 +59,20 @@ def _accounted_for(value, sources):
     for source in sources:
         if source == 0:
             continue
+        for candidate in (source, source * 100, source / 100):
+            # a share and its percentage are one claim: a card reporting 0.8388 is quoted as 83.88%
+            if candidate and 0.995 <= value / candidate <= 1.005:
+                return True
         ratio = value / source
-        if 0.995 <= ratio <= 1.005:                  # rounded, or a percentage of the same thing
-            return True
         for digits in (1, 2, 3):                     # "about 3,400" for 3,351
             if round(source, -max(0, len(str(int(abs(source)))) - digits)) == value:
                 return True
     return False
 
 
-def check(answer, tool_events):
-    """{ok, numbers, ungrounded}. `tool_events` are the emitted tool results for that question."""
-    sources = _sources(tool_events)
+def check(answer, payloads, question=None):
+    """{ok, numbers, ungrounded}. `payloads` are the full tool results the model was handed."""
+    sources = _sources(payloads, question)
     numbers = _floats(answer)
     ungrounded = sorted({v for v in numbers if not _accounted_for(v, sources)})
     return {"ok": not ungrounded, "numbers": len(numbers), "ungrounded": ungrounded,

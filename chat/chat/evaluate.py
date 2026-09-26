@@ -28,14 +28,13 @@ def _refused(text):
 
 
 def run_case(ctx, client, case):
-    tools_called, tool_events, t0 = [], [], time.time()
+    tools_called, payloads, t0 = [], [], time.time()
 
     def emit(event):
         if event.get("type") == "tool":
             tools_called.append(event["name"])
-            tool_events.append(event)
 
-    out = agent.answer(ctx, client, case["q"], emit=emit, ledger=budget.ledger)
+    out = agent.answer(ctx, client, case["q"], emit=emit, ledger=budget.ledger, collect=payloads)
     answer_text = out.get("answer", "")
     want_all = set(case.get("all_of", []))
     want_any = set(case.get("any_of", []))
@@ -47,7 +46,7 @@ def run_case(ctx, client, case):
     else:
         passed = ok_tools
         reason = "" if passed else f"missing tools: all_of={sorted(want_all - called)} any_of={sorted(want_any)}"
-    lint = grounding.check(answer_text, tool_events)
+    lint = grounding.check(answer_text, payloads, question=case["q"])
     return {
         "question": case["q"], "passed": bool(passed), "reason": reason, "grounding": lint,
         "tools": tools_called, "grounded": bool(tools_called) or bool(case.get("refuses")),

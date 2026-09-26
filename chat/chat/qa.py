@@ -328,6 +328,26 @@ def _smoke(ctx):
     return f"{len(probes)} tools ran, none slower than {SLOW_SECONDS}s"
 
 
+@check("a misspelled name still finds the person", "behaviour")
+def _typos(ctx):
+    """Exercised against every name in the dump, because the fallback's candidate filter is the part
+    that decides whether it is fast enough to exist."""
+    top = call(ctx, "top_authors", limit=1)["rows"][0]
+    words = [w for w in top["name"].split() if len(w) > 5]
+    assert words, f"no word long enough to corrupt in {top['name']!r}"
+    longest = max(words, key=len)
+    typo = top["name"].replace(longest, longest[:3] + longest[4:], 1)      # drop one letter
+    t = time.time()
+    out = call(ctx, "resolve_author", name=typo)
+    took = time.time() - t
+    assert out["rows"], f"{typo!r} found nobody"
+    assert out["meta"]["matched"] == "close", f"{typo!r} matched by contains, not by closeness"
+    assert any(r["key"] == top["key"] for r in out["rows"]),         f"{typo!r} -> {[r['name'] for r in out['rows'][:3]]}, not {top['name']}"
+    assert "closest spellings" in out["note"], "the model is not told the spelling was corrected"
+    assert took < SLOW_SECONDS, f"the fallback took {took:.1f}s"
+    return f"{typo!r} -> {top['name']} in {took:.1f}s"
+
+
 @check("bad input is refused, not guessed at", "behaviour")
 def _bad_input(ctx):
     must_refuse = [
