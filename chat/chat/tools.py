@@ -876,9 +876,11 @@ SPECS = [
     _fn("model_cards", "Live measured accuracy of the three ML models and of paper search, with their "
         "baselines. Call this before quoting any accuracy number.", {}, remote=True),
 
-    _fn("resolve_author", "Turn an author name into dblp author-page keys. ALWAYS call this before any "
-        "author tool. It also reports how many different people share the name and whether a "
-        "disambiguation bin exists, which decides whether the question is even well posed.",
+    _fn("resolve_author", "Turn an author name into dblp author-page keys. ALWAYS call this before "
+        "any author tool. It also reports each candidate's record count - enough to answer a plain "
+        "'how many papers does X have' outright - plus how many different people share the name and "
+        "whether a disambiguation bin exists, which decides whether the question is even well posed. "
+        "For anything more than a count, follow it with author_profile.",
         {"name": {"type": "string"}, "limit": {"type": "integer"}}, ["name"]),
     _fn("author_profile", "Everything about one author page: record count, active years, distinct "
         "co-authors, mean team size, top venues, top co-authors, recent papers, affiliations.",
@@ -904,11 +906,14 @@ SPECS = [
         ["sid_a", "sid_b"], heavy=True),
 
     _fn("resolve_venue", "Turn a conference or journal name into dblp series keys (conf/cvpr, "
-        "journals/tit). ALWAYS call this before any venue tool.",
+        "journals/tit). ALWAYS call this before any venue tool. It returns only enough to pick the "
+        "right series - for anything ABOUT a venue ('tell me about X', 'what is X like', how it has "
+        "changed, who publishes there) call venue_profile with the key it gives you.",
         {"name": {"type": "string"}, "kind": {"type": "string", "enum": ["journal", "conference"]},
          "limit": {"type": "integer"}}, ["name"]),
-    _fn("venue_profile", "Everything about one venue series: size, span, DOI and open-access share, the "
-        "last ten years, its most frequent authors, and the name variants it has used.",
+    _fn("venue_profile", "Everything about one venue series: size, span, DOI and open-access share, "
+        "the last ten years, its most frequent authors, and the name variants it has used. This is "
+        "the answer to any open question about a venue; resolve_venue only identifies it.",
         {"sid": {"type": "string"}}, ["sid"], heavy=True),
     _fn("top_venues", "Largest or most open venue series, optionally within a period or restricted to "
         "journals or conferences.",
