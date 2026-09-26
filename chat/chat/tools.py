@@ -252,29 +252,43 @@ def author_papers(ctx, key, frm=None, to=None, kind=None, sid=None, limit=20):
                   note="position is the author's slot on the paper.")
 
 
-def namesakes(ctx, name):
-    """The identity picture for a name: how many separate people dblp knows, and whether a bin exists."""
+def namesakes(ctx, name, limit=25):
+    """The identity picture for a name: how many separate people dblp knows, and whether a bin exists.
+
+    The counts come from their own aggregate, never from the length of the row list: a name like
+    "Wei Wang" has hundreds of numbered pages, and counting the rows that fit in the answer would
+    report the size of the page rather than the size of the population."""
     cur = ctx.cursor()
     base = (name or "").strip()
+    totals = one_of(cur, """
+        SELECT count(*) FILTER (WHERE page_kind = 'numbered') AS numbered,
+               count(*) FILTER (WHERE page_kind = 'disambiguation') AS bins,
+               count(*) FILTER (WHERE page_kind = 'regular') AS regular,
+               count(*) AS pages
+        FROM s.persons WHERE lower(base_name) = lower(?)""", [base])
+    if not totals or totals["pages"] == 0:
+        return result(f"dblp has no author page whose base name is exactly “{base}”.", rows=[],
+                      note="Try resolve_author for a fuzzy match.")
     cols, rows = rows_of(cur, """
         SELECT p.key, p.name, p.page_kind, coalesce(ps.n_pubs, 0) AS papers,
                substr(list_filter(p.notes, lambda n: n LIKE 'affiliation: %')[1], 14) AS affiliation
         FROM s.persons p LEFT JOIN s.person_stats ps USING (person_id)
         WHERE lower(p.base_name) = lower(?)
-        ORDER BY (p.page_kind = 'disambiguation') DESC, papers DESC LIMIT 40""", [base])
-    if not rows:
-        return result(f"dblp has no author page whose base name is exactly “{base}”.", rows=[],
-                      note="Try resolve_author for a fuzzy match.")
-    numbered = [r for r in rows if r["page_kind"] == "numbered"]
+        ORDER BY (p.page_kind = 'disambiguation') DESC, papers DESC LIMIT ?""", [base, int(limit)])
     bins = [r for r in rows if r["page_kind"] == "disambiguation"]
-    return result(f"“{base}”: {len(numbered)} separate people with numbered pages"
-                  + (f", plus a disambiguation bin holding {bins[0]['papers']:,} unassigned records"
-                     if bins else "")
-                  + f" ({len(rows)} pages listed).",
-                  cols, rows,
-                  note="A numbered page is one verified person. A bin is a pile of papers by several "
-                       "people that nobody has separated yet - the disambiguation model proposes a split.",
-                  link={"page": "authors", "q": base})
+    summary = f"“{base}”: {totals['numbered']:,} separate people have a numbered page"
+    if bins:
+        summary += f", and a disambiguation bin holds {bins[0]['papers']:,} further records that " \
+                   f"belong to an unknown number of other people of the same name"
+    if totals["regular"]:
+        summary += f"; {totals['regular']} plain page(s) carry this name too"
+    summary += f". The {min(len(rows), totals['pages'])} largest of {totals['pages']:,} pages are listed."
+    return result(summary, cols, rows,
+                  note="Quote the count above, not the number of rows: the list is capped. A numbered "
+                       "page is one verified person; a bin is a pile of papers by several people that "
+                       "nobody has separated yet - the disambiguation model proposes a split.",
+                  link={"page": "authors", "q": base},
+                  numbered_pages=totals["numbered"], pages=totals["pages"], bins=totals["bins"])
 
 
 def coauthors(ctx, key, sid=None, min_papers=1, limit=15):
@@ -298,10 +312,18 @@ def coauthors(ctx, key, sid=None, min_papers=1, limit=15):
         WHERE sl.person_id <> ? AND NOT sl.on_bin {extra}
         GROUP BY ALL HAVING count(*) >= ?
         ORDER BY papers_together DESC, p.name LIMIT {int(limit)}""", params)
-    return result(f"{pid['name']}: {len(rows)} co-author(s) listed"
-                  + (f", restricted to people who also publish in {sid}" if sid else "") + ".",
-                  cols, rows, note="Co-authorship counts papers with 2–50 authors. " + BINS_NOTE,
-                  link={"page": "authors", "key": key})
+    # the true degree, so the answer never mistakes the length of a capped list for the total
+    total = one_of(cur, """
+        WITH mine AS (SELECT pid FROM s.slots WHERE person_id = ? AND n_authors BETWEEN 2 AND 50)
+        SELECT count(DISTINCT sl.person_id) AS n FROM s.slots sl JOIN mine USING (pid)
+        WHERE sl.person_id <> ? AND NOT sl.on_bin""", [pid["person_id"], pid["person_id"]])
+    return result(f"{pid['name']} has {total['n']:,} distinct co-authors"
+                  + (f"; of those, {len(rows)} also publish in {sid} (listed)" if sid
+                     else f"; the {len(rows)} most frequent are listed") + ".",
+                  cols, rows,
+                  note="Quote the total above, not the number of rows: the list is capped. "
+                       "Co-authorship counts papers with 2–50 authors. " + BINS_NOTE,
+                  link={"page": "authors", "key": key}, coauthors_total=total["n"])
 
 
 def pair_papers(ctx, key_a, key_b, limit=20):
@@ -320,7 +342,16 @@ def pair_papers(ctx, key_a, key_b, limit=20):
         return result(f"{a['name']} and {b['name']} have no paper together in dblp.", rows=[],
                       note="They may still be connected through other people - ask for the link prediction "
                            "or the co-author lists.")
-    return result(f"{a['name']} and {b['name']} share {len(rows)} paper(s).", cols, rows)
+    # the same rule as everywhere: the count is its own query, never the length of a capped list
+    total = one_of(cur, """
+        WITH a AS (SELECT pid FROM s.slots WHERE person_id = ?),
+             b AS (SELECT pid FROM s.slots WHERE person_id = ?)
+        SELECT count(*) AS n FROM s.pubs p JOIN a USING (pid) JOIN b USING (pid)""",
+                   [a["person_id"], b["person_id"]])
+    return result(f"{a['name']} and {b['name']} share {total['n']:,} papers; the "
+                  f"{min(len(rows), total['n'])} most recent are listed.",
+                  cols, rows, note="Quote the total above, not the number of rows.",
+                  papers_together=total["n"])
 
 
 # Counting each side first and joining is both simpler and faster than an INTERSECT plus correlated
@@ -825,9 +856,11 @@ SPECS = [
         "Returns the matching total as well as the listed rows.",
         {"key": {"type": "string"}, "from": YEAR, "to": YEAR, "kind": KIND,
          "sid": {"type": "string", "description": "venue series key"}, "limit": {"type": "integer"}}, ["key"]),
-    _fn("namesakes", "How many separate people share a name, and whether an unassigned disambiguation bin "
-        "exists for it. Use for 'how many people are called X' and for identity questions.",
-        {"name": {"type": "string", "description": "base name without a number, e.g. 'Wei Wang'"}}, ["name"]),
+    _fn("namesakes", "How many separate people share a name, and whether an unassigned disambiguation "
+        "bin exists for it. Use for 'how many people are called X' and for identity questions. The "
+        "counts in the summary are the real totals; the row list is capped, so never count the rows.",
+        {"name": {"type": "string", "description": "base name without a number, e.g. 'Wei Wang'"},
+         "limit": {"type": "integer"}}, ["name"]),
     _fn("coauthors", "One author's co-authors, most frequent first. With `sid`, only co-authors who also "
         "publish in that venue series - use this for two-step questions.",
         {"key": {"type": "string"}, "sid": {"type": "string"}, "min_papers": {"type": "integer"},

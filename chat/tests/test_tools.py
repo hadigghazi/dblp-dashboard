@@ -144,12 +144,31 @@ def test_namesakes(ctx):
     kinds = [r["page_kind"] for r in out["rows"]]
     assert kinds.count("numbered") == EXPECTED["sam_numbered"]
     assert "disambiguation" in kinds
-    assert "unassigned records" in out["summary"]
+    assert out["meta"]["numbered_pages"] == EXPECTED["sam_numbered"]
+    assert "belong to an unknown number of other people" in out["summary"]
+
+
+def test_namesakes_counts_people_not_the_rows_it_can_show(ctx):
+    """The live bug: with the list capped at 40, "Wei Wang" reported 39 people instead of 522.
+    A capped list must never become the count."""
+    out = call(ctx, "namesakes", name="Sam Same", limit=1)
+    assert len(out["rows"]) == 1
+    assert out["meta"]["numbered_pages"] == EXPECTED["sam_numbered"]
+    assert f"{EXPECTED['sam_numbered']} separate people" in out["summary"]
+    assert "capped" in out["note"]
+
+
+def test_coauthors_reports_the_real_degree(ctx):
+    out = call(ctx, "coauthors", key="homepages/a/Ada", limit=2)
+    assert len(out["rows"]) == 2
+    assert out["meta"]["coauthors_total"] == EXPECTED["ada_coauthors"]
+    assert f"{EXPECTED['ada_coauthors']:,} distinct co-authors" in out["summary"]
 
 
 def test_coauthors_and_pairs(ctx):
     out = call(ctx, "coauthors", key="homepages/a/Ada")
     names = {r["name"]: r["papers_together"] for r in out["rows"]}
+    assert out["meta"]["coauthors_total"] == EXPECTED["ada_coauthors"]
     assert names["Ben Beta"] == 4          # three papers plus the 2024 preprint
 
     filtered = call(ctx, "coauthors", key="homepages/a/Ada", sid="conf/ccc")
@@ -158,6 +177,10 @@ def test_coauthors_and_pairs(ctx):
 
     pair = call(ctx, "pair_papers", key_a="homepages/a/Ada", key_b="homepages/b/Ben")
     assert len(pair["rows"]) == EXPECTED["ada_and_ben_together"]
+    assert pair["meta"]["papers_together"] == EXPECTED["ada_and_ben_together"]
+    capped = call(ctx, "pair_papers", key_a="homepages/a/Ada", key_b="homepages/b/Ben", limit=1)
+    assert len(capped["rows"]) == 1
+    assert capped["meta"]["papers_together"] == EXPECTED["ada_and_ben_together"]
     none = call(ctx, "pair_papers", key_a="homepages/a/Ada", key_b="homepages/d/Dan")
     assert len(none["rows"]) == 1          # the 2018 three-author paper
 
