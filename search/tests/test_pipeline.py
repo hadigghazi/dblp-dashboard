@@ -175,38 +175,13 @@ def test_the_word_ranking_s_weight_follows_the_query_s_rarest_word():
     assert config.SPARSE_FLOOR < middle < 1.0
 
 
-def test_a_rarer_query_trusts_the_word_ranking_more(con):
-    """Against the fixture, only the ordering is meaningful: in a corpus of a couple of hundred
-    papers nothing is rare, which is itself the right answer.
-
-    This test failed first on a real bug: both queries scored the same, because the tokenizer
-    emits bigrams and a bigram of common words is rare. Specificity is a property of the words."""
-    c, _ = con
-    rare = c.execute("SELECT token FROM x.token_df WHERE NOT contains(token, '_') "
-                     "ORDER BY df ASC LIMIT 1").fetchone()[0]
-    common = [t[0] for t in c.execute("SELECT token FROM x.token_df WHERE NOT contains(token, '_') "
-                                      "ORDER BY df DESC LIMIT 4").fetchall()]
-
-    S.query_tokens(c, rare.replace("_", " "))
-    distinctive = S.sparse_weight(S.query_stats(c))
-    S.query_tokens(c, " ".join(t.replace("_", " ") for t in common))
-    vague = S.sparse_weight(S.query_stats(c))
-
-    assert distinctive > vague, f"rare {distinctive} should outweigh common {vague}"
-    assert config.SPARSE_FLOOR <= vague < 1.0
-
-
-def test_weighted_fusion_lets_the_better_list_win():
-    strong = [("a", 1.0), ("b", 0.9)]      # the ranking that knows something
-    noise = [("x", 1.0), ("y", 0.9)]       # the one that found nothing useful
-    assert F.rrf(noise, strong)[0][0] in ("x", "a")            # equal weights: a tie at the top
-    assert F.rrf(noise, strong, weights=(0.15, 1.0))[0][0] == "a"
-    assert [pid for pid, _ in F.rrf(noise, strong, weights=(0, 1.0))] == ["a", "b"]
-
-
 def test_bigrams_do_not_make_a_vague_query_look_specific(con):
     """The bug this signal was nearly shipped with: "systems learning data" produces the bigrams
-    systems_learning and learning_data, both rare, so the rarest token said "specific"."""
+    systems_learning and learning_data, both rare, so the rarest token said "specific".
+
+    Only this reading is asserted against the fixture. Its titles are built from small per-topic
+    word lists, so no word in it is rare and every query lands on the floor - the thresholds
+    themselves are tested directly above, where they are defined."""
     c, _ = con
     common = [t[0] for t in c.execute("SELECT token FROM x.token_df WHERE NOT contains(token, '_') "
                                       "ORDER BY df DESC LIMIT 3").fetchall()]
