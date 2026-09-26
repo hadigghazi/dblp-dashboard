@@ -20,6 +20,10 @@ from . import config, data
 log = logging.getLogger("dblp.chat.store")
 
 TOP_N = 2000
+# Bumped whenever STEPS change: a store built by older code is rebuilt rather than served with a
+# table missing. (The first live build silently skipped its facts step, and without this stamp the
+# fix would not have reached an existing store.)
+VERSION = "2"
 
 # `person_degree` is the api's one optional serving table (the heaviest to build): if it is missing,
 # the co-author leaderboard is simply absent and the tool says so.
@@ -66,10 +70,13 @@ STEPS = [
         QUALIFY rank <= 200
         ORDER BY rank"""),
 
-    # the headline numbers, so "how big is dblp" never runs a scan
+    # The headline numbers, so "how big is dblp" never runs a scan. Deliberately no reference to
+    # `src`: that is a VIEW over dblp.parquet, so counting it needs the parquet mounted - the record
+    # count is already in the serving database's own metadata.
     ("dataset facts", """
         CREATE TABLE {c}.facts AS
-        SELECT 'records' AS k, (SELECT count(*) FROM s.src)::BIGINT AS v UNION ALL
+        SELECT 'records' AS k,
+               (SELECT max(try_cast(v AS BIGINT)) FROM s._meta WHERE k = 'records')::BIGINT AS v UNION ALL
         SELECT 'publications', (SELECT count(*) FROM s.pubs) UNION ALL
         SELECT 'journal_conference_papers', (SELECT count(*) FROM s.pubs
             WHERE type IN ('article', 'inproceedings') AND NOT is_preprint) UNION ALL
@@ -109,6 +116,7 @@ def build(con, meta, path=None):
     con.execute("CREATE TABLE c._meta (k VARCHAR, v VARCHAR)")
     con.executemany("INSERT INTO c._meta VALUES (?, ?)", [
         ("fingerprint", fp),
+        ("version", VERSION),
         ("built_at", datetime.now(timezone.utc).isoformat(timespec="seconds")),
         ("build_seconds", f"{time.time() - t0:.1f}"),
         ("skipped", ", ".join(skipped)),
@@ -122,14 +130,23 @@ def build(con, meta, path=None):
 
 
 def attach(con, meta, path=None):
-    """Attach the store read-only, building it first if this dump has none. Returns its metadata."""
+    """Attach the store read-only, building it first if this dump has none or if the one on disk was
+    built by older code. Returns its metadata."""
     fp = meta.get("fingerprint", "unknown")
     target = Path(path) if path else store_path(fp)
     attached = {r[0] for r in con.execute("SELECT database_name FROM duckdb_databases()").fetchall()}
     if "c" in attached:
         return dict(con.execute("SELECT k, v FROM c._meta").fetchall())
-    if not target.exists():
-        build(con, meta, target)
+    if target.exists():
+        con.execute(f"ATTACH '{target}' AS c (READ_ONLY)")
+        found = dict(con.execute("SELECT k, v FROM c._meta").fetchall())
+        if found.get("version") == VERSION:
+            return found
+        log.info("chat store %s was built by version %s (now %s); rebuilding",
+                 target.name, found.get("version", "0"), VERSION)
+        con.execute("DETACH c")
+        target.unlink(missing_ok=True)
+    build(con, meta, target)
     con.execute(f"ATTACH '{target}' AS c (READ_ONLY)")
     out = dict(con.execute("SELECT k, v FROM c._meta").fetchall())
     stale = [p for p in config.MODELS_DIR.glob("chat-store-*.duckdb") if p != target]

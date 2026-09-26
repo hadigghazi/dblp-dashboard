@@ -695,13 +695,28 @@ def paper_detail(ctx, key=None, title=None):
         FROM s.pubs WHERE key = ?""", [key])
     if not head:
         return result(f"No record with key {key!r}.", rows=[])
-    _, authors = rows_of(cur, """
-        WITH a AS (SELECT unnest(authors) AS name, unnest(range(1, n_authors + 1)) AS position
-                   FROM s.src WHERE key = ?)
-        SELECT a.position, a.name, p.key AS author_key,
-               coalesce(p.page_kind, 'unresolved') AS page_kind
-        FROM a LEFT JOIN s.person_names pn ON pn.name = a.name
-        LEFT JOIN s.persons p ON p.person_id = pn.person_id ORDER BY a.position""", [key])
+    # The author strings live in `src`, which is a view over the parquet - reachable here, but the
+    # registry alone still answers the question if that mount is ever missing.
+    note = ("page_kind says how firmly each author is identified: 'numbered' is a verified person, "
+            "'disambiguation' means dblp does not know which person it is, 'unresolved' means the "
+            "name has no page at all.")
+    try:
+        _, authors = rows_of(cur, """
+            WITH a AS (SELECT unnest(authors) AS name, unnest(range(1, n_authors + 1)) AS position
+                       FROM s.src WHERE key = ?)
+            SELECT a.position, a.name, p.key AS author_key,
+                   coalesce(p.page_kind, 'unresolved') AS page_kind
+            FROM a LEFT JOIN s.person_names pn ON pn.name = a.name
+            LEFT JOIN s.persons p ON p.person_id = pn.person_id ORDER BY a.position""", [key])
+    except Exception as e:
+        log.warning("author strings unavailable (%s); falling back to the registry", e)
+        _, authors = rows_of(cur, """
+            SELECT sl.position, coalesce(p.name, '(unresolved name)') AS name, p.key AS author_key,
+                   coalesce(p.page_kind, 'unresolved') AS page_kind
+            FROM s.slots sl LEFT JOIN s.persons p USING (person_id)
+            WHERE sl.pid = (SELECT pid FROM s.pubs WHERE key = ?) ORDER BY sl.position""", [key])
+        note += (" The names as printed on the paper were not available, so these come from the author "
+                 "registry: a name dblp could not resolve shows as '(unresolved name)'.")
     twins = []
     if head["has_twin"]:
         _, twins = rows_of(cur, """
@@ -711,9 +726,7 @@ def paper_detail(ctx, key=None, title=None):
     return result(f"“{head['title']}” ({head['year']}, {head['venue'] or 'no venue'}, {head['kind']}), "
                   f"{head['n_authors']} authors, "
                   f"{head['n_unidentified']} of them unidentified.",
-                  rows=authors, note="page_kind says how firmly each author is identified: 'numbered' is a "
-                                     "verified person, 'disambiguation' means dblp does not know which "
-                                     "person it is, 'unresolved' means the name has no page at all.",
+                  rows=authors, note=note,
                   link={"page": "papers", "key": key}, paper=head, twins=twins)
 
 

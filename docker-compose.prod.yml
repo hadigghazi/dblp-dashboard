@@ -113,6 +113,7 @@ services:
       DUCKDB_THREADS: ${CHAT_DUCKDB_THREADS:-2}
       CHAT_TMP_DIR: /tmp/duckdb
     volumes:
+      - ${DBLP_DIR:?set DBLP_DIR in .env}:/data:ro   # `src` is a view over the parquet, so it must be reachable
       - ./cache:/cache:ro     # the api's serving tables, read-only
       - ./models:/models      # its leaderboard store, answer cache, spend ledger, gold-set report
     restart: unless-stopped
@@ -135,6 +136,7 @@ services:
       # the defaults (searchapi:8003, mlapi:8001) resolve on this compose network, so a question
       # asked from the terminal reaches the same services the web endpoint uses
     volumes:
+      - ${DBLP_DIR:?set DBLP_DIR in .env}:/data:ro   # `src` is a view over the parquet, so it must be reachable
       - ./cache:/cache:ro
       - ./models:/models
     profiles: ["chat"]

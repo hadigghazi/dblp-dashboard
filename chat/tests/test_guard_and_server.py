@@ -150,3 +150,36 @@ def test_budget_exhaustion_is_an_event_not_a_crash(client, monkeypatch):
     monkeypatch.setattr(config, "RATE_PER_DAY", 0)
     events = events_of(client.post("/chat/ask", json={"question": "a brand new question here"}))
     assert events[0]["type"] == "error" and "limit" in events[0]["message"]
+
+
+# ------------------------------------------------------------------ the store
+def test_a_store_built_by_older_code_is_rebuilt(loaded, dump):
+    """The live store was first built with a step that silently failed; without a version stamp the
+    fix could not reach it."""
+    from chat import data, store
+    con, meta = data.connect(loaded["serving"])
+    try:
+        path = dump["models"] / "store-version-test.duckdb"
+        store.build(con, meta, path)
+        con.execute(f"ATTACH '{path}' AS c (READ_ONLY)")
+        assert dict(con.execute("SELECT k, v FROM c._meta").fetchall())["version"] == store.VERSION
+        con.execute("DETACH c")
+        # pretend it came from older code, then attach: it must be rebuilt, not served as it is
+        stale = duckdb_set_version(path, "1")
+        assert stale == "1"
+        out = store.attach(con, meta, path)
+        assert out["version"] == store.VERSION
+        assert store.has_table(con, "facts")
+    finally:
+        con.close()
+
+
+def duckdb_set_version(path, version):
+    import duckdb
+    con = duckdb.connect(str(path))
+    try:
+        con.execute("UPDATE _meta SET v = ? WHERE k = 'version'", [version])
+        con.execute("CHECKPOINT")
+        return con.execute("SELECT v FROM _meta WHERE k = 'version'").fetchone()[0]
+    finally:
+        con.close()

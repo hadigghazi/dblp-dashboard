@@ -151,6 +151,7 @@ services:
       DUCKDB_THREADS: ${CHAT_DUCKDB_THREADS:-2}
       CHAT_TMP_DIR: /tmp/duckdb
     volumes:
+      - ${DBLP_DIR:-./api/fixture}:/data:ro   # `src` is a view over the parquet
       - api_cache:/cache:ro
       - chat_models:/models
     restart: unless-stopped
@@ -168,6 +169,7 @@ services:
       DUCKDB_MEMORY: ${CHAT_DUCKDB_MEMORY:-1GB}
       CHAT_TMP_DIR: /tmp/duckdb
     volumes:
+      - ${DBLP_DIR:-./api/fixture}:/data:ro   # `src` is a view over the parquet
       - api_cache:/cache:ro
       - chat_models:/models
     profiles: ["chat"]

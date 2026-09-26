@@ -221,3 +221,55 @@ def test_run_sql_is_guarded(ctx):
 def test_unknown_tool_and_bad_arguments_are_reported(ctx):
     assert T.call(ctx, "no_such_tool", {})["refused"] is True
     assert T.call(ctx, "author_profile", {"nonsense": 1})["refused"] is True
+
+
+# --------------------------------------------------------------------------- the parquet mount
+# `src` in the serving database is a VIEW over dblp.parquet, so any query touching it needs that file
+# mounted. The fixture has src as a plain table, which hid this on the way in: the live store build
+# skipped its "dataset facts" step because the container had no /data mount. These two tests pin the
+# behaviour rather than the mount.
+class _NoSrcCursor:
+    """A cursor that fails exactly as an unreachable parquet does."""
+
+    def __init__(self, inner):
+        self.inner = inner
+
+    def execute(self, sql, params=None):
+        if "s.src" in sql:
+            raise RuntimeError("IO Error: No files found that match the pattern '/data/parquet/dblp.parquet'")
+        return self.inner.execute(sql, params) if params else self.inner.execute(sql)
+
+    @property
+    def description(self):
+        return self.inner.description
+
+    def fetchall(self):
+        return self.inner.fetchall()
+
+
+def test_the_leaderboard_store_never_depends_on_the_parquet():
+    from chat import store
+    for name, sql in store.STEPS:
+        assert "s.src" not in sql, f"the '{name}' step would fail without the parquet mounted"
+
+
+def test_paper_detail_falls_back_to_the_registry_without_the_parquet(ctx):
+    class Blind(type(ctx)):
+        def cursor(self):
+            return _NoSrcCursor(super().cursor())
+
+    blind = Blind(ctx.pool, ctx.http, ctx.store_meta)
+    out = T.call(blind, "paper_detail", {"title": "Graph neural networks for traffic"})
+    assert out["meta"]["paper"]["year"] == 2020
+    assert [r["name"] for r in out["rows"]] == ["Ada Alpha"]
+    assert "registry" in out["note"]
+
+
+def test_dataset_facts_still_works_without_the_parquet(ctx):
+    class Blind(type(ctx)):
+        def cursor(self):
+            return _NoSrcCursor(super().cursor())
+
+    out = T.call(Blind(ctx.pool, ctx.http, ctx.store_meta), "dataset_facts", {})
+    values = {r["measure"]: r["value"] for r in out["rows"]}
+    assert values["publications"] == EXPECTED["papers_total"]
