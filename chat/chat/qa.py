@@ -56,10 +56,11 @@ def dash(ctx, path, **params):
     return body.get("data", body)
 
 
-def call(ctx, name, **args):
-    out = T.call(ctx, name, args)
+def call(ctx, tool, **args):
+    """`tool`, not `name`: several tools take a `name` argument of their own."""
+    out = T.call(ctx, tool, args)
     if out.get("refused"):
-        raise AssertionError(f"{name} refused: {out.get('summary')}")
+        raise AssertionError(f"{tool} refused: {out.get('summary')}")
     return out
 
 
@@ -192,11 +193,11 @@ def _counts(ctx):
 def _caps(ctx):
     """Every tool that shows a shortened list must carry the true total next to it."""
     top = call(ctx, "top_authors", limit=1)["rows"][0]
-    name = dash(ctx, "identity/homonyms", top=1)[0]["base_name"] if config.DASHBOARD_URL else "Wei Wang"
+    name = call(ctx, "most_shared_names", limit=1)["rows"][0]["base_name"]
     cases = [
-        ("namesakes", {"name": name, "limit": 2}, "numbered_pages"),
-        ("coauthors", {"key": top["key"], "limit": 2}, "coauthors_total"),
-        ("author_papers", {"key": top["key"], "limit": 2}, "matching"),
+        ("namesakes", {"name": name, "limit": 1}, "numbered_pages"),
+        ("coauthors", {"key": top["key"], "limit": 1}, "coauthors_total"),
+        ("author_papers", {"key": top["key"], "limit": 1}, "matching"),
     ]
     out = []
     for tool, args, key in cases:

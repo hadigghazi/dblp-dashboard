@@ -25,7 +25,13 @@ from . import config, docs, sqlguard, store
 
 log = logging.getLogger("dblp.chat.tools")
 
-JOURNAL_CONF = "type IN ('article', 'inproceedings') AND NOT is_preprint"
+def journal_conf(p=""):
+    """The journal/conference predicate, optionally qualified: every column must carry the alias, or
+    a join with `slots` (which has its own type and is_preprint) is ambiguous."""
+    return f"{p}type IN ('article', 'inproceedings') AND NOT {p}is_preprint"
+
+
+JOURNAL_CONF = journal_conf()
 
 
 def kind_expr(p=""):
@@ -304,7 +310,7 @@ def coauthors(ctx, key, sid=None, min_papers=1, limit=15):
     if sid:
         extra = f"""AND sl.person_id IN (
                        SELECT sl2.person_id FROM s.slots sl2 JOIN s.pubs b2 ON b2.pid = sl2.pid
-                       WHERE b2.sid = ? AND b2.{JOURNAL_CONF})"""
+                       WHERE b2.sid = ? AND {journal_conf("b2.")})"""
         params.append(sid)
     params.append(int(min_papers))
     cols, rows = rows_of(cur, f"""
