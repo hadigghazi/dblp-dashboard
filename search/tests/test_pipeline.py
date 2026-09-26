@@ -212,3 +212,15 @@ def test_a_query_the_words_barely_matched_loses_most_of_its_weight(con):
     B.search(c, "analysis of systems using data", stats=stats)
     assert "coverage" in stats
     assert S.sparse_weight(stats) <= 1.0
+
+
+def test_ranking_is_reproducible(con):
+    """Identical titles score identically, and dblp is full of them - a preprint and its published
+    twin, a paper reissued in a journal. Without a tiebreaker the arm of an evaluation that asks for
+    one specific record moves by a point between identical runs, which reads as a change that is not
+    there."""
+    c, _ = con
+    title = c.execute("SELECT title FROM x.paper ORDER BY pid LIMIT 1").fetchone()[0]
+    runs = [B.search(c, title, top=10) for _ in range(3)]
+    assert runs[0] == runs[1] == runs[2]
+    assert runs[0] == sorted(runs[0], key=lambda r: (-r[1], r[0])), "score first, then pid"

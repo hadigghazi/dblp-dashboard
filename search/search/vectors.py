@@ -169,7 +169,7 @@ def search(con, fingerprint, qvec, top=None, kind=None, year_from=None, year_to=
 
     raw_top = min(config.TOP_DENSE, n)
     idx = np.argpartition(-sims, raw_top - 1)[:raw_top] if raw_top < n else np.arange(n)
-    idx = idx[np.argsort(-sims[idx])]
+    idx = idx[np.argsort(-sims[idx], kind="stable")]   # equal similarities keep row order
     idx = idx[sims[idx] > min_sim]
 
     where = ["row IN (SELECT unnest(?::BIGINT[]))"]

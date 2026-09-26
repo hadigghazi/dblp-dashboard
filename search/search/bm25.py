@@ -49,7 +49,10 @@ def search(con, text, top=None, kind=None, year_from=None, year_to=None, stats=N
             GROUP BY t.pid)
         SELECT h.pid, h.score FROM hit h JOIN x.paper p ON p.pid = h.pid
         WHERE {' AND '.join(where)}
-        ORDER BY h.score DESC LIMIT $top""", params).fetchall()
+        -- dblp holds many identical titles (a preprint and its published twin, reissued papers),
+        -- which score exactly alike; without a tiebreaker which one lands at rank 1 varies between
+        -- runs, and an evaluation asking for one specific record then moves by a point for no reason
+        ORDER BY h.score DESC, h.pid LIMIT $top""", params).fetchall()
     out = [(int(pid), float(score)) for pid, score in rows]
     if stats is not None:
         # how much of the query the best word match explains: the signal the fusion weights by
