@@ -13,9 +13,14 @@ from . import config, store as S
 log = logging.getLogger("dblp.search.bm25")
 
 
-def search(con, text, top=None, kind=None, year_from=None, year_to=None):
-    """[(pid, score)], best first, over papers sharing at least one query token."""
+def search(con, text, top=None, kind=None, year_from=None, year_to=None, stats=None):
+    """[(pid, score)], best first, over papers sharing at least one query token.
+
+    `stats`, if given, is filled with how specific the query was - the caller uses it to decide
+    how much this ranking is worth next to a semantic one."""
     tokens = S.query_tokens(con, text)
+    if stats is not None:
+        stats.update(S.query_stats(con))
     if not tokens:
         return []
     where = ["TRUE"]

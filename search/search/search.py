@@ -6,7 +6,7 @@ never finds fewer papers, only ranks the indexed ones better.
 """
 import logging
 
-from . import bm25 as B, fuse as F, vectors as V
+from . import bm25 as B, fuse as F, store as S, vectors as V
 
 log = logging.getLogger("dblp.search.search")
 
@@ -57,7 +57,9 @@ def search(con, fingerprint, encoder, text, top=20, kind=None, year_from=None, y
 
     # `sparse=False` exists to measure the embeddings alone: fusing them with a word ranking
     # that found nothing is not the same as asking them on their own
-    sparse_hits = B.search(con, text, kind=kind, year_from=year_from, year_to=year_to) if sparse else []
+    stats = {}
+    sparse_hits = (B.search(con, text, kind=kind, year_from=year_from, year_to=year_to, stats=stats)
+                   if sparse else [])
     dense_hits, dense_error = [], None
     if dense:
         try:
@@ -66,7 +68,9 @@ def search(con, fingerprint, encoder, text, top=20, kind=None, year_from=None, y
         except FileNotFoundError as e:
             dense_error = str(e)
 
-    fused = F.rrf(sparse_hits, dense_hits)[:top]
+    # a word ranking built from nothing but common words gets a fraction of the say
+    weight = S.sparse_weight(stats) if (sparse and dense_hits) else 1.0
+    fused = F.rrf(sparse_hits, dense_hits, weights=(weight, 1.0))[:top]
     sparse_rank = {pid: r for r, (pid, _) in enumerate(sparse_hits, start=1)}
     dense_rank = {pid: r for r, (pid, _) in enumerate(dense_hits, start=1)}
     meta = _hydrate(con, [pid for pid, _ in fused])
@@ -90,6 +94,7 @@ def search(con, fingerprint, encoder, text, top=20, kind=None, year_from=None, y
     return {
         "query": text, "results": results[:top],
         "sparse_candidates": len(sparse_hits), "dense_candidates": len(dense_hits),
-        "sparse_used": bool(sparse),
+        "sparse_used": bool(sparse), "sparse_weight": weight,
+        "query_specificity": round(stats.get("idf") or 0.0, 2),
         "dense_available": dense and dense_error is None, "dense_error": dense_error,
     }

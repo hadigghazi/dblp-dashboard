@@ -34,6 +34,15 @@ MAX_QUERY_TOKENS = int(os.environ.get("SEARCH_MAX_QUERY_TOKENS", "16"))
 # Bounding the postings, rather than the token count, keeps a long query as cheap as a short one.
 MAX_POSTINGS = int(os.environ.get("SEARCH_MAX_POSTINGS", "3000000"))
 MIN_QUERY_TOKENS = 3
+
+# Reciprocal rank fusion gives both rankings equal say. That is right when both have something
+# to say, and wrong when one does not: on a paraphrase query BM25 returns noise, and blending it
+# in cost every single top-1 hit the embeddings had found. The query's rarest token decides how
+# much the word ranking is worth - a distinctive word means BM25 is reliable, all-common words
+# mean it is guessing. Below IDF_FLOOR the word ranking keeps only SPARSE_FLOOR of its weight.
+IDF_FLOOR = float(os.environ.get("SEARCH_IDF_FLOOR", "3.0"))    # df ~ 5% of the corpus
+IDF_FULL = float(os.environ.get("SEARCH_IDF_FULL", "7.0"))      # df ~ 0.1% of the corpus
+SPARSE_FLOOR = float(os.environ.get("SEARCH_SPARSE_FLOOR", "0.15"))
 RRF_K = 60   # standard reciprocal-rank-fusion constant; results are not sensitive to small changes
 
 MIN_DF = int(os.environ.get("SEARCH_MIN_DF", "2"))

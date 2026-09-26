@@ -160,3 +160,29 @@ def test_a_query_of_common_words_is_bounded(con):
     assert len(tight) == config.MIN_QUERY_TOKENS, "a query must never be left with nothing to match"
     assert len(tight) <= len(generous)
     assert tight == generous[:len(tight)], "the tokens kept are the rarest ones"
+
+
+def test_a_distinctive_query_trusts_the_word_ranking(con):
+    """A title carries a rare word, so BM25 is reliable and keeps its full say."""
+    c, _ = con
+    rare = c.execute("SELECT token FROM x.token_df ORDER BY df ASC LIMIT 1").fetchone()[0]
+    S.query_tokens(c, rare.replace("_", " "))
+    assert S.sparse_weight(S.query_stats(c)) == 1.0
+
+
+def test_a_query_of_only_common_words_does_not(con):
+    """A description can be built entirely of words hundreds of thousands of papers share. Giving
+    that ranking equal say cost every top-1 hit the embeddings had found."""
+    c, _ = con
+    common = [t[0] for t in c.execute("SELECT token FROM x.token_df ORDER BY df DESC LIMIT 4").fetchall()]
+    S.query_tokens(c, " ".join(t.replace("_", " ") for t in common))
+    weight = S.sparse_weight(S.query_stats(c))
+    assert config.SPARSE_FLOOR <= weight < 1.0
+
+
+def test_weighted_fusion_lets_the_better_list_win():
+    strong = [("a", 1.0), ("b", 0.9)]      # the ranking that knows something
+    noise = [("x", 1.0), ("y", 0.9)]       # the one that found nothing useful
+    assert F.rrf(noise, strong)[0][0] in ("x", "a")            # equal weights: a tie at the top
+    assert F.rrf(noise, strong, weights=(0.15, 1.0))[0][0] == "a"
+    assert [pid for pid, _ in F.rrf(noise, strong, weights=(0, 1.0))] == ["a", "b"]

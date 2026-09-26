@@ -14,7 +14,7 @@ import re
 
 import numpy as np
 
-from . import bm25 as B, config, fuse as F, vectors as V
+from . import bm25 as B, config, fuse as F, store as S, vectors as V
 
 log = logging.getLogger("dblp.search.evaluate")
 
@@ -75,10 +75,11 @@ def evaluate(con, fingerprint, encoder, n_papers=None, seed=None):
 
     bm25_ranks, dense_ranks, hybrid_ranks = [], [], []
     for pid, q in cases:
-        sparse = B.search(con, q)
+        stats = {}
+        sparse = B.search(con, q, stats=stats)
         qvec = encoder.encode_query(q)
         dense_hits = V.search(con, fingerprint, qvec)
-        fused = F.rrf(sparse, dense_hits)
+        fused = F.rrf(sparse, dense_hits, weights=(S.sparse_weight(stats), 1.0))
         bm25_ranks.append(_rank_of(sparse, pid))
         dense_ranks.append(_rank_of(dense_hits, pid))
         hybrid_ranks.append(_rank_of(fused, pid))

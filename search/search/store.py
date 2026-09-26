@@ -9,6 +9,7 @@ are not indexed here; the search endpoint falls back to an exact-word match over
 for those, same as the dashboard's plain paper search always has.
 """
 import logging
+import math
 import re
 import time
 from datetime import datetime, timezone
@@ -59,6 +60,29 @@ STORE_STEPS = [
 
 def store_path(fingerprint) -> Path:
     return config.MODELS_DIR / f"search-store-{fingerprint}.duckdb"
+
+
+def query_stats(con):
+    """How specific the last query_tokens() call was: the rarest token it kept, as an IDF over
+    the indexed papers. High means the query named something; low means it used only words that
+    hundreds of thousands of papers share."""
+    row = con.execute("SELECT count(*), min(df), max(df) FROM q_used").fetchone()
+    n = con.execute("SELECT count(*) FROM x.paper").fetchone()[0] or 1
+    if not row or not row[0] or not row[1]:
+        return {"tokens": 0, "min_df": None, "max_df": None, "idf": 0.0}
+    return {"tokens": int(row[0]), "min_df": int(row[1]), "max_df": int(row[2]),
+            "idf": math.log(n / row[1])}
+
+
+def sparse_weight(stats):
+    """How much the word ranking is worth for this query, between SPARSE_FLOOR and 1."""
+    idf = (stats or {}).get("idf") or 0.0
+    if idf >= config.IDF_FULL:
+        return 1.0
+    if idf <= config.IDF_FLOOR:
+        return config.SPARSE_FLOOR
+    span = (idf - config.IDF_FLOOR) / (config.IDF_FULL - config.IDF_FLOOR)
+    return round(config.SPARSE_FLOOR + span * (1.0 - config.SPARSE_FLOOR), 3)
 
 
 def vectors_path(fingerprint) -> Path:
