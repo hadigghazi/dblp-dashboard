@@ -80,3 +80,15 @@ def test_the_embeddings_can_be_asked_on_their_own(client):
     assert dense_only["sparse_candidates"] == 0
     assert all(r["sources"] == ["dense"] for r in dense_only["results"]), \
         "no word match may leak in, not even the exact-word top-up"
+
+
+def test_a_cached_answer_belongs_to_the_ranker_that_made_it(client, monkeypatch):
+    """Changing a fusion threshold and re-measuring scored the OLD ranker for twenty seconds, because
+    the cache key described the query and not the ranking."""
+    from search import config
+    first = client.get("/search/papers", params={"q": "graph learning", "top": 5}).json()
+    assert client.get("/search/papers", params={"q": "graph learning", "top": 5}).json()["cached"]
+    monkeypatch.setattr(config, "COVERAGE_FLOOR", config.COVERAGE_FLOOR + 0.05)
+    again = client.get("/search/papers", params={"q": "graph learning", "top": 5}).json()
+    assert not again["cached"], "a different ranker must not be served from the old ranker's cache"
+    assert first["query"] == again["query"]

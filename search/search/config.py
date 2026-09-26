@@ -41,7 +41,7 @@ MIN_QUERY_TOKENS = 3
 # Measured on the match, not on the query: how much of what you typed the best word match
 # explains. A title with one word swapped leaves a hit covering most of the query; a
 # description of the same paper leaves a hit covering two tokens out of a dozen.
-COVERAGE_FLOOR = float(os.environ.get("SEARCH_COVERAGE_FLOOR", "0.3"))
+COVERAGE_FLOOR = float(os.environ.get("SEARCH_COVERAGE_FLOOR", "0.5"))
 COVERAGE_FULL = float(os.environ.get("SEARCH_COVERAGE_FULL", "0.7"))
 # Zero, not a small number. Measured on paraphrase queries: the word ranking found the right paper
 # 0 times in 56, at any rank - so it is not weak evidence there, it is no evidence. At a tenth of a
@@ -49,6 +49,13 @@ COVERAGE_FULL = float(os.environ.get("SEARCH_COVERAGE_FULL", "0.7"))
 # paper sits when somebody describes it. The exact-word top-up still guarantees recall.
 SPARSE_FLOOR = float(os.environ.get("SEARCH_SPARSE_FLOOR", "0.0"))
 RRF_K = 60   # standard reciprocal-rank-fusion constant; results are not sensitive to small changes
+
+
+def ranker_version():
+    """Everything that decides an answer's ORDER. The disk cache keys on this, so changing a
+    threshold invalidates the answers it produced - without it, the next measurement silently scores
+    the previous ranker."""
+    return f"{RRF_K}:{COVERAGE_FLOOR}:{COVERAGE_FULL}:{SPARSE_FLOOR}:{MAX_QUERY_TOKENS}:{MAX_POSTINGS}"
 
 MIN_DF = int(os.environ.get("SEARCH_MIN_DF", "2"))
 BM25_K1 = 1.5

@@ -135,7 +135,8 @@ def papers(q: str = Query(..., min_length=3, max_length=SR.MAX_TITLE), kind: Opt
             # fold that flag into the cache key so a cached "not ready" answer cannot outlive the
             # build finishing
             complete = V.progress(con, state.fingerprint)["complete"] and dense
-            path = state.cache_path(q.strip().lower(), kind, frm, to, top, complete, sparse)
+            path = state.cache_path(q.strip().lower(), kind, frm, to, top, complete, sparse,
+                                    config.ranker_version())
             if refresh:
                 path.unlink(missing_ok=True)
             if path.exists():
