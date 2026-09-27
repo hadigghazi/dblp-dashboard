@@ -50,7 +50,7 @@ def _hydrate(con, pids):
 
 
 def search(con, fingerprint, encoder, text, top=20, kind=None, year_from=None, year_to=None,
-           dense=True, sparse=True):
+           dense=True, sparse=True, find=None):
     text = (text or "").strip()[:MAX_TITLE]
     if len(text) < 3:
         return {"error": "type at least 3 characters"}
@@ -70,7 +70,8 @@ def search(con, fingerprint, encoder, text, top=20, kind=None, year_from=None, y
 
     # a word ranking built from nothing but common words gets a fraction of the say
     weight = S.sparse_weight(stats) if (sparse and dense_hits) else 1.0
-    fused = F.rrf(sparse_hits, dense_hits, weights=(weight, 1.0))[:top]
+    ranked = F.rrf(sparse_hits, dense_hits, weights=(weight, 1.0))
+    fused = ranked[:top]
     sparse_rank = {pid: r for r, (pid, _) in enumerate(sparse_hits, start=1)}
     dense_rank = {pid: r for r, (pid, _) in enumerate(dense_hits, start=1)}
     meta = _hydrate(con, [pid for pid, _ in fused])
@@ -91,8 +92,19 @@ def search(con, fingerprint, encoder, text, top=20, kind=None, year_from=None, y
         results.append({**{k: v for k, v in row.items() if k != "pid"}, "score": None,
                         "sources": ["exact_word"], "bm25_rank": None, "dense_rank": None})
 
+    located = None
+    if find:
+        # where a known record sits in each ranking, whether or not it made the cut
+        row = con.execute("SELECT pid FROM s.pubs WHERE key = ?", [find]).fetchone()
+        pid = int(row[0]) if row else None
+        rank_of = lambda pairs: next((i for i, (p, _) in enumerate(pairs, start=1) if p == pid), None)
+        located = {"key": find, "known": pid is not None,
+                   "sparse_rank": rank_of(sparse_hits), "dense_rank": rank_of(dense_hits),
+                   "fused_rank": rank_of(ranked),
+                   "dense_candidates": len(dense_hits), "sparse_candidates": len(sparse_hits)}
+
     return {
-        "query": text, "results": results[:top],
+        "query": text, "results": results[:top], "find": located,
         "sparse_candidates": len(sparse_hits), "dense_candidates": len(dense_hits),
         "sparse_used": bool(sparse), "sparse_weight": weight,
         "word_match_coverage": round(stats.get("coverage") or 0.0, 3),

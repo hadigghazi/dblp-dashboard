@@ -122,7 +122,9 @@ def papers(q: str = Query(..., min_length=3, max_length=SR.MAX_TITLE), kind: Opt
           to: Optional[int] = Query(None, ge=1900, le=2100),
           top: int = Query(20, ge=1, le=50), refresh: bool = False,
           dense: bool = Query(True, description="set false to answer with words alone, for comparison"),
-          sparse: bool = Query(True, description="set false to answer with the embeddings alone")):
+          sparse: bool = Query(True, description="set false to answer with the embeddings alone"),
+          find: Optional[str] = Query(None, description="report this record key's rank in each "
+                                                        "ranking, for diagnosis")):
     if state.fingerprint is None:
         raise HTTPException(503, detail=f"No search index yet ({state.error}). Run: python -m search.cli store")
     with state.lock:   # one search at a time: a dense query is a full pass over the index
@@ -136,7 +138,7 @@ def papers(q: str = Query(..., min_length=3, max_length=SR.MAX_TITLE), kind: Opt
             # build finishing
             complete = V.progress(con, state.fingerprint)["complete"] and dense
             path = state.cache_path(q.strip().lower(), kind, frm, to, top, complete, sparse,
-                                    config.ranker_version())
+                                    config.ranker_version(), find)
             if refresh:
                 path.unlink(missing_ok=True)
             if path.exists():
@@ -145,7 +147,7 @@ def papers(q: str = Query(..., min_length=3, max_length=SR.MAX_TITLE), kind: Opt
                 return JSONResponse(cached)
             t = time.time()
             out = SR.search(con, state.fingerprint, encoder, q, top=top, kind=kind, year_from=frm,
-                            year_to=to, dense=complete, sparse=sparse)
+                            year_to=to, dense=complete, sparse=sparse, find=find)
             if not complete:
                 out["dense_error"] = ("answered with words alone, as asked" if not dense
                                       else "the embedding index is still building")

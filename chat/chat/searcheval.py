@@ -82,11 +82,12 @@ def _rank(results, key):
 SEARCH_TIMEOUT = 90     # a description is a long query, and the service answers one search at a time
 
 
-def _search(ctx, query, dense=True, sparse=True, top=20):
-    r = ctx.http.get(f"{config.SEARCH_URL}/search/papers",
-                     params={"q": query, "top": top, "dense": str(bool(dense)).lower(),
-                             "sparse": str(bool(sparse)).lower()},
-                     timeout=SEARCH_TIMEOUT)
+def _search(ctx, query, dense=True, sparse=True, top=20, find=None):
+    params = {"q": query, "top": top, "dense": str(bool(dense)).lower(),
+              "sparse": str(bool(sparse)).lower()}
+    if find:
+        params["find"] = find
+    r = ctx.http.get(f"{config.SEARCH_URL}/search/papers", params=params, timeout=SEARCH_TIMEOUT)
     r.raise_for_status()
     return r.json()
 
@@ -119,6 +120,30 @@ def build_queries(ctx, client, n_papers, seed, model=None, ledger=None):
             "query_tokens": tokens, "seed": seed, "model": model or config.MODEL_FAST}
 
 
+def _depths(depths, candidate_counts):
+    """The question a reranker's worth turns on: is the paper deep in the candidate list, or absent?
+
+    Within the top hundred, a cross-encoder can reorder it into view for the cost of one extra model
+    call. Outside the candidate window entirely, no amount of reordering helps and the embeddings
+    themselves have to get better."""
+    found = [d for d in depths if d]
+    n = len(depths) or 1
+    buckets = {}
+    for edge in (10, 50, 100, 500, 2000):
+        buckets[f"within_{edge}"] = round(sum(1 for d in found if d <= edge) / n, 4)
+    return {
+        "queries": len(depths),
+        "in_the_candidate_list": round(len(found) / n, 4),
+        "median_rank_when_found": sorted(found)[len(found) // 2] if found else None,
+        "candidates_searched": (sorted(c for c in candidate_counts if c)[len(candidate_counts) // 2]
+                                if any(candidate_counts) else None),
+        **buckets,
+        "verdict": ("a reranker over the top 100 would reach most of these"
+                    if found and sum(1 for d in found if d <= 100) / n >= 0.3
+                    else "mostly absent from the candidates: the embeddings are the limit"),
+    }
+
+
 def run(ctx, client, n_papers=60, seed=None, model=None, ledger=None, regenerate=False):
     seed = 7 if seed is None else seed
     path = queries_path(ctx.meta.get("fingerprint", "unknown"), seed, n_papers)
@@ -135,16 +160,20 @@ def run(ctx, client, n_papers=60, seed=None, model=None, ledger=None, regenerate
     hybrid, words, dense_only, failures = [], [], [], []
     weights, coverages = [], []          # did the fusion weighting actually fire on these?
     paired = {"hybrid_better": 0, "embeddings_better": 0, "same": 0}
+    depths, candidate_counts = [], []     # where the right paper sits among the candidates
     t0 = time.time()
     for case in cases:
         try:
             both = _search(ctx, case["query"])
             words_arm = _search(ctx, case["query"], dense=False)
-            dense_arm = _search(ctx, case["query"], sparse=False)
+            dense_arm = _search(ctx, case["query"], sparse=False, find=case["key"])
         except Exception as e:
             log.warning("search failed for %r: %s", case["query"], e)
             skipped += 1
             continue
+        located = dense_arm.get("find") or {}
+        depths.append(located.get("dense_rank"))
+        candidate_counts.append(located.get("dense_candidates"))
         weights.append(both.get("sparse_weight"))
         coverages.append(both.get("word_match_coverage"))
         h = _rank(both.get("results", []), case["key"])
@@ -188,6 +217,7 @@ def run(ctx, client, n_papers=60, seed=None, model=None, ledger=None, regenerate
         "mean_word_match_coverage": round(sum(c for c in coverages if c is not None)
                                           / max(1, len([c for c in coverages if c is not None])), 3),
         "queries_with_no_word_weight": sum(1 for w in weights if not w),
+        "where_the_right_paper_sits": _depths(depths, candidate_counts),
         "query_tokens": tokens,
         "examples": [{"title": c["title"], "query": c["query"]} for c in cases[:5]],
         "hybrid_lost_to_embeddings_alone": failures[:10],

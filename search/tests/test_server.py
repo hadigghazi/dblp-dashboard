@@ -92,3 +92,19 @@ def test_a_cached_answer_belongs_to_the_ranker_that_made_it(client, monkeypatch)
     again = client.get("/search/papers", params={"q": "graph learning", "top": 5}).json()
     assert not again["cached"], "a different ranker must not be served from the old ranker's cache"
     assert first["query"] == again["query"]
+
+
+def test_find_reports_where_a_record_sits_in_each_ranking(client):
+    """Whether the right paper is deep in the list or absent from it decides between a reranker and
+    a new embedding model - one is free, the other is a day of re-embedding."""
+    first = client.get("/search/papers", params={"q": "graph learning", "top": 3}).json()
+    key = first["results"][0]["key"]
+    located = client.get("/search/papers",
+                         params={"q": "graph learning", "top": 3, "find": key}).json()["find"]
+    assert located["key"] == key and located["known"] is True
+    assert located["fused_rank"] == 1
+    assert located["dense_candidates"] >= 1
+
+    missing = client.get("/search/papers",
+                         params={"q": "graph learning", "top": 3, "find": "conf/nope/nothing"}).json()
+    assert missing["find"]["known"] is False and missing["find"]["fused_rank"] is None
