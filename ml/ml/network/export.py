@@ -127,9 +127,13 @@ def probe(con, with_bins=False, target=None):
     out = []
     for name, predicate in config.SCOPES.items():
         try:
+            # dropped rather than replaced: a table built FROM another cannot always be replaced
+            # while the one it came from is being replaced too, and the probe runs repeatedly
+            con.execute("DROP TABLE IF EXISTS probe_edge")
+            con.execute("DROP TABLE IF EXISTS member")
             con.execute(MEMBER_SQL.format(min_authors=config.MIN_AUTHORS, max_authors=config.MAX_AUTHORS,
                                           scope=predicate, bins=_bins_clause(with_bins)))
-            con.execute(f"CREATE OR REPLACE TEMP TABLE probe_edge AS {EDGES_SQL}")
+            con.execute(f"CREATE TEMP TABLE probe_edge AS {EDGES_SQL}")
             edges = con.execute("SELECT count(*) FROM probe_edge").fetchone()[0]
             nodes = con.execute("""
                 SELECT count(*) FROM (SELECT u AS id FROM probe_edge UNION

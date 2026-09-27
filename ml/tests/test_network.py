@@ -193,6 +193,7 @@ def test_the_probe_says_which_definition_matches_a_number(con):
 
     again = EX.probe(c, target=everything["edges"])
     repeated = next(r for r in again if r["scope"] == "all")
+    assert "edges" in repeated, f"the probe is not repeatable: {repeated}"
     assert repeated["edges"] == everything["edges"], (everything, repeated)
     assert repeated.get("matches_target") is True, again
     assert all(r["difference"] == r["edges"] - everything["edges"] for r in again if "edges" in r)
