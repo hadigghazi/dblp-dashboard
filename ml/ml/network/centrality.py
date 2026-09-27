@@ -89,14 +89,28 @@ def header_counts(path: Path):
 
 
 def decompress(src: Path, dst: Path) -> Path:
-    """The export writes its header as one gzip member and the body as the next. That is a valid
-    stream, but not every reader follows it to the end, and a reader that stops early reports a
-    smaller graph rather than an error. Decompressing with Python's gzip first removes the question
-    entirely, and costs seconds."""
+    """The dataset's body, as a plain file with the comment header removed.
+
+    Two reasons, both of which cost a working day between them. The export writes its header as one
+    gzip member and the body as the next, which is a valid stream that not every reader follows to
+    the end - and a reader that stops early reports a smaller graph rather than an error. And
+    DuckDB's CSV dialect detection looks at those `#` lines before it applies the comment option,
+    finds a line with no tab in it, and concludes the file has one column.
+
+    Python's gzip reads every member, and a file with no comments in it cannot be misread as one.
+    Only the leading block is dropped: every data line begins with a node id, so a `#` can only
+    appear at the top."""
     t0 = time.time()
+    dropped = 0
     with gzip.open(src, "rb") as fh, open(dst, "wb") as out:
+        line = fh.readline()
+        while line.startswith(b"#"):
+            dropped += 1
+            line = fh.readline()
+        out.write(line)
         shutil.copyfileobj(fh, out, length=4 * 1024 * 1024)
-    log.info("decompressed %s -> %.2f GB in %.0fs", src.name, dst.stat().st_size / 1e9, time.time() - t0)
+    log.info("decompressed %s -> %.2f GB in %.0fs (%s header lines dropped)",
+             src.name, dst.stat().st_size / 1e9, time.time() - t0, dropped)
     return dst
 
 
@@ -104,7 +118,7 @@ def load_edges(con, plain: Path, expect_edges=None):
     """The edge list as a DuckDB table, with the claimed edge count enforced."""
     con.execute(f"""
         CREATE OR REPLACE TABLE e AS
-        SELECT * FROM read_csv('{plain.as_posix()}', delim='\t', header=false, comment='#',
+        SELECT * FROM read_csv('{plain.as_posix()}', delim='\t', header=false, auto_detect=false,
                                columns={{'u': 'BIGINT', 'v': 'BIGINT', 'w': 'BIGINT'}})""")
     edges = con.execute("SELECT count(*) FROM e").fetchone()[0]
     if expect_edges is not None and edges != expect_edges:
@@ -160,7 +174,7 @@ def check_degrees(con, G, sample=1000, seed=None):
         WITH ends AS (SELECT u AS id FROM e UNION ALL SELECT v FROM e),
              deg AS (SELECT id, count(*) AS degree FROM ends GROUP BY 1)
         SELECT * FROM (SELECT n.nid, d.degree FROM deg d JOIN node n ON n.id = d.id)
-        USING SAMPLE {int(sample)} ROWS (reservoir, {int(seed if seed is not None else base.SEED)})
+        USING SAMPLE reservoir({int(sample)} ROWS) REPEATABLE ({int(seed if seed is not None else base.SEED)})
     """).fetchall()
     bad = [(int(nid), int(expected), G.degree(int(nid)))
            for nid, expected in rows if G.degree(int(nid)) != int(expected)]
@@ -420,7 +434,8 @@ def write(con, scores, nodes_plain: Path, out: Path, name=None):
 
     con.execute(f"""
         CREATE OR REPLACE TABLE node_meta AS
-        SELECT * FROM read_csv('{nodes_plain.as_posix()}', delim='\t', header=false, comment='#',
+        SELECT * FROM read_csv('{nodes_plain.as_posix()}', delim='\t', header=false,
+                               auto_detect=false, quote='"', escape='"',
                                columns={{'id': 'BIGINT', 'key': 'VARCHAR', 'name': 'VARCHAR',
                                          'records': 'BIGINT', 'first_year': 'INTEGER',
                                          'last_year': 'INTEGER'}})""")

@@ -14,6 +14,7 @@ Two of these tests exist because of specific ways this could be wrong and look r
   * a mistake renumbering sparse dblp ids to 0..n-1 would attach the right scores to the wrong
     authors, so degree is compared between the graph library and the source file.
 """
+import gzip
 import json
 
 import networkit as nk
@@ -230,3 +231,113 @@ def test_the_full_corpus_export_is_preferred_over_a_reproduction(tmp_path):
 
     with pytest.raises(FileNotFoundError, match="no exported network"):
         CE.find_export(tmp_path / "empty")
+
+
+# --------------------------------------------------------------------------- a dataset by hand
+
+# Two triangles joined through 300-400, plus a detached pair. Degrees: 300 and 400 have three
+# co-authors, everyone else in the big component has two, and 700/800 have one each. Nothing here
+# needs a library to work out, which is the point.
+EDGES = [(100, 200, 1), (100, 300, 2), (200, 300, 1), (300, 400, 1),
+         (400, 500, 1), (400, 600, 3), (500, 600, 1), (700, 800, 1)]
+DEGREE = {100: 2, 200: 2, 300: 3, 400: 3, 500: 2, 600: 2, 700: 1, 800: 1}
+BRIDGE = {300, 400}
+DETACHED = {700, 800}
+# one name is written the way DuckDB's CSV writer would write a name containing a quote, because a
+# reader configured differently would hand back `Ren""e` or fail outright
+NODES = [(100, "homepages/a/Ann", "Ann Example", 4, 2001, 2020),
+         (200, "homepages/b/Bo", "Bo Example", 3, 2004, 2019),
+         (300, "homepages/c/Cai", '"Ren""e Descartes"', 9, 1999, 2021),
+         (400, "homepages/d/Dee", "Dee Example", 7, 2000, 2022),
+         (500, "homepages/e/Eve", "Eve Example", 2, 2010, 2015),
+         (600, "homepages/f/Fay", "Fay Example", 5, 2008, 2018),
+         (700, "homepages/g/Gus", "Gus Example", 1, 2012, 2012),
+         (800, "homepages/h/Hal", "Hal Example", 1, 2012, 2012)]
+
+
+def write_members(path, comments, rows):
+    """The export's own layout: the header is one gzip member and the body is the next. Written that
+    way here so the reader is tested against the file it will actually be given."""
+    with gzip.open(path, "wb") as fh:
+        fh.write("".join(f"# {line}\n" for line in comments).encode("utf-8"))
+    with open(path, "ab") as raw, gzip.GzipFile(fileobj=raw, mode="wb") as fh:
+        fh.write("".join("\t".join(str(c) for c in row) + "\n" for row in rows).encode("utf-8"))
+    return path
+
+
+@pytest.fixture(scope="module")
+def by_hand(tmp_path_factory):
+    source = tmp_path_factory.mktemp("network-handmade")
+    nodes = len({u for u, _, _ in EDGES} | {v for _, v, _ in EDGES})
+    write_members(source / f"{NC.NAME}.ungraph.txt.gz",
+                  ["Undirected co-authorship graph, written by hand",
+                   f"Nodes: {nodes} Edges: {len(EDGES)}",
+                   "FromNodeId\tToNodeId\tPapersTogether"], EDGES)
+    write_members(source / f"{NC.NAME}.nodes.txt.gz",
+                  ["NodeId\tdblpKey\tName\tRecords\tFirstYear\tLastYear"], NODES)
+    out = tmp_path_factory.mktemp("centrality-handmade")
+    payload = CE.run(source, out, threads=1, seed=7, betweenness_samples=64, closeness_samples=4)
+    return payload, out
+
+
+def rows_of(out):
+    import duckdb
+    parquet = (out / f"{NC.NAME}.centrality.parquet").as_posix()
+    got = duckdb.execute(f"""
+        SELECT person_id, name, degree, closeness, pagerank, rank_degree, rank_closeness,
+               in_largest_component
+        FROM read_parquet('{parquet}')""").fetchall()
+    return {r[0]: r for r in got}
+
+
+def test_a_hand_counted_graph_comes_back_with_the_degrees_it_has(by_hand):
+    payload, out = by_hand
+    assert payload["nodes"] == len(DEGREE)
+    assert payload["edges"] == len(EDGES)
+    assert payload["rows"] == len(DEGREE)
+    assert payload["max_degree"] == max(DEGREE.values())
+    assert payload["degree_cross_check_authors"] == len(DEGREE), "every author was cross-checked"
+    got = rows_of(out)
+    assert set(got) == set(DEGREE), "the dblp ids must survive the renumbering"
+    assert {pid: r[2] for pid, r in got.items()} == DEGREE
+
+
+def test_the_bridge_is_the_most_between_author(by_hand):
+    payload, _ = by_hand
+    assert payload["top"]["betweenness"][0]["key"] in {n[1] for n in NODES if n[0] in BRIDGE}
+
+
+def test_a_name_with_a_quote_in_it_survives_the_round_trip(by_hand):
+    _, out = by_hand
+    assert rows_of(out)[300][1] == 'Ren"e Descartes'
+
+
+def test_an_author_in_another_component_is_null_not_zero(by_hand):
+    payload, out = by_hand
+    assert payload["components"] == 2
+    assert payload["largest_component_nodes"] == len(DEGREE) - len(DETACHED)
+    got = rows_of(out)
+    for pid in DETACHED:
+        assert got[pid][3] is None, "closeness was not measured there, which is not closeness zero"
+        assert got[pid][6] == 0, "and an unmeasured author is unranked"
+        assert got[pid][4] is not None, "PageRank is defined on a disconnected graph"
+        assert got[pid][7] is False
+    for pid in set(DEGREE) - DETACHED:
+        assert got[pid][3] is not None and got[pid][7] is True
+
+
+def test_the_ranks_are_a_permutation(by_hand):
+    payload, out = by_hand
+    ranks = sorted(r[5] for r in rows_of(out).values())
+    assert ranks == list(range(1, payload["rows"] + 1))
+
+
+def test_the_published_table_and_the_parquet_agree(by_hand):
+    import duckdb
+    payload, out = by_hand
+    table = (out / f"{NC.NAME}.centrality.tsv.gz").as_posix()
+    parquet = (out / f"{NC.NAME}.centrality.parquet").as_posix()
+    counted = duckdb.execute(f"""
+        SELECT (SELECT count(*) FROM read_csv('{table}', delim='\t', header=true)),
+               (SELECT count(*) FROM read_parquet('{parquet}'))""").fetchone()
+    assert counted[0] == counted[1] == payload["rows"]
