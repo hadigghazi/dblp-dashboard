@@ -107,6 +107,7 @@ def build(con, fingerprint, encoder, batch_size=None, checkpoint_every=None):
         n_new += len(chunk)
         batches += 1
         if batches % checkpoint_every == 0 or n_new >= n_remaining:
+            spent = encoder.cost_usd() if hasattr(encoder, "cost_usd") else None
             vectors.flush()
             con.execute("CHECKPOINT prog")
             elapsed = time.time() - t0
@@ -114,6 +115,10 @@ def build(con, fingerprint, encoder, batch_size=None, checkpoint_every=None):
             eta_min = (n_remaining - n_new) / rate / 60 if rate > 0 else float("inf")
             log.info("embedded %s/%s new this run (%s/%s total), %.1f titles/s, eta %.0fm",
                      f"{n_new:,}", f"{n_remaining:,}", f"{n_done_start + n_new:,}", f"{n:,}", rate, eta_min)
+            if spent:
+                # on a paid run the bill belongs next to the ETA, not in a receipt afterwards
+                log.info("spent $%.2f so far, roughly $%.2f left to go", spent,
+                         spent / max(1, n_new) * max(0, n_remaining - n_new))
     vectors.flush()
     con.execute("CHECKPOINT prog")
     total = n_done_start + n_new

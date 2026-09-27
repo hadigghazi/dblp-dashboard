@@ -27,6 +27,11 @@ from . import config
 log = logging.getLogger("dblp.search.openai")
 
 PREFIX = "openai:"
+# A 429 usually means "too fast" and clears on its own. These do not: retrying an empty account
+# or a rejected key just delays the message by a few minutes.
+TERMINAL_CODES = {"insufficient_quota", "invalid_api_key", "account_deactivated",
+                  "model_not_found", "invalid_request_error"}
+TERMINAL_STATUS = {400, 401, 403, 404}
 # per 1M tokens, for the build's own report; override if your contract differs
 PRICES = {"text-embedding-3-small": 0.02, "text-embedding-3-large": 0.13}
 
@@ -37,6 +42,23 @@ def is_openai(model_name):
 
 def model_of(model_name):
     return (model_name or "").split(PREFIX, 1)[-1]
+
+
+class Stop(RuntimeError):
+    """Something retrying cannot fix."""
+
+
+def _terminal(response):
+    """(is_terminal, message). The status alone is not enough: an empty account arrives as 429."""
+    try:
+        error = (response.json() or {}).get("error") or {}
+    except ValueError:
+        error = {}
+    code = (error.get("code") or error.get("type") or "").strip()
+    message = (error.get("message") or response.text or "")[:300]
+    if response.status_code in TERMINAL_STATUS or code in TERMINAL_CODES:
+        return True, f"{code or response.status_code}: {message}"
+    return False, message
 
 
 class Throttle:
@@ -117,14 +139,22 @@ class OpenAIEncoder:
                 r = self._http.post(f"{self.base_url}/embeddings", json=body,
                                     headers={"Authorization": f"Bearer {self.api_key}"})
                 if r.status_code in (429, 500, 502, 503, 504):
+                    stop, message = _terminal(r)
+                    if stop:
+                        raise Stop(f"the embedding provider refused permanently - {message}")
                     wait = float(r.headers.get("retry-after") or 0) or min(60, 2 ** attempt)
                     # everyone stops, because everyone is over the same budget
                     self.throttle.pause(wait)
                     log.warning("embedding request %s; pausing every worker %.1fs", r.status_code, wait)
                     last = RuntimeError(f"{r.status_code}: {r.text[:200]}")
                     continue
-                r.raise_for_status()
+                if r.status_code >= 400:
+                    stop, message = _terminal(r)
+                    raise (Stop if stop else RuntimeError)(
+                        f"embedding request {r.status_code}: {message}")
                 payload = r.json()
+            except Stop:
+                raise                                  # nothing to wait for
             except httpx.HTTPError as e:
                 last = e
                 self.throttle.pause(min(30, 2 ** attempt))

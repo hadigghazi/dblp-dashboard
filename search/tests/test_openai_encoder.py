@@ -166,3 +166,42 @@ def test_a_rate_limited_request_waits_then_succeeds(monkeypatch):
     enc._http = transport(handler)
     assert enc.encode_docs(["one"]).shape == (1, 3)
     assert calls["n"] == 2
+
+
+def test_an_empty_account_stops_at_once_rather_than_retrying():
+    """OpenAI returns "no credits remaining" as a 429, the same status as "too fast". The embedding
+    run spent two and a half minutes backing off against it before giving up."""
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        return httpx.Response(429, json={"error": {
+            "type": "insufficient_quota",
+            "message": "You have no credits remaining. Add credits to continue using the API."}})
+
+    with pytest.raises(OE.Stop, match="refused permanently"):
+        encoder(handler).encode_docs(["one"])
+    assert calls["n"] == 1, "a dead end must not be retried"
+
+
+def test_a_rejected_key_stops_at_once():
+    def handler(request):
+        return httpx.Response(401, json={"error": {"code": "invalid_api_key", "message": "bad key"}})
+
+    with pytest.raises(OE.Stop):
+        encoder(handler).encode_docs(["one"])
+
+
+def test_a_plain_rate_limit_is_still_retried(monkeypatch):
+    monkeypatch.setattr(config, "API_RETRIES", 3)
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(429, headers={"retry-after": "0"},
+                                  json={"error": {"type": "rate_limit_exceeded", "message": "slow"}})
+        return reply([[1.0, 0.0, 0.0]])
+
+    assert encoder(handler).encode_docs(["one"]).shape == (1, 3)
+    assert calls["n"] == 2
