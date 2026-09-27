@@ -40,6 +40,8 @@ def main(argv=None):
     ap.add_argument("--scope", choices=sorted(config.SCOPES), default=config.SCOPE,
                     help="which records make an edge (default: every type)")
     ap.add_argument("--expect-edges", type=int, default=None)
+    ap.add_argument("--probe", action="store_true",
+                    help="also measure every other definition and put the table in the datasheet")
     ap.add_argument("--out", default=None)
     args = ap.parse_args(argv)
     config.MAX_AUTHORS = args.max_authors
@@ -52,7 +54,8 @@ def main(argv=None):
             return 0
         target = args.out or out_dir(meta, args.with_bins, args.scope)
         payload = EX.export(con, meta, target, with_bins=args.with_bins,
-                            expect_edges=args.expect_edges, scope=args.scope)
+                            expect_edges=args.expect_edges, scope=args.scope,
+                            probe_scopes=args.probe)
     finally:
         con.close()
     print(json.dumps({k: v for k, v in payload.items() if k not in ("rules", "dump")}, indent=2))

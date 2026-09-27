@@ -153,7 +153,7 @@ def probe(con, with_bins=False, target=None):
     return out
 
 
-def export(con, meta, out_dir, with_bins=False, expect_edges=None, scope=None):
+def export(con, meta, out_dir, with_bins=False, expect_edges=None, scope=None, probe_scopes=False):
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     tag = "withbins" if with_bins else "ungraph"
@@ -194,6 +194,9 @@ def export(con, meta, out_dir, with_bins=False, expect_edges=None, scope=None):
     ], body, nodes_file)
 
     communities = _write_communities(con, out, with_bins, meta)
+    # measured, not asserted: five definitions of "a co-authorship paper" and what each one counts,
+    # so a reader can see which one produced these files and what the alternatives would give
+    comparison = probe(con, with_bins=with_bins, target=expect_edges) if probe_scopes else None
 
     payload = {
         "name": config.NAME, "generated_at": stamp,
@@ -205,6 +208,7 @@ def export(con, meta, out_dir, with_bins=False, expect_edges=None, scope=None):
                                    if scope == "all" else "journal and conference papers only"),
                   "years": "all"},
         **stats, **communities,
+        "scope_comparison": comparison,
         "files": sorted(p.name for p in out.glob("*.gz")),
         "seconds": round(time.time() - t0, 1),
     }
@@ -232,6 +236,23 @@ def _write_communities(con, out, with_bins, meta):
             if i < config.TOP_COMMUNITIES:
                 top.write(members + "\n")
     return {"communities": len(rows), "largest_community": int(rows[0][1]) if rows else 0}
+
+
+def _comparison_table(rows):
+    """Every definition, measured on this dump. A number without its definition is not a fact."""
+    if not rows:
+        return ""
+    lines = ["## What each definition of a paper would give", "",
+             "| Scope | Authors | Edges |", "|---|---|---|"]
+    for row in rows:
+        if "edges" in row:
+            lines.append(f"| `{row['scope']}` | {row['nodes_with_an_edge']:,} | {row['edges']:,} |")
+        else:
+            lines.append(f"| `{row['scope']}` | - | not expressible here |")
+    lines += ["", "Measured on this dump, in one pass, by `ml.network.cli scopes`.", ""]
+    return "
+".join(lines) + "
+"
 
 
 def datasheet(p):
@@ -274,7 +295,7 @@ Scope is the one choice that moves the numbers most. On this dump, counting ever
 smaller figure is what the dashboard's network analysis reports. This file was built with
 `scope = {r['scope']}`.
 
-## What is excluded, and why
+{_comparison_table(p.get("scope_comparison"))}## What is excluded, and why
 
 * **Disambiguation bins**{'' if p['with_bins'] else ' (excluded here)'}: a bare name such as "Wei Wang"
   holding the papers of hundreds of different people. Counting one as a person makes it the most
