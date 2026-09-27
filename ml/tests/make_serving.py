@@ -169,12 +169,15 @@ def make(cache_dir: Path, fingerprint="testfp0001", seed=11):
     con.execute("CREATE TABLE persons (person_id INTEGER, key VARCHAR, name VARCHAR, base_name VARCHAR, page_kind VARCHAR)")
     con.execute("CREATE TABLE slots (person_id INTEGER, pid INTEGER, position SMALLINT)")
     con.execute("""CREATE TABLE pubs (pid INTEGER, key VARCHAR, year SMALLINT, sid VARCHAR, venue VARCHAR,
-                                      key_prefix VARCHAR, n_authors INTEGER, title VARCHAR, is_preprint BOOLEAN)""")
+                                      key_prefix VARCHAR, n_authors INTEGER, title VARCHAR,
+                                      is_preprint BOOLEAN, type VARCHAR)""")
     con.execute("CREATE TABLE src (key VARCHAR, authors VARCHAR[], author_orcids VARCHAR[])")
     con.execute("CREATE TABLE _meta (k VARCHAR, v VARCHAR)")
     con.executemany("INSERT INTO persons VALUES (?, ?, ?, ?, ?)", persons)
     con.executemany("INSERT INTO slots VALUES (?, ?, ?)", slots)
-    con.executemany("INSERT INTO pubs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", pubs)
+    # the record type follows the key prefix, as it does in the real dump
+    pubs = [row + ("article" if row[5] == "journals" else "inproceedings",) for row in pubs]
+    con.executemany("INSERT INTO pubs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", pubs)
     con.executemany("INSERT INTO src VALUES (?, ?, ?)", src)
     con.executemany("INSERT INTO _meta VALUES (?, ?)", [
         ("fingerprint", fingerprint), ("records", str(len(pubs))), ("latest_mdate", "2026-09-01"),

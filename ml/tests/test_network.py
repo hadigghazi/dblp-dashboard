@@ -87,6 +87,7 @@ def test_bins_are_members_only_when_asked_for(con):
     c, _ = con
     for with_bins in (False, True):
         c.execute(EX.MEMBER_SQL.format(min_authors=2, max_authors=50,
+                                       scope=EX._scope_clause("all"),
                                        bins=EX._bins_clause(with_bins)))
         bins = c.execute("""
             SELECT count(DISTINCT m.person_id) FROM member m
