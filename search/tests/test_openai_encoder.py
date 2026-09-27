@@ -205,3 +205,12 @@ def test_a_plain_rate_limit_is_still_retried(monkeypatch):
 
     assert encoder(handler).encode_docs(["one"]).shape == (1, 3)
     assert calls["n"] == 2
+
+
+def test_an_error_body_that_is_not_an_object_is_handled(monkeypatch):
+    """Gateways and proxies do not all return OpenAI's error shape."""
+    monkeypatch.setattr(config, "API_RETRIES", 2)
+    for body in ({"error": "slow down"}, {"error": None}, {}, {"nope": 1}):
+        enc = encoder(lambda request, b=body: httpx.Response(429, headers={"retry-after": "0"}, json=b))
+        with pytest.raises(RuntimeError, match="failed after"):
+            enc.encode_docs(["one"])       # retried as a rate limit, not mistaken for terminal

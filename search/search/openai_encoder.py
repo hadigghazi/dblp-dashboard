@@ -51,9 +51,12 @@ class Stop(RuntimeError):
 def _terminal(response):
     """(is_terminal, message). The status alone is not enough: an empty account arrives as 429."""
     try:
-        error = (response.json() or {}).get("error") or {}
+        body = response.json()
     except ValueError:
-        error = {}
+        body = None
+    error = (body or {}).get("error") if isinstance(body, dict) else None
+    if not isinstance(error, dict):          # some gateways return a bare string, or nothing
+        error = {"message": str(error)} if error else {}
     code = (error.get("code") or error.get("type") or "").strip()
     message = (error.get("message") or response.text or "")[:300]
     if response.status_code in TERMINAL_STATUS or code in TERMINAL_CODES:
