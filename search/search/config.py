@@ -27,9 +27,12 @@ ENCODE_THREADS = int(os.environ.get("SEARCH_ENCODE_THREADS", "8"))
 API_KEY = os.environ.get("OPENAI_API_KEY", "")
 API_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
 API_REQUEST_SIZE = int(os.environ.get("SEARCH_API_REQUEST_SIZE", "256"))
-API_CONCURRENCY = int(os.environ.get("SEARCH_API_CONCURRENCY", "8"))
+API_CONCURRENCY = int(os.environ.get("SEARCH_API_CONCURRENCY", "6"))
+# The account's own tokens-per-minute limit, with headroom. Requests wait for room in this
+# budget before they are sent: a rate limit is not something retries can get around.
+API_TOKENS_PER_MINUTE = int(os.environ.get("SEARCH_API_TPM", "900000"))
 API_TIMEOUT = float(os.environ.get("SEARCH_API_TIMEOUT", "120"))
-API_RETRIES = int(os.environ.get("SEARCH_API_RETRIES", "6"))
+API_RETRIES = int(os.environ.get("SEARCH_API_RETRIES", "8"))
 CHECKPOINT_EVERY = int(os.environ.get("SEARCH_CHECKPOINT_EVERY", "40"))   # batches between flushes
 
 # Vectors are memory-mapped, not loaded whole into RAM: the process footprint stays small on a VM

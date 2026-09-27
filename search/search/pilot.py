@@ -109,9 +109,13 @@ def run(con, fingerprint, cases, candidate_model, candidate_dim, n_sample=200_00
         "per_query": {"candidate_better": better, "current_better": worse,
                       "same": len(cases) - better - worse},
         "candidate_tokens": getattr(encoder, "tokens", None),
+        "seconds_waiting_for_rate_limit": round(getattr(encoder, "waited", 0.0), 1),
         "candidate_cost_usd": encoder.cost_usd() if hasattr(encoder, "cost_usd") else None,
         "projected_full_corpus_usd": (round(encoder.cost_usd() * n_all / max(1, len(papers)), 2)
                                       if hasattr(encoder, "cost_usd") else None),
+        "projected_full_corpus_minutes": (round(getattr(encoder, "tokens", 0) * n_all
+                                                / max(1, len(papers)) / config.API_TOKENS_PER_MINUTE, 1)
+                                          if hasattr(encoder, "cost_usd") else None),
         "seconds": round(time.time() - t0, 1),
     }
 

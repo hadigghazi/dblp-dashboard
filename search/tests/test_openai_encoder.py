@@ -6,6 +6,8 @@ silently wrong in production: vectors must come back in the order they were sent
 must be re-normalised (everything downstream treats a dot product as a cosine), and a rate-limited
 request must be retried rather than lost.
 """
+import time
+
 import httpx
 import numpy as np
 import pytest
@@ -28,7 +30,8 @@ def reply(vectors, tokens=10, shuffle=False):
 
 
 def encoder(handler, dim=3):
-    enc = OE.OpenAIEncoder("openai:text-embedding-3-large", dim, api_key="test-key")
+    enc = OE.OpenAIEncoder("openai:text-embedding-3-large", dim, api_key="test-key",
+                           throttle=OE.Throttle(tokens_per_minute=10 ** 9))
     enc._http = transport(handler)
     return enc
 
@@ -97,7 +100,7 @@ def test_a_large_batch_is_split_into_requests():
         return reply([[1.0, 0.0, 0.0]] * len(inputs))
 
     enc = OE.OpenAIEncoder("openai:text-embedding-3-large", 3, api_key="k", request_size=2,
-                           concurrency=2)
+                           concurrency=2, throttle=OE.Throttle(tokens_per_minute=10 ** 9))
     enc._http = transport(handler)
     out = enc.encode_docs(["a", "b", "c", "d", "e"])
     assert out.shape == (5, 3)
@@ -121,3 +124,45 @@ def test_cost_is_counted_from_what_the_api_reported():
     enc.encode_docs(["one"])
     assert enc.tokens == 1_000_000
     assert enc.cost_usd() == OE.PRICES["text-embedding-3-large"]
+
+
+def test_the_budget_makes_a_request_wait_rather_than_fail():
+    """The pilot died with "Limit 1000000, Used 995362" - eight workers retrying into a budget they
+    had already spent. Waiting for room is the only thing that fixes a rate limit."""
+    throttle = OE.Throttle(tokens_per_minute=600)      # 10 a second, 100 of burst
+    throttle.take(100)                                  # empties the burst
+    started = time.monotonic()
+    throttle.take(20)                                   # must wait about two seconds for a refill
+    assert 1.0 < time.monotonic() - started < 5.0
+
+
+def test_a_429_pauses_every_worker():
+    throttle = OE.Throttle(tokens_per_minute=10 ** 9)
+    throttle.pause(0.5)
+    started = time.monotonic()
+    throttle.take(1)
+    assert time.monotonic() - started >= 0.4
+
+
+def test_tokens_are_estimated_from_the_text():
+    assert OE.estimate_tokens([]) == 8
+    one = OE.estimate_tokens(["a title of some length"])
+    assert one > OE.estimate_tokens(["short"])
+    assert OE.estimate_tokens(["x" * 350]) >= 100
+
+
+def test_a_rate_limited_request_waits_then_succeeds(monkeypatch):
+    monkeypatch.setattr(config, "API_RETRIES", 3)
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(429, headers={"retry-after": "0"}, json={"error": "tpm"})
+        return reply([[1.0, 0.0, 0.0]])
+
+    enc = OE.OpenAIEncoder("openai:text-embedding-3-large", 3, api_key="k",
+                           throttle=OE.Throttle(tokens_per_minute=10 ** 9))
+    enc._http = transport(handler)
+    assert enc.encode_docs(["one"]).shape == (1, 3)
+    assert calls["n"] == 2
