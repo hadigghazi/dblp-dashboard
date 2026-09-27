@@ -10,7 +10,10 @@ import httpx
 import numpy as np
 import pytest
 
-from search import config, embed as E, openai_encoder as OE
+# test_pipeline sets the environment before any search module reads it; pytest collects this file
+# first alphabetically, so without the import `config` would bind the production paths
+from tests import test_pipeline as tp  # noqa: F401
+from search import config, embed as E, openai_encoder as OE  # noqa: E402
 
 
 def transport(handler):
