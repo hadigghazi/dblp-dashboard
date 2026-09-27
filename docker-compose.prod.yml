@@ -68,6 +68,10 @@ services:
       DUCKDB_MEMORY: ${SEARCH_DUCKDB_MEMORY:-3GB}
       DUCKDB_THREADS: ${SEARCH_DUCKDB_THREADS:-2}
       SEARCH_TMP_DIR: /tmp/duckdb
+      # only needed when SEARCH_MODEL names an API model, or to run a pilot
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      SEARCH_MODEL: ${SEARCH_MODEL:-BAAI/bge-small-en-v1.5}
+      SEARCH_EMBED_DIM: ${SEARCH_EMBED_DIM:-384}
     volumes:
       - ${DBLP_DIR:?set DBLP_DIR in .env}:/data:ro
       - ./cache:/cache:ro
@@ -86,6 +90,10 @@ services:
       DUCKDB_MEMORY: ${SEARCH_DUCKDB_MEMORY:-6GB}
       DUCKDB_THREADS: ${SEARCH_DUCKDB_THREADS:-8}
       SEARCH_ENCODE_THREADS: ${SEARCH_ENCODE_THREADS:-8}
+      # only needed when SEARCH_MODEL names an API model, or to run a pilot
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      SEARCH_MODEL: ${SEARCH_MODEL:-BAAI/bge-small-en-v1.5}
+      SEARCH_EMBED_DIM: ${SEARCH_EMBED_DIM:-384}
     volumes:
       - ${DBLP_DIR:?set DBLP_DIR in .env}:/data:ro
       - ./cache:/cache:ro

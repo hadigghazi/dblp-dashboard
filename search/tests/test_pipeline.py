@@ -260,3 +260,25 @@ def test_an_index_from_another_model_is_left_alone(tmp_path, monkeypatch):
     S.legacy_vectors_path("fp").write_bytes(b"x" * 16)
     assert S.migrate_untagged_vectors("fp", "some-other/model") is False
     assert not S.vectors_path("fp").exists(), "vectors from another model must not be adopted"
+
+
+def test_the_pilot_ranks_both_models_against_the_same_papers(con, tmp_path):
+    """The comparison only means anything if both models are scored on one sample - a rank among
+    200,000 papers is not a rank among 5.36M, but it is the same 200,000 for both."""
+    from search import pilot as PI
+    c, meta = con
+    fp = meta["fingerprint"]
+    keys = [r[0] for r in c.execute("SELECT key FROM x.paper ORDER BY pid LIMIT 3").fetchall()]
+
+    papers = PI.sample_rows(c, 10, keys, seed=7)
+    assert len(papers) <= 10
+    assert set(keys) <= {p["key"] for p in papers}, "the papers being searched for must be in the sample"
+
+    # ranking maths, without any model: the target is the third of five papers
+    docs = np.eye(5, dtype=np.float32)
+    queries = np.asarray([docs[2], docs[0]], dtype=np.float32)
+    assert PI._ranks(docs, queries, [2, 0]) == [1, 1]
+    assert PI._ranks(docs, queries, [1, 1]) == [2, 2]
+
+    summary = PI._summary([1, 1, 3, 40])
+    assert summary["acc@1"] == 0.5 and summary["acc@5"] == 0.75 and summary["median_rank"] == 2

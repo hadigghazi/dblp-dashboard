@@ -18,7 +18,7 @@ from . import config, data, embed as E, search as SR, store as S, vectors as V
 
 log = logging.getLogger("dblp.search.server")
 
-encoder = E.Encoder()
+encoder = E.make_encoder()
 
 
 class State:

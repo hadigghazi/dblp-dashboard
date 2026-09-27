@@ -9,7 +9,7 @@ a VM with flaky internet never needs to reach Hugging Face at runtime.
 import logging
 import threading
 
-from . import config
+from . import config, openai_encoder as OE
 
 log = logging.getLogger("dblp.search.embed")
 
@@ -27,6 +27,15 @@ def _load_model(model_name):
             log.info("loading %s (cpu, %d threads)", model_name, config.ENCODE_THREADS)
             _model = SentenceTransformer(model_name, device="cpu")
         return _model
+
+
+def make_encoder(model_name=None, dim=None):
+    """The encoder the configured model asks for. Everything else takes one as an argument, so a
+    model switch is a configuration change rather than a code path."""
+    name = model_name or config.MODEL_NAME
+    if OE.is_openai(name):
+        return OE.OpenAIEncoder(name, dim)
+    return Encoder(name)
 
 
 class Encoder:

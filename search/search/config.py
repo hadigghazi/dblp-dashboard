@@ -13,12 +13,23 @@ DUCKDB_THREADS = int(os.environ.get("DUCKDB_THREADS", "4"))
 # Older papers and other record kinds (preprints, theses, books, ...) fall back to exact-word search.
 FIRST_YEAR = int(os.environ.get("SEARCH_FIRST_YEAR", "2010"))
 
+# A local sentence-transformers model, or "openai:<model>" for the API - the two implement the
+# same two methods, so nothing downstream knows which one produced a vector.
 MODEL_NAME = os.environ.get("SEARCH_MODEL", "BAAI/bge-small-en-v1.5")
 EMBED_DIM = int(os.environ.get("SEARCH_EMBED_DIM", "384"))
 # bge models are trained to expect this instruction on the query side only; the title side gets none.
 QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 ENCODE_BATCH = int(os.environ.get("SEARCH_ENCODE_BATCH", "256"))
 ENCODE_THREADS = int(os.environ.get("SEARCH_ENCODE_THREADS", "8"))
+
+# The API path. It is latency-bound rather than CPU-bound, so a batch handed down by the build
+# loop is split into requests that fly together.
+API_KEY = os.environ.get("OPENAI_API_KEY", "")
+API_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+API_REQUEST_SIZE = int(os.environ.get("SEARCH_API_REQUEST_SIZE", "256"))
+API_CONCURRENCY = int(os.environ.get("SEARCH_API_CONCURRENCY", "8"))
+API_TIMEOUT = float(os.environ.get("SEARCH_API_TIMEOUT", "120"))
+API_RETRIES = int(os.environ.get("SEARCH_API_RETRIES", "6"))
 CHECKPOINT_EVERY = int(os.environ.get("SEARCH_CHECKPOINT_EVERY", "40"))   # batches between flushes
 
 # Vectors are memory-mapped, not loaded whole into RAM: the process footprint stays small on a VM
