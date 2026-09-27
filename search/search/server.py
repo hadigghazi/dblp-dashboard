@@ -112,6 +112,9 @@ def status():
         "dump": {"fingerprint": state.fingerprint, "built_at": state.meta.get("built_at"),
                  "papers": state.meta.get("papers"), "model": state.meta.get("model"),
                  "first_year": state.meta.get("first_year")},
+        # the store records the model its text index was built with; these are the vectors in use
+        "embeddings": {"model": config.MODEL_NAME, "dimensions": config.EMBED_DIM,
+                       "vectors": S.vectors_path(state.fingerprint).name if state.fingerprint else None},
         "index": progress, "evaluation": evaluation, "paraphrase_evaluation": paraphrase,
     }
 

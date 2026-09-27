@@ -108,3 +108,24 @@ def test_find_reports_where_a_record_sits_in_each_ranking(client):
     missing = client.get("/search/papers",
                          params={"q": "graph learning", "top": 3, "find": "conf/nope/nothing"}).json()
     assert missing["find"]["known"] is False and missing["find"]["fused_rank"] is None
+
+
+def test_a_failing_query_encoder_degrades_to_words(client, monkeypatch):
+    """With an API-backed model the query is a network call: it can fail while the index is fine."""
+    from search import server
+
+    class Broken:
+        def encode_query(self, text):
+            raise RuntimeError("the embedding endpoint is unreachable")
+
+    monkeypatch.setattr(server, "encoder", Broken())
+    out = client.get("/search/papers", params={"q": "graph learning", "top": 5, "refresh": "true"}).json()
+    assert out["results"], "words must still answer"
+    assert out["dense_available"] is False
+    assert "unreachable" in out["dense_error"]
+
+
+def test_status_names_the_embedding_model_in_use(client):
+    body = client.get("/search/status").json()
+    assert body["embeddings"]["model"] and body["embeddings"]["dimensions"]
+    assert body["embeddings"]["vectors"].endswith(".float16")

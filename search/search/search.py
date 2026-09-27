@@ -67,6 +67,12 @@ def search(con, fingerprint, encoder, text, top=20, kind=None, year_from=None, y
             dense_hits = V.search(con, fingerprint, qvec, kind=kind, year_from=year_from, year_to=year_to)
         except FileNotFoundError as e:
             dense_error = str(e)
+        except Exception as e:
+            # With an API-backed model the query itself is a network call, so the semantic half can
+            # fail while the index is perfectly healthy. Words still answer; an error here must
+            # degrade the ranking, never the request.
+            log.warning("dense search unavailable: %s", e)
+            dense_error = f"{type(e).__name__}: {e}"
 
     # a word ranking built from nothing but common words gets a fraction of the say
     weight = S.sparse_weight(stats) if (sparse and dense_hits) else 1.0
