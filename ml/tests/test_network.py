@@ -81,12 +81,24 @@ def test_a_bin_is_not_a_node(exported, con):
 
 
 def test_with_bins_is_a_bigger_graph(con, tmp_path):
+    """Including bins must add the bins themselves and the edges their papers imply - that is the
+    whole point of the comparison file."""
     c, meta = con
+    bins = {r[0] for r in c.execute(
+        "SELECT person_id FROM s.persons WHERE page_kind = 'disambiguation'").fetchall()}
+    with_slots = {r[0] for r in c.execute("""
+        SELECT DISTINCT sl.person_id FROM s.slots sl JOIN s.pubs b ON b.pid = sl.pid
+        WHERE sl.person_id IN (SELECT person_id FROM s.persons WHERE page_kind = 'disambiguation')
+          AND b.n_authors BETWEEN 2 AND 50""").fetchall()}
+    assert with_slots, "the fixture's bins carry no co-authored papers, so there is nothing to compare"
+
     canonical = EX.export(c, meta, tmp_path / "a")
     everything = EX.export(c, meta, tmp_path / "b", with_bins=True)
-    assert everything["edges"] > canonical["edges"]
+    rows = edges_of(read(tmp_path / "b" / f"{NC.NAME}.withbins.txt.gz"))
+    ids = {int(u) for u, v, _ in rows} | {int(v) for u, v, _ in rows}
+    assert ids & bins, f"bins {sorted(with_slots)[:3]} have papers but no edges in the with-bins graph"
+    assert everything["edges"] > canonical["edges"], (canonical, everything)
     assert everything["nodes_with_an_edge"] > canonical["nodes_with_an_edge"]
-    assert (tmp_path / "b" / f"{NC.NAME}.withbins.txt.gz").exists()
 
 
 def test_the_author_cap_is_reported_not_hidden(exported):
