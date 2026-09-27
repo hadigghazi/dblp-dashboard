@@ -31,7 +31,8 @@ _cache = {}   # fingerprint -> (n, float32 ndarray), the whole index held in RAM
 
 
 def progress_path(fingerprint) -> Path:
-    return config.MODELS_DIR / f"search-progress-{fingerprint}.duckdb"
+    """Tagged with the model too: "already embedded" is only true of one model's vectors."""
+    return config.MODELS_DIR / f"search-progress-{fingerprint}-{S.model_tag()}.duckdb"
 
 
 def open_vectors(fingerprint, n, mode):

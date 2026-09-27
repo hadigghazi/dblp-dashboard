@@ -227,3 +227,36 @@ def test_ranking_is_reproducible(con):
     runs = [B.search(c, title, top=10) for _ in range(3)]
     assert runs[0] == runs[1] == runs[2]
     assert runs[0] == sorted(runs[0], key=lambda r: (-r[1], r[0])), "score first, then pid"
+
+
+def test_vectors_are_named_after_the_model_that_wrote_them(con, monkeypatch):
+    """Switching SEARCH_MODEL used to reuse the old vectors. A wider model crashes; a narrower one -
+    384 to 256, exactly what a Matryoshka model offers - fits the old file, reports itself complete
+    and returns confident nonsense."""
+    c, meta = con
+    fp = meta["fingerprint"]
+    before = S.vectors_path(fp)
+    monkeypatch.setattr(S.config, "MODEL_NAME", "some-org/other-model")
+    monkeypatch.setattr(S.config, "EMBED_DIM", 256)
+    after = S.vectors_path(fp)
+    assert before != after
+    assert "other-model-256" in after.name
+    assert V.progress_path(fp).name != before.name
+
+
+def test_an_index_built_before_the_rename_is_migrated_not_orphaned(tmp_path, monkeypatch):
+    monkeypatch.setattr(S.config, "MODELS_DIR", tmp_path)
+    legacy = S.legacy_vectors_path("fp")
+    legacy.write_bytes(b"x" * 16)
+    (tmp_path / "search-progress-fp.duckdb").write_bytes(b"y")
+
+    assert S.migrate_untagged_vectors("fp", S.config.MODEL_NAME) is True
+    assert S.vectors_path("fp").exists() and not legacy.exists()
+    assert (tmp_path / f"search-progress-fp-{S.model_tag()}.duckdb").exists()
+
+
+def test_an_index_from_another_model_is_left_alone(tmp_path, monkeypatch):
+    monkeypatch.setattr(S.config, "MODELS_DIR", tmp_path)
+    S.legacy_vectors_path("fp").write_bytes(b"x" * 16)
+    assert S.migrate_untagged_vectors("fp", "some-other/model") is False
+    assert not S.vectors_path("fp").exists(), "vectors from another model must not be adopted"

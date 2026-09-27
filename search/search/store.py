@@ -112,7 +112,19 @@ def sparse_weight(stats):
     return round(config.SPARSE_FLOOR + span * (1.0 - config.SPARSE_FLOOR), 3)
 
 
+def model_tag() -> str:
+    """A file-safe name for the configured model and width, e.g. bge-small-en-v1-5-384."""
+    name = re.sub(r"[^a-z0-9]+", "-", config.MODEL_NAME.lower()).strip("-")
+    return f"{name.split('/')[-1][:40]}-{config.EMBED_DIM}"
+
+
 def vectors_path(fingerprint) -> Path:
+    """Named after the model, because vectors from a different one are not interchangeable and
+    a narrower one would fit the old file and read as noise rather than fail."""
+    return config.MODELS_DIR / f"search-vectors-{fingerprint}-{model_tag()}.{config.VECTOR_DTYPE}"
+
+
+def legacy_vectors_path(fingerprint) -> Path:
     return config.MODELS_DIR / f"search-vectors-{fingerprint}.{config.VECTOR_DTYPE}"
 
 
@@ -154,6 +166,25 @@ def build_store(con, meta) -> Path:
     return target
 
 
+def migrate_untagged_vectors(fingerprint, built_with):
+    """Move an index built before the files carried the model's name, when it was built by the
+    model now configured. Nineteen hours of embedding should survive a rename."""
+    legacy, current = legacy_vectors_path(fingerprint), vectors_path(fingerprint)
+    if current.exists() or not legacy.exists():
+        return False
+    if (built_with or config.MODEL_NAME) != config.MODEL_NAME:
+        log.warning("%s was built with %s, not %s: leaving it alone and starting a new index",
+                    legacy.name, built_with, config.MODEL_NAME)
+        return False
+    legacy.rename(current)
+    legacy_progress = config.MODELS_DIR / f"search-progress-{fingerprint}.duckdb"
+    target_progress = config.MODELS_DIR / f"search-progress-{fingerprint}-{model_tag()}.duckdb"
+    if legacy_progress.exists() and not target_progress.exists():
+        legacy_progress.rename(target_progress)
+    log.info("migrated the existing index to %s", current.name)
+    return True
+
+
 def attach_store(con, meta, build_if_missing=False):
     fp = meta.get("fingerprint", "unknown")
     path = store_path(fp)
@@ -163,6 +194,7 @@ def attach_store(con, meta, build_if_missing=False):
         build_store(con, meta)
     con.execute(f"ATTACH '{path}' AS x (READ_ONLY)")
     xmeta = dict(con.execute("SELECT k, v FROM x._meta").fetchall())
+    migrate_untagged_vectors(fp, xmeta.get("model"))
     log.info("attached %s (%s papers)", path.name, xmeta.get("papers"))
     return xmeta
 
