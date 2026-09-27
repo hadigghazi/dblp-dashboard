@@ -341,3 +341,16 @@ def test_the_published_table_and_the_parquet_agree(by_hand):
         SELECT (SELECT count(*) FROM read_csv('{table}', delim='\t', header=true)),
                (SELECT count(*) FROM read_parquet('{parquet}'))""").fetchone()
     assert counted[0] == counted[1] == payload["rows"]
+
+
+def test_the_long_step_says_how_long_it_will_be_before_it_starts():
+    """An hour of silence with no stated sample count is indistinguishable from a hung job. The
+    projection is measured from one sampled source, so it has to be a real number, and it has to be
+    published beside what actually happened."""
+    G = barbell()
+    _, _, _, summary = CE.measures(G, threads=1, seed=7, betweenness_samples=64, closeness_samples=8)
+    projection = summary["betweenness_projection"]
+    assert projection["seconds_per_sampled_source"] >= 0
+    assert projection["projected_seconds"] >= 0
+    assert projection["actual_seconds"] == summary["seconds"]["betweenness"]
+    assert "betweenness_calibration" in summary["seconds"]

@@ -273,6 +273,19 @@ def _diameter(H):
     return algo.getDiameter()
 
 
+def seconds_per_sampled_source(H):
+    """How long one sampled source takes, measured rather than assumed.
+
+    Betweenness is the only step here that runs for hours, and it prints nothing while it does, so
+    the log needs to say up front roughly how long it will be. One sampled source costs seconds and
+    the total is linear in the sample count, so this is the cheapest honest estimate available. It
+    runs high: this first source also pays the one-off setup that the other thousands do not."""
+    import networkit as nk
+    t0 = time.time()
+    nk.centrality.EstimateBetweenness(H, 1, True, True).run()
+    return time.time() - t0
+
+
 def measures(G, threads, seed, betweenness_samples, closeness_samples):
     """Every measure, with its own timing. Whole-graph measures first, then the ones that need
     distances and therefore need the largest component."""
@@ -300,9 +313,20 @@ def measures(G, threads, seed, betweenness_samples, closeness_samples):
 
     eigen_lcc = _timed(timings, "eigenvector", lambda: np.asarray(
         nk.centrality.EigenvectorCentrality(H, EIGEN_TOL).run().scores(), dtype=np.float64))
+
+    log.info("sampling next: betweenness from %s sources, closeness from %s, on %s threads, seed %s",
+             f"{betweenness_samples:,}", f"{closeness_samples:,}", threads, seed)
+    per_source = _timed(timings, "betweenness_calibration", lambda: seconds_per_sampled_source(H))
+    projected = betweenness_samples * per_source / max(1, int(threads))
+    log.info("one sampled source took %.1fs, so betweenness should take in the region of %.0f "
+             "minutes - and rather less, since that first source paid the setup as well. It prints "
+             "nothing at all until it finishes.", per_source, projected / 60)
     betweenness_lcc = _timed(timings, "betweenness", lambda: np.asarray(
         nk.centrality.EstimateBetweenness(H, int(betweenness_samples), True, True).run().scores(),
         dtype=np.float64))
+    log.info("betweenness took %.0f minutes against the %.0f projected (%.2fx)",
+             timings["betweenness"] / 60, projected / 60,
+             timings["betweenness"] / projected if projected else float("nan"))
     closeness_lcc = _timed(timings, "closeness", lambda: np.asarray(
         nk.centrality.ApproxCloseness(H, int(closeness_samples), CLOSENESS_EPSILON, True).run().scores(),
         dtype=np.float64))
@@ -340,7 +364,14 @@ def measures(G, threads, seed, betweenness_samples, closeness_samples):
             "degree": {"exact": True, "scope": "whole graph", "weighted": False},
             "seed": int(seed), "threads": int(threads),
         },
-        "closeness_spot_check": check, "seconds": timings}
+        "closeness_spot_check": check,
+        "betweenness_projection": {"seconds_per_sampled_source": round(per_source, 3),
+                                   "projected_seconds": round(projected, 1),
+                                   "actual_seconds": timings["betweenness"],
+                                   "note": "projected from one timed source before the run; the "
+                                           "projection runs high because that source also paid the "
+                                           "one-off setup"},
+        "seconds": timings}
 
 
 def spot_check_closeness(H, approx, seed, timings):
