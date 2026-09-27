@@ -120,6 +120,31 @@ def counts(con, with_bins):
             "papers_above_the_author_cap": int(dropped), "largest_paper_authors": int(biggest)}
 
 
+def probe(con, with_bins=False, target=None):
+    """Count the graph under every definition, so the one behind a published number can be named
+    rather than guessed at. A definition the serving database cannot express is reported, not
+    skipped silently."""
+    out = []
+    for name, predicate in config.SCOPES.items():
+        try:
+            con.execute(MEMBER_SQL.format(min_authors=config.MIN_AUTHORS, max_authors=config.MAX_AUTHORS,
+                                          scope=predicate, bins=_bins_clause(with_bins)))
+            con.execute(f"CREATE OR REPLACE TEMP TABLE probe_edge AS {EDGES_SQL}")
+            edges = con.execute("SELECT count(*) FROM probe_edge").fetchone()[0]
+            nodes = con.execute("""
+                SELECT count(*) FROM (SELECT u AS id FROM probe_edge UNION
+                                      SELECT v FROM probe_edge)""").fetchone()[0]
+            entry = {"scope": name, "edges": int(edges), "nodes_with_an_edge": int(nodes)}
+            if target:
+                entry["matches_target"] = int(row[0]) == int(target)
+                entry["difference"] = int(row[0]) - int(target)
+        except Exception as e:                      # a predicate this database cannot express
+            entry = {"scope": name, "error": f"{type(e).__name__}: {e}"}
+        log.info("%s", entry)
+        out.append(entry)
+    return out
+
+
 def export(con, meta, out_dir, with_bins=False, expect_edges=None, scope=None):
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)

@@ -22,6 +22,12 @@ SCOPE = os.environ.get("NETWORK_SCOPE", "all")
 SCOPES = {
     "all": "TRUE",
     "journal-conference": "b.type IN ('article', 'inproceedings') AND NOT b.is_preprint",
+    # dblp marks a preprint two ways: the CoRR journal, and a publtype beginning "informal". These
+    # separate the two, because an analysis that excluded only one of them counts a different graph.
+    "journal-conference-no-corr": "b.type IN ('article', 'inproceedings') "
+                                  "AND coalesce(b.journal, '') <> 'CoRR'",
+    "journal-conference-with-preprints": "b.type IN ('article', 'inproceedings')",
+    "by-key-prefix": "b.key_prefix IN ('conf', 'journals') AND NOT b.is_preprint",
 }
 
 NAME = os.environ.get("NETWORK_NAME", "dblp-coauthor")

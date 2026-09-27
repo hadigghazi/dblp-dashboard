@@ -170,3 +170,25 @@ def test_a_failed_expectation_names_the_likely_cause(con, tmp_path):
     c, meta = con
     with pytest.raises(AssertionError, match="journal-conference"):
         EX.export(c, meta, tmp_path / "x", expect_edges=1)
+
+
+def test_the_probe_counts_every_definition_it_can_express(con):
+    """Three rounds went on guessing which predicate a published number came from. Counting them all
+    at once is cheaper than one more guess."""
+    c, _ = con
+    rows = EX.probe(c)
+    named = {r["scope"] for r in rows}
+    assert named == set(NC.SCOPES), "every scope must be reported, even one that cannot run here"
+    usable = [r for r in rows if "edges" in r]
+    assert usable, "the fixture should express at least one definition"
+    everything = next(r for r in usable if r["scope"] == "all")
+    assert all(r["edges"] <= everything["edges"] for r in usable), "no filter may add edges"
+
+
+def test_the_probe_says_which_definition_matches_a_number(con):
+    c, _ = con
+    everything = next(r for r in EX.probe(c) if r["scope"] == "all")
+    rows = EX.probe(c, target=everything["edges"])
+    match = [r for r in rows if r.get("matches_target")]
+    assert any(r["scope"] == "all" for r in match)
+    assert all(r["difference"] == r["edges"] - everything["edges"] for r in rows if "edges" in r)

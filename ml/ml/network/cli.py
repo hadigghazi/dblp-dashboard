@@ -4,6 +4,7 @@ The co-authorship network as a published dataset.
   python -m ml.network.cli export                    # the canonical graph, bins excluded
   python -m ml.network.cli export --with-bins        # everything, for comparison
   python -m ml.network.cli export --scope journal-conference --expect-edges 22200244
+  python -m ml.network.cli scopes --expect-edges 22200244   # which definition gives that number?
 
 `--expect-edges` is worth using, with the matching scope: the analysis job computed 22,200,244 from
 journal and conference papers, so that combination proves the join is right. The default scope is
@@ -32,7 +33,7 @@ def main(argv=None):
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     ap = argparse.ArgumentParser(prog="ml.network.cli", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["export"])
+    ap.add_argument("command", choices=["export", "scopes"])
     ap.add_argument("--with-bins", action="store_true",
                     help="count disambiguation pages as people (they are not; for comparison only)")
     ap.add_argument("--max-authors", type=int, default=config.MAX_AUTHORS)
@@ -45,6 +46,10 @@ def main(argv=None):
 
     con, meta = data.connect()
     try:
+        if args.command == "scopes":
+            rows = EX.probe(con, with_bins=args.with_bins, target=args.expect_edges)
+            print(json.dumps(rows, indent=2))
+            return 0
         target = args.out or out_dir(meta, args.with_bins, args.scope)
         payload = EX.export(con, meta, target, with_bins=args.with_bins,
                             expect_edges=args.expect_edges, scope=args.scope)
