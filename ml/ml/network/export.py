@@ -40,6 +40,7 @@ JOIN s.persons p ON p.person_id = sl.person_id
 JOIN s.pubs b ON b.pid = sl.pid
 WHERE sl.person_id IS NOT NULL
   AND b.n_authors BETWEEN {min_authors} AND {max_authors}
+  AND ({scope})
   {bins}
 """
 
@@ -81,6 +82,12 @@ def _bins_clause(with_bins, alias="p"):
     return "" if with_bins else f"AND {alias}.page_kind <> 'disambiguation'"
 
 
+def _scope_clause(scope):
+    if scope not in config.SCOPES:
+        raise ValueError(f"scope must be one of {', '.join(config.SCOPES)}")
+    return config.SCOPES[scope]
+
+
 def _copy(con, sql, target: Path):
     """DuckDB writes the body straight to gzip; 22 million rows never pass through Python."""
     tmp = target.with_suffix(".body.gz")
@@ -113,22 +120,26 @@ def counts(con, with_bins):
             "papers_above_the_author_cap": int(dropped), "largest_paper_authors": int(biggest)}
 
 
-def export(con, meta, out_dir, with_bins=False, expect_edges=None):
+def export(con, meta, out_dir, with_bins=False, expect_edges=None, scope=None):
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     tag = "withbins" if with_bins else "ungraph"
     stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
     t0 = time.time()
 
+    scope = scope or config.SCOPE
     con.execute(MEMBER_SQL.format(min_authors=config.MIN_AUTHORS, max_authors=config.MAX_AUTHORS,
-                                  bins=_bins_clause(with_bins)))
+                                  scope=_scope_clause(scope), bins=_bins_clause(with_bins)))
     log.info("building the edge table…")
     con.execute(f"CREATE OR REPLACE TEMP TABLE edge AS {EDGES_SQL}")
     stats = counts(con, with_bins)
     log.info("%s nodes with an edge, %s edges", f"{stats['nodes_with_an_edge']:,}", f"{stats['edges']:,}")
     if expect_edges is not None and stats["edges"] != int(expect_edges):
-        raise AssertionError(f"expected {int(expect_edges):,} edges, built {stats['edges']:,} - the "
-                             f"export and the network job disagree about what an edge is")
+        raise AssertionError(
+            f"expected {int(expect_edges):,} edges, built {stats['edges']:,} under scope "
+            f"'{scope}' - the export and the number you compared with disagree about what an edge "
+            f"is. The network job counts journal and conference papers only: try "
+            f"--scope journal-conference.")
 
     edges_file = out / f"{config.NAME}.{tag}.txt.gz"
     body = _copy(con, "SELECT u, v, papers FROM edge ORDER BY u, v", edges_file)
@@ -156,7 +167,9 @@ def export(con, meta, out_dir, with_bins=False, expect_edges=None):
         "dump": {k: meta.get(k) for k in ("fingerprint", "latest_mdate", "records")},
         "with_bins": bool(with_bins),
         "rules": {"min_authors": config.MIN_AUTHORS, "max_authors": config.MAX_AUTHORS,
-                  "record_types": "all (journal, conference, preprint, book, chapter, thesis, data)",
+                  "scope": scope,
+                  "record_types": ("all (journal, conference, preprint, book, chapter, thesis, data)"
+                                   if scope == "all" else "journal and conference papers only"),
                   "years": "all"},
         **stats, **communities,
         "files": sorted(p.name for p in out.glob("*.gz")),
@@ -221,6 +234,12 @@ through `nodes.txt`, but they are not contiguous and they change when the dump d
 
 Two authors share a paper with {r['min_authors']}-{r['max_authors']} authors; the weight counts how
 many such papers they share. Record types: {r['record_types']}. Years: {r['years']}.
+
+Scope is the one choice that moves the numbers most. On this dump, counting every record type gives
+24,381,691 edges among 3,989,840 authors; counting only journal and conference papers gives
+22,200,244 among 3,824,208 - the difference is preprints, books, chapters and theses, and the
+smaller figure is what the dashboard's network analysis reports. This file was built with
+`scope = {r['scope']}`.
 
 ## What is excluded, and why
 

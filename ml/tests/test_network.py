@@ -147,3 +147,25 @@ def test_the_datasheet_states_the_rules(exported):
     assert f"{payload['edges']:,}" in text
     assert "disambiguation" in text.lower() and "author cap" not in text.split("## Files")[0]
     assert str(NC.MAX_AUTHORS) in text
+
+
+def test_scope_changes_the_graph_and_is_recorded(con, tmp_path):
+    """The check against the igraph job failed at first because the job counts journal and
+    conference papers while the export counts every record type. That is a real choice, so it is a
+    flag with both numbers in the datasheet - not a constant somebody has to rediscover."""
+    c, meta = con
+    everything = EX.export(c, meta, tmp_path / "all", scope="all")
+    narrower = EX.export(c, meta, tmp_path / "jc", scope="journal-conference")
+    assert narrower["edges"] <= everything["edges"]
+    assert narrower["rules"]["scope"] == "journal-conference"
+    assert "journal and conference papers only" in narrower["rules"]["record_types"]
+    assert "scope = journal-conference" in (tmp_path / "jc" / "README.md").read_text(encoding="utf-8")
+
+    with pytest.raises(ValueError, match="scope must be"):
+        EX.export(c, meta, tmp_path / "nope", scope="everything-ever")
+
+
+def test_a_failed_expectation_names_the_likely_cause(con, tmp_path):
+    c, meta = con
+    with pytest.raises(AssertionError, match="journal-conference"):
+        EX.export(c, meta, tmp_path / "x", expect_edges=1)
