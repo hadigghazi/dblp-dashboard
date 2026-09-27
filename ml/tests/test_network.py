@@ -168,7 +168,7 @@ def test_scope_changes_the_graph_and_is_recorded(con, tmp_path):
 
 def test_a_failed_expectation_names_the_likely_cause(con, tmp_path):
     c, meta = con
-    with pytest.raises(AssertionError, match="journal-conference"):
+    with pytest.raises(AssertionError, match="no-preprints"):
         EX.export(c, meta, tmp_path / "x", expect_edges=1)
 
 
@@ -197,3 +197,21 @@ def test_the_probe_says_which_definition_matches_a_number(con):
     assert repeated["edges"] == everything["edges"], (everything, repeated)
     assert repeated.get("matches_target") is True, again
     assert all(r["difference"] == r["edges"] - everything["edges"] for r in again if "edges" in r)
+
+
+def test_every_scope_says_what_it_means(exported):
+    """The datasheet prints a scope's label, so a scope without one would publish a blank."""
+    payload, _ = exported
+    assert set(NC.SCOPE_LABELS) == set(NC.SCOPES), "every scope needs a sentence for the datasheet"
+    assert payload["rules"]["record_types"] == NC.SCOPE_LABELS["all"]
+
+
+def test_the_job_definition_is_the_one_the_job_documents(con, tmp_path):
+    """Five scopes were guessed at before reading the job's own header, which says "papers with 2-50
+    authors, preprints excluded" - every record type, minus preprints. `no-preprints` is that, and it
+    must sit between the narrow and the wide definitions on any dump."""
+    c, meta = con
+    rows = {r["scope"]: r for r in EX.probe(c) if "edges" in r}
+    if not {"all", "journal-conference", "no-preprints"} <= set(rows):
+        pytest.skip("the fixture cannot express all three definitions")
+    assert rows["journal-conference"]["edges"] <= rows["no-preprints"]["edges"] <= rows["all"]["edges"]

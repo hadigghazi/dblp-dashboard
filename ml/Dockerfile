@@ -1,6 +1,11 @@
 FROM python:3.11-slim AS base
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 WORKDIR /srv
+# networkit is a native extension built with OpenMP, and slim images carry no libgomp. Without this
+# the wheel installs cleanly and then fails to import at run time, which is a broken job rather than
+# a failed build.
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt .
 # scipy/scikit-learn are large wheels; retry hard, because a truncated download surfaces as a
 # confusing "packages do not match the hashes" error rather than a network error

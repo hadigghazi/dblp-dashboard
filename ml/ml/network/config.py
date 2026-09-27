@@ -34,4 +34,15 @@ SCOPES = {
     "no-preprints": "NOT b.is_preprint",
 }
 
+# What each scope means in a sentence, for the datasheet. A reader of the files has no access to
+# the SQL above, and "scope = by-key-prefix" tells them nothing on its own.
+SCOPE_LABELS = {
+    "all": "all (journal, conference, preprint, book, chapter, thesis, data)",
+    "journal-conference": "journal and conference papers only",
+    "journal-conference-no-corr": "journal and conference papers, the CoRR preprint server excluded",
+    "journal-conference-with-preprints": "journal and conference papers, preprints included",
+    "by-key-prefix": "records whose dblp key begins conf/ or journals/, preprints excluded",
+    "no-preprints": "every record type except preprints",
+}
+
 NAME = os.environ.get("NETWORK_NAME", "dblp-coauthor")

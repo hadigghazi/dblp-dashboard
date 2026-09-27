@@ -171,8 +171,8 @@ def export(con, meta, out_dir, with_bins=False, expect_edges=None, scope=None, p
         raise AssertionError(
             f"expected {int(expect_edges):,} edges, built {stats['edges']:,} under scope "
             f"'{scope}' - the export and the number you compared with disagree about what an edge "
-            f"is. The network job counts journal and conference papers only: try "
-            f"--scope journal-conference.")
+            f"is. The dashboard's network job counts every record type except preprints: try "
+            f"--scope no-preprints.")
 
     edges_file = out / f"{config.NAME}.{tag}.txt.gz"
     body = _copy(con, "SELECT u, v, papers FROM edge ORDER BY u, v", edges_file)
@@ -204,8 +204,7 @@ def export(con, meta, out_dir, with_bins=False, expect_edges=None, scope=None, p
         "with_bins": bool(with_bins),
         "rules": {"min_authors": config.MIN_AUTHORS, "max_authors": config.MAX_AUTHORS,
                   "scope": scope,
-                  "record_types": ("all (journal, conference, preprint, book, chapter, thesis, data)"
-                                   if scope == "all" else "journal and conference papers only"),
+                  "record_types": config.SCOPE_LABELS.get(scope, scope),
                   "years": "all"},
         **stats, **communities,
         "scope_comparison": comparison,

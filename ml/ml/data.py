@@ -28,9 +28,10 @@ def find_serving_db() -> Path:
     return candidates[0]
 
 
-def connect():
-    """An in-memory connection with the serving database attached read-only as `s`."""
-    path = find_serving_db()
+def plain_connection():
+    """An in-memory connection with this job's memory, thread and spill settings and nothing
+    attached. The network jobs read the exported dataset files rather than the serving database, and
+    a job that does not need the dump should not fail because the api has not built one yet."""
     con = duckdb.connect()
     con.execute(f"SET memory_limit = '{config.DUCKDB_MEMORY}'")
     con.execute(f"SET threads = {config.DUCKDB_THREADS}")
@@ -38,6 +39,13 @@ def connect():
     tmp = config.TMP_DIR
     tmp.mkdir(parents=True, exist_ok=True)
     con.execute(f"SET temp_directory = '{tmp}'")
+    return con
+
+
+def connect():
+    """An in-memory connection with the serving database attached read-only as `s`."""
+    path = find_serving_db()
+    con = plain_connection()
     con.execute(f"ATTACH '{path}' AS s (READ_ONLY)")
     meta = dict(con.execute("SELECT k, v FROM s._meta").fetchall())
     log.info("attached %s (dump fingerprint %s, %s records)", path.name, meta.get("fingerprint"), meta.get("records"))

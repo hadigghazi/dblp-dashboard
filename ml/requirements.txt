@@ -5,3 +5,7 @@ scipy>=1.11
 joblib>=1.3
 fastapi>=0.115,<1
 uvicorn>=0.30
+# Pinned because it is a native extension: 11.2.2 has manylinux wheels for cp310-cp313 and this
+# image is cp311, so nothing is compiled during the build. A version without a wheel for the
+# image's Python would compile from source for twenty minutes instead.
+networkit==11.2.2
