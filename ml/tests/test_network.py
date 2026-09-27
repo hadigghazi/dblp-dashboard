@@ -187,8 +187,12 @@ def test_the_probe_counts_every_definition_it_can_express(con):
 
 def test_the_probe_says_which_definition_matches_a_number(con):
     c, _ = con
-    everything = next(r for r in EX.probe(c) if r["scope"] == "all")
-    rows = EX.probe(c, target=everything["edges"])
-    match = [r for r in rows if r.get("matches_target")]
-    assert any(r["scope"] == "all" for r in match)
-    assert all(r["difference"] == r["edges"] - everything["edges"] for r in rows if "edges" in r)
+    first = EX.probe(c)
+    everything = next(r for r in first if r["scope"] == "all")
+    assert everything.get("edges", 0) > 0, first
+
+    again = EX.probe(c, target=everything["edges"])
+    repeated = next(r for r in again if r["scope"] == "all")
+    assert repeated["edges"] == everything["edges"], (everything, repeated)
+    assert repeated.get("matches_target") is True, again
+    assert all(r["difference"] == r["edges"] - everything["edges"] for r in again if "edges" in r)
