@@ -6,6 +6,7 @@ The co-authorship network as a published dataset, and its centrality measures.
   python -m ml.network.cli export --scope no-preprints --expect-edges 22200244
   python -m ml.network.cli scopes --expect-edges 22200244   # which definition gives that number?
   python -m ml.network.cli centrality                # degree, betweenness, closeness, eigenvector
+  python -m ml.network.cli exact-betweenness          # what the estimate and the shortcuts cost
 
 `--expect-edges` is worth using, with the matching scope: the dashboard's network analysis computed
 22,200,244 edges from every record type except preprints, which is `--scope no-preprints`, so that
@@ -47,7 +48,7 @@ def main(argv=None):
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     ap = argparse.ArgumentParser(prog="ml.network.cli", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["export", "scopes", "centrality"])
+    ap.add_argument("command", choices=["export", "scopes", "centrality", "exact-betweenness"])
     ap.add_argument("--with-bins", action="store_true",
                     help="count disambiguation pages as people (they are not; for comparison only)")
     ap.add_argument("--max-authors", type=int, default=config.MAX_AUTHORS)
@@ -68,6 +69,13 @@ def main(argv=None):
     ap.add_argument("--closeness-samples", type=int, default=None)
     ap.add_argument("--keep-temp", action="store_true",
                     help="keep the decompressed edge list, which is a few GB")
+    # exact-betweenness only
+    ap.add_argument("--from", dest="measured", default=None,
+                    help="the finished centrality directory to compare against")
+    ap.add_argument("--max-nodes", type=int, default=None,
+                    help="how large a subgraph exact Brandes may be asked to finish")
+    ap.add_argument("--ego-random", type=int, default=None)
+    ap.add_argument("--ego-top", type=int, default=None)
     args = ap.parse_args(argv)
     config.MAX_AUTHORS = args.max_authors
 
@@ -85,6 +93,19 @@ def main(argv=None):
                          indent=2))
         print("\nmost between: " + ", ".join(
             f"{r['name']} ({r['value']:.2e})" for r in payload["top"]["betweenness"][:5]))
+        print(f"\nwritten to {target}")
+        return 0
+
+    if args.command == "exact-betweenness":
+        from . import centrality as CE, exact as XB
+        source = Path(args.source) if args.source else CE.find_export()
+        measured = Path(args.measured) if args.measured else centrality_out_dir(source)
+        target = Path(args.out) if args.out else measured
+        payload = XB.run(source, measured, target, max_nodes=args.max_nodes or XB.MAX_EXACT_NODES,
+                         ego_random=args.ego_random or XB.EGO_RANDOM,
+                         ego_top=args.ego_top or XB.EGO_TOP,
+                         threads=args.threads, seed=args.seed, keep_temp=args.keep_temp)
+        print(json.dumps(payload, indent=2))
         print(f"\nwritten to {target}")
         return 0
 
