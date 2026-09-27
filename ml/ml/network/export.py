@@ -25,6 +25,8 @@ import json
 import logging
 import shutil
 import time
+
+import duckdb
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -140,9 +142,11 @@ def probe(con, with_bins=False, target=None):
                                       SELECT v FROM probe_edge)""").fetchone()[0]
             entry = {"scope": name, "edges": int(edges), "nodes_with_an_edge": int(nodes)}
             if target:
-                entry["matches_target"] = int(row[0]) == int(target)
-                entry["difference"] = int(row[0]) - int(target)
-        except Exception as e:                      # a predicate this database cannot express
+                entry["matches_target"] = int(edges) == int(target)
+                entry["difference"] = int(edges) - int(target)
+        except duckdb.Error as e:
+            # only a database error means "this serving database cannot express that predicate";
+            # a bug in this function was being reported as one until it was caught by a test
             entry = {"scope": name, "error": f"{type(e).__name__}: {e}"}
         log.info("%s", entry)
         out.append(entry)
