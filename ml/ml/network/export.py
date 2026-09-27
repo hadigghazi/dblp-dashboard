@@ -250,9 +250,7 @@ def _comparison_table(rows):
         else:
             lines.append(f"| `{row['scope']}` | - | not expressible here |")
     lines += ["", "Measured on this dump, in one pass, by `ml.network.cli scopes`.", ""]
-    return "
-".join(lines) + "
-"
+    return "\n".join(lines) + "\n"
 
 
 def datasheet(p):
@@ -289,11 +287,11 @@ through `nodes.txt`, but they are not contiguous and they change when the dump d
 Two authors share a paper with {r['min_authors']}-{r['max_authors']} authors; the weight counts how
 many such papers they share. Record types: {r['record_types']}. Years: {r['years']}.
 
-Scope is the one choice that moves the numbers most. On this dump, counting every record type gives
-24,381,691 edges among 3,989,840 authors; counting only journal and conference papers gives
-22,200,244 among 3,824,208 - the difference is preprints, books, chapters and theses, and the
-smaller figure is what the dashboard's network analysis reports. This file was built with
-`scope = {r['scope']}`.
+Scope is the one choice that moves the numbers most, so this file states it rather than implying it:
+it was built with `scope = {r['scope']}`, and the table below measures every other definition on this
+same dump. The dashboard's own network analysis uses `no-preprints` - every record type except
+preprints - which is where its published edge count comes from; `all` keeps the preprints too, and
+`journal-conference` drops books, chapters, theses and data records as well.
 
 {_comparison_table(p.get("scope_comparison"))}## What is excluded, and why
 

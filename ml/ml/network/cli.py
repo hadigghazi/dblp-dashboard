@@ -3,13 +3,14 @@ The co-authorship network as a published dataset.
 
   python -m ml.network.cli export                    # the canonical graph, bins excluded
   python -m ml.network.cli export --with-bins        # everything, for comparison
-  python -m ml.network.cli export --scope journal-conference --expect-edges 22200244
+  python -m ml.network.cli export --scope no-preprints --expect-edges 22200244
   python -m ml.network.cli scopes --expect-edges 22200244   # which definition gives that number?
 
-`--expect-edges` is worth using, with the matching scope: the analysis job computed 22,200,244 from
-journal and conference papers, so that combination proves the join is right. The default scope is
-every record type, which is a larger graph - 24.4 million edges - and the difference between the two
-is the point rather than a discrepancy.
+`--expect-edges` is worth using, with the matching scope: the dashboard's network analysis computed
+22,200,244 edges from every record type except preprints, which is `--scope no-preprints`, so that
+combination proves the join is right. The default scope keeps the preprints as well, which is a
+larger graph - 24.4 million edges - and the difference between the two is the point rather than a
+discrepancy.
 """
 import argparse
 import json
