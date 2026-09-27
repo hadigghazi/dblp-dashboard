@@ -2,3 +2,4 @@ duckdb==1.5.5
 numpy>=1.26
 fastapi>=0.115,<1
 uvicorn>=0.30
+httpx>=0.27          # the API-backed encoder; the test client uses it too
