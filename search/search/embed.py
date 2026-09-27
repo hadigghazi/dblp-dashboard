@@ -9,7 +9,7 @@ a VM with flaky internet never needs to reach Hugging Face at runtime.
 import logging
 import threading
 
-from . import config, openai_encoder as OE
+from . import config
 
 log = logging.getLogger("dblp.search.embed")
 
@@ -31,9 +31,14 @@ def _load_model(model_name):
 
 def make_encoder(model_name=None, dim=None):
     """The encoder the configured model asks for. Everything else takes one as an argument, so a
-    model switch is a configuration change rather than a code path."""
+    model switch is a configuration change rather than a code path.
+
+    The API backend is imported here rather than at module load, for the same reason torch is: the
+    server imports this module at startup, and nothing that only the build or a pilot needs should
+    be able to stop it starting."""
     name = model_name or config.MODEL_NAME
-    if OE.is_openai(name):
+    if (name or "").startswith("openai:"):
+        from . import openai_encoder as OE
         return OE.OpenAIEncoder(name, dim)
     return Encoder(name)
 
