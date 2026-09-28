@@ -35,6 +35,7 @@ recompute is the one that takes hours.
 import json
 import logging
 import shutil
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -187,8 +188,9 @@ def run(export_dir, centrality_dir, out_dir, max_nodes=MAX_EXACT_NODES, ego_rand
         raise FileNotFoundError(f"no edge list in {export_dir}; run `export` first")
     edges_gz = found[0]
     claimed_nodes, claimed_edges = CE.header_counts(edges_gz)
-    tmp = base.TMP_DIR / f"exact-{metrics.get('dump', {}).get('fingerprint', 'unknown')}"
-    tmp.mkdir(parents=True, exist_ok=True)
+    # its own directory, outside the database's shared temp space, for the reason recorded in
+    # centrality.scratch_root: a scratch path shared between two runs cost six hours once already
+    tmp = Path(tempfile.mkdtemp(prefix="exact-", dir=CE.scratch_root()))
     con = D.plain_connection()
     try:
         plain = CE.decompress(edges_gz, tmp / "edges.tsv")

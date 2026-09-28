@@ -6,6 +6,7 @@ The co-authorship network as a published dataset, and its centrality measures.
   python -m ml.network.cli export --scope no-preprints --expect-edges 22200244
   python -m ml.network.cli scopes --expect-edges 22200244   # which definition gives that number?
   python -m ml.network.cli centrality                # degree, betweenness, closeness, eigenvector
+  python -m ml.network.cli centrality --resume        # finish a run whose measures already succeeded
   python -m ml.network.cli exact-betweenness          # what the estimate and the shortcuts cost
 
 `--expect-edges` is worth using, with the matching scope: the dashboard's network analysis computed
@@ -67,6 +68,11 @@ def main(argv=None):
     ap.add_argument("--betweenness-samples", type=int, default=None,
                     help="sampled sources for betweenness; its error is entirely this number")
     ap.add_argument("--closeness-samples", type=int, default=None)
+    ap.add_argument("--spot-check", type=int, default=None,
+                    help="exact shortest-path runs used to measure the closeness error")
+    ap.add_argument("--resume", action="store_true",
+                    help="reuse the measures from a previous run's scores.npz and only redo the "
+                         "joining and the files, which takes about a minute")
     ap.add_argument("--keep-temp", action="store_true",
                     help="keep the decompressed edge list, which is a few GB")
     # exact-betweenness only
@@ -88,7 +94,7 @@ def main(argv=None):
         payload = CE.run(source, target, threads=args.threads, seed=args.seed,
                          betweenness_samples=args.betweenness_samples or CE.BETWEENNESS_SAMPLES,
                          closeness_samples=args.closeness_samples or CE.CLOSENESS_SAMPLES,
-                         keep_temp=args.keep_temp)
+                         keep_temp=args.keep_temp, spot_check=args.spot_check, resume=args.resume)
         print(json.dumps({k: v for k, v in payload.items() if k not in ("top", "rules", "dump")},
                          indent=2))
         print("\nmost between: " + ", ".join(

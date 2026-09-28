@@ -47,6 +47,7 @@ import json
 import logging
 import re
 import shutil
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -65,9 +66,15 @@ DAMPING = 0.85          # the usual PageRank constant
 EIGEN_TOL = 1e-9
 PAGERANK_TOL = 1e-9
 BETWEENNESS_SAMPLES = 32768
-CLOSENESS_SAMPLES = 4096
+# 1024, not 4096, on measured evidence: at 4096 sampled sources on the real graph the spot check
+# against exact shortest paths found a 90th-percentile error of 0.35%, which is far more precision
+# than any use of closeness here needs - and it cost 1.9 hours. Quartering it roughly doubles that
+# error, to well under 1%, and the spot check reports what it actually was either way.
+CLOSENESS_SAMPLES = 1024
 CLOSENESS_EPSILON = 0.1
 SPOT_CHECK = 200        # exact single-source runs used to measure the closeness error
+CHECKPOINT = "scores.npz"              # the expensive results, saved before anything is joined
+CHECKPOINT_SUMMARY = "scores-summary.json"
 DIAMETER_ERROR = 0.05
 CLUSTERING_ERROR = 0.01
 TOP = 25                # rows per measure in the summary
@@ -112,6 +119,15 @@ def decompress(src: Path, dst: Path) -> Path:
     log.info("decompressed %s -> %.2f GB in %.0fs (%s header lines dropped)",
              src.name, dst.stat().st_size / 1e9, time.time() - t0, dropped)
     return dst
+
+
+def scratch_root():
+    """Deliberately not inside DuckDB's temp directory. That one is shared by every ml job and swept
+    by the database, and a scratch path shared between two runs of the same dump is what destroyed
+    six hours of betweenness: one run's cleanup deleted the other run's inputs."""
+    root = base.MODELS_DIR / "network-scratch"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
 
 
 def load_edges(con, plain: Path, expect_edges=None):
@@ -286,7 +302,7 @@ def seconds_per_sampled_source(H):
     return time.time() - t0
 
 
-def measures(G, threads, seed, betweenness_samples, closeness_samples):
+def measures(G, threads, seed, betweenness_samples, closeness_samples, spot_check=None):
     """Every measure, with its own timing. Whole-graph measures first, then the ones that need
     distances and therefore need the largest component."""
     import networkit as nk
@@ -341,7 +357,7 @@ def measures(G, threads, seed, betweenness_samples, closeness_samples):
     scores = {"degree": degree, "core": core, "pagerank": pagerank,
               "eigenvector": spread(eigen_lcc), "betweenness": spread(betweenness_lcc),
               "closeness": spread(closeness_lcc)}
-    check = spot_check_closeness(H, closeness_lcc, seed, timings)
+    check = spot_check_closeness(H, closeness_lcc, seed, timings, spot_check)
     return scores, H, back, {
         "nodes": int(n), "edges": int(G.numberOfEdges()),
         "average_degree": round(2 * G.numberOfEdges() / n, 3),
@@ -374,7 +390,7 @@ def measures(G, threads, seed, betweenness_samples, closeness_samples):
         "seconds": timings}
 
 
-def spot_check_closeness(H, approx, seed, timings):
+def spot_check_closeness(H, approx, seed, timings, sample=None):
     """The promised error of a sampling algorithm is a promise. This measures the error instead:
     exact single-source shortest paths from a random sample of authors, against what the
     approximation said about those same authors.
@@ -386,7 +402,7 @@ def spot_check_closeness(H, approx, seed, timings):
     expected and what gets reported."""
     import networkit as nk
     k = H.numberOfNodes()
-    size = min(SPOT_CHECK, k)
+    size = min(int(sample or SPOT_CHECK), k)
     rng = np.random.default_rng(int(seed))
     sample = rng.choice(k, size=size, replace=False)
     t0 = time.time()
@@ -452,17 +468,37 @@ def correlations(scores, back, top=100):
 COLUMNS = ["degree", "core", "pagerank", "eigenvector", "betweenness", "closeness"]
 
 
-def write(con, scores, nodes_plain: Path, out: Path, name=None):
-    """One row per author, joined back to their dblp key and name so the file stands alone."""
-    name = name or config.NAME
-    frame = {"nid": np.arange(len(scores["degree"]), dtype=np.int64)}
-    for column in COLUMNS:
-        frame[column] = scores[column]
-    for column in ["degree", "eigenvector", "betweenness", "closeness"]:
-        frame[f"rank_{column}"] = _ranks(scores[column].astype(np.float64))
-    frame["in_largest_component"] = np.isfinite(scores["closeness"])
-    con.register("score_np", frame)
+def save_checkpoint(out: Path, scores, person_id, back, summary, checked):
+    """The measures, on disk, before anything is joined to anything.
 
+    Betweenness and closeness take hours; the join, the correlations and the files take minutes. Any
+    failure in the cheap part used to destroy the expensive part, which is precisely what happened.
+    With this, `--resume` finishes the job from here."""
+    target = out / CHECKPOINT
+    np.savez(target, person_id=np.asarray(person_id, dtype=np.int64),
+             back=np.asarray(back, dtype=np.int64), **{c: scores[c] for c in COLUMNS})
+    (out / CHECKPOINT_SUMMARY).write_text(
+        json.dumps({"summary": summary, "degree_cross_check_authors": int(checked)}, indent=2),
+        encoding="utf-8")
+    log.info("checkpointed the measures to %s (%.2f GB) - a failure after this point costs minutes, "
+             "not hours", target.name, target.stat().st_size / 1e9)
+    return target
+
+
+def load_checkpoint(out: Path):
+    with np.load(out / CHECKPOINT) as data:
+        scores = {c: data[c] for c in COLUMNS}
+        person_id, back = data["person_id"], data["back"]
+    doc = json.loads((out / CHECKPOINT_SUMMARY).read_text(encoding="utf-8"))
+    log.info("resuming: %s authors' measures read back from %s", f"{len(person_id):,}", CHECKPOINT)
+    return scores, person_id, back, doc["summary"], doc["degree_cross_check_authors"]
+
+
+def load_node_meta(con, nodes_plain: Path):
+    """The author names, loaded before the long measures rather than after them.
+
+    This used to be read at the end, hours after the temporary file was written, and a missing file
+    at that point threw away the whole run. Nothing in the expensive phase depends on a file now."""
     con.execute(f"""
         CREATE OR REPLACE TABLE node_meta AS
         SELECT * FROM read_csv('{nodes_plain.as_posix()}', delim='\t', header=false,
@@ -470,20 +506,38 @@ def write(con, scores, nodes_plain: Path, out: Path, name=None):
                                columns={{'id': 'BIGINT', 'key': 'VARCHAR', 'name': 'VARCHAR',
                                          'records': 'BIGINT', 'first_year': 'INTEGER',
                                          'last_year': 'INTEGER'}})""")
+    rows = con.execute("SELECT count(*) FROM node_meta").fetchone()[0]
+    log.info("loaded %s author pages from the nodes file", f"{rows:,}")
+    return int(rows)
+
+
+def write(con, scores, person_id, out: Path, name=None):
+    """One row per author, joined back to their dblp key and name so the file stands alone.
+
+    The dblp id travels with the scores rather than being looked up through a renumbering table, so
+    this step depends on nothing but the database's own `node_meta` and the arrays it is handed."""
+    name = name or config.NAME
+    frame = {"person_id": np.asarray(person_id, dtype=np.int64)}
+    for column in COLUMNS:
+        frame[column] = scores[column]
+    for column in ["degree", "eigenvector", "betweenness", "closeness"]:
+        frame[f"rank_{column}"] = _ranks(scores[column].astype(np.float64))
+    frame["in_largest_component"] = np.isfinite(scores["closeness"])
+    con.register("score_np", frame)
+
     # NaN is how numpy says "not measured"; SQL says NULL, and a reader of the parquet expects SQL
     nulled = ",\n               ".join(
         f"CASE WHEN isnan(s.{c}) THEN NULL ELSE s.{c} END AS {c}"
         for c in ["pagerank", "eigenvector", "betweenness", "closeness"])
     con.execute(f"""
         CREATE OR REPLACE TABLE centrality AS
-        SELECT nd.id AS person_id, nm.key, nm.name, nm.records, nm.first_year, nm.last_year,
+        SELECT s.person_id, nm.key, nm.name, nm.records, nm.first_year, nm.last_year,
                s.degree, s.core,
                {nulled},
                s.rank_degree, s.rank_eigenvector, s.rank_betweenness, s.rank_closeness,
                s.in_largest_component
         FROM score_np s
-        JOIN node nd ON nd.nid = s.nid
-        LEFT JOIN node_meta nm ON nm.id = nd.id""")
+        LEFT JOIN node_meta nm ON nm.id = s.person_id""")
     rows = con.execute("SELECT count(*) FROM centrality").fetchone()[0]
     missing = con.execute("SELECT count(*) FROM centrality WHERE name IS NULL").fetchone()[0]
     if missing:
@@ -515,8 +569,11 @@ def leaders(con, top=TOP):
 
 
 def run(export_dir, out_dir, threads, seed, betweenness_samples=BETWEENNESS_SAMPLES,
-        closeness_samples=CLOSENESS_SAMPLES, keep_temp=False):
-    """The whole job: read the published dataset, measure it, write the results beside it."""
+        closeness_samples=CLOSENESS_SAMPLES, keep_temp=False, spot_check=None, resume=False):
+    """The whole job: read the published dataset, measure it, write the results beside it.
+
+    The expensive phase is checkpointed the moment it finishes, so `resume=True` re-does only the
+    minutes of joining and file writing that follow it."""
     export_dir, out = Path(export_dir), Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -530,25 +587,48 @@ def run(export_dir, out_dir, threads, seed, betweenness_samples=BETWEENNESS_SAMP
     log.info("reading %s (header claims %s nodes, %s edges)", edges_gz.name,
              f"{claimed_nodes:,}" if claimed_nodes else "?", f"{claimed_edges:,}" if claimed_edges else "?")
 
-    tmp = base.TMP_DIR / f"centrality-{stats.get('dump', {}).get('fingerprint', 'unknown')}"
-    tmp.mkdir(parents=True, exist_ok=True)
-    edges_plain, nodes_plain, graph_file = tmp / "edges.tsv", tmp / "nodes.tsv", tmp / "graph.el"
+    resuming = resume and (out / CHECKPOINT).exists() and (out / CHECKPOINT_SUMMARY).exists()
+    if resume and not resuming:
+        log.warning("--resume was asked for but %s is not in %s; measuring from the start",
+                    CHECKPOINT, out)
+    # its own directory, so no other run can clean it up underneath this one
+    scratch = Path(tempfile.mkdtemp(prefix="centrality-", dir=scratch_root()))
     con = D.plain_connection()
     try:
-        decompress(edges_gz, edges_plain)
-        decompress(nodes_gz, nodes_plain)
-        edges = load_edges(con, edges_plain, claimed_edges)
-        nodes = remap(con, graph_file, claimed_nodes)
-        G = load_graph(graph_file, nodes, edges)
-        checked = check_degrees(con, G, seed=seed)
-        scores, H, back, summary = measures(G, threads, seed, betweenness_samples, closeness_samples)
-        written = write(con, scores, nodes_plain, out, name)
+        # the names go into the database first and the file goes away immediately: nothing in the
+        # hours that follow should depend on a temporary file still being there at the end
+        nodes_plain = decompress(nodes_gz, scratch / "nodes.tsv")
+        load_node_meta(con, nodes_plain)
+        nodes_plain.unlink(missing_ok=True)
+
+        if resuming:
+            scores, person_id, back, summary, checked = load_checkpoint(out)
+        else:
+            edges_plain = decompress(edges_gz, scratch / "edges.tsv")
+            graph_file = scratch / "graph.el"
+            edges = load_edges(con, edges_plain, claimed_edges)
+            nodes = remap(con, graph_file, claimed_nodes)
+            person_id = np.asarray(
+                con.execute("SELECT id FROM node ORDER BY nid").fetchnumpy()["id"], dtype=np.int64)
+            G = load_graph(graph_file, nodes, edges)
+            checked = check_degrees(con, G, seed=seed)
+            # the edge table has done its work; holding 24 million rows for the next several hours
+            # helps nobody
+            for leftover in (edges_plain, graph_file):
+                leftover.unlink(missing_ok=True)
+            con.execute("DROP TABLE IF EXISTS e")
+            con.execute("DROP TABLE IF EXISTS node")
+            scores, H, back, summary = measures(G, threads, seed, betweenness_samples,
+                                                closeness_samples, spot_check=spot_check)
+            save_checkpoint(out, scores, person_id, back, summary, checked)
+        written = write(con, scores, person_id, out, name)
         payload = {
             "name": f"{name}.centrality", "generated_at": stamp,
             "dataset": {"directory": export_dir.name, **{k: stats.get(k) for k in ("generated_at", "with_bins")}},
             "dump": stats.get("dump", {}), "rules": stats.get("rules", {}),
             **summary,
             "degree_cross_check_authors": int(checked),
+            "resumed_from_checkpoint": bool(resuming),
             "correlations": correlations(scores, back),
             "top": leaders(con),
             **written,
@@ -557,7 +637,7 @@ def run(export_dir, out_dir, threads, seed, betweenness_samples=BETWEENNESS_SAMP
     finally:
         con.close()
         if not keep_temp:
-            shutil.rmtree(tmp, ignore_errors=True)
+            shutil.rmtree(scratch, ignore_errors=True)
 
     (out / "metrics.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
     (out / "README.md").write_text(datasheet(payload), encoding="utf-8")
@@ -713,6 +793,7 @@ By eigenvector - co-author to the well-connected:
 | `{p['name'].split('.')[0]}.centrality.tsv.gz` | one row per author, tab separated, with a header line |
 | `{p['name'].split('.')[0]}.centrality.parquet` | the same table, for the dashboard |
 | `metrics.json` | every number above, including the parameters and the checks |
+| `scores.npz` | the raw measures, saved before any joining; `centrality --resume` rebuilds the files above from it in a minute rather than repeating the hours |
 
 Columns: `person_id`, `key`, `name`, `records`, `first_year`, `last_year`, `degree`, `core`,
 `pagerank`, `eigenvector`, `betweenness`, `closeness`, the four `rank_*` columns (1 is most

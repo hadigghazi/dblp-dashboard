@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 
 from tests import test_pipeline as tp  # noqa: F401  (sets env, builds the serving db)
-from ml import data  # noqa: E402
+from ml import config as base, data  # noqa: E402
 from ml.network import centrality as CE, config as NC, export as EX  # noqa: E402
 
 # imported plainly, not through importorskip: a native extension that installs but cannot import is
@@ -354,3 +354,71 @@ def test_the_long_step_says_how_long_it_will_be_before_it_starts():
     assert projection["projected_seconds"] >= 0
     assert projection["actual_seconds"] == summary["seconds"]["betweenness"]
     assert "betweenness_calibration" in summary["seconds"]
+
+
+# --------------------------------------------------------------------------- losing the work
+
+def handmade(tmp_path_factory, label):
+    source = tmp_path_factory.mktemp(f"network-{label}")
+    nodes = len({u for u, _, _ in EDGES} | {v for _, v, _ in EDGES})
+    write_members(source / f"{NC.NAME}.ungraph.txt.gz",
+                  [f"Nodes: {nodes} Edges: {len(EDGES)}"], EDGES)
+    write_members(source / f"{NC.NAME}.nodes.txt.gz", ["NodeId\tdblpKey\tName"], NODES)
+    return source
+
+
+def test_the_scratch_space_is_not_the_databases_shared_temp_directory():
+    """Two runs of the same dump shared a scratch path named after the dump, and one run's cleanup
+    deleted the other's inputs after six hours of computation. Each run now gets its own directory,
+    and it is not inside the temp directory that every ml job and DuckDB itself write into."""
+    root = CE.scratch_root()
+    assert root != base.TMP_DIR
+    assert base.TMP_DIR not in root.parents
+
+
+def test_a_failure_after_the_measures_does_not_lose_them(monkeypatch, tmp_path_factory):
+    """The incident, reproduced: the hours-long measures succeed and the minute-long join fails.
+    Before, that threw everything away. Now the measures are on disk and --resume finishes the job."""
+    source = handmade(tmp_path_factory, "lost")
+    out = tmp_path_factory.mktemp("centrality-lost")
+
+    def explode(*_args, **_kwargs):
+        raise RuntimeError("the join failed, as it did on the real run")
+
+    monkeypatch.setattr(CE, "write", explode)
+    with pytest.raises(RuntimeError, match="the join failed"):
+        CE.run(source, out, threads=1, seed=7, betweenness_samples=32, closeness_samples=4)
+    assert (out / CE.CHECKPOINT).exists(), "the expensive results must survive the failure"
+    assert (out / CE.CHECKPOINT_SUMMARY).exists()
+    assert not (out / "metrics.json").exists(), "the run did fail; it must not claim otherwise"
+    monkeypatch.undo()
+
+    payload = CE.run(source, out, threads=1, seed=7, betweenness_samples=32, closeness_samples=4,
+                     resume=True)
+    assert payload["resumed_from_checkpoint"] is True
+    assert payload["rows"] == len(DEGREE)
+    assert (out / "metrics.json").exists() and (out / f"{NC.NAME}.centrality.parquet").exists()
+    assert rows_of(out)[300][2] == DEGREE[300], "the resumed scores belong to the right authors"
+
+
+def test_resuming_reuses_the_measures_rather_than_repeating_them(tmp_path_factory):
+    source = handmade(tmp_path_factory, "twice")
+    out = tmp_path_factory.mktemp("centrality-twice")
+    first = CE.run(source, out, threads=1, seed=7, betweenness_samples=32, closeness_samples=4)
+    again = CE.run(source, out, threads=1, seed=7, betweenness_samples=32, closeness_samples=4,
+                   resume=True)
+    assert first["resumed_from_checkpoint"] is False
+    assert again["resumed_from_checkpoint"] is True
+    assert again["seconds"] == first["seconds"], "identical timings mean nothing was recomputed"
+    assert again["top"]["degree"] == first["top"]["degree"]
+
+
+def test_resuming_without_a_checkpoint_measures_from_the_start(tmp_path_factory):
+    """Asking to resume a run that never happened must not be an error, and must not silently write
+    an empty result either."""
+    source = handmade(tmp_path_factory, "fresh")
+    out = tmp_path_factory.mktemp("centrality-fresh")
+    payload = CE.run(source, out, threads=1, seed=7, betweenness_samples=32, closeness_samples=4,
+                     resume=True)
+    assert payload["resumed_from_checkpoint"] is False
+    assert payload["rows"] == len(DEGREE)
