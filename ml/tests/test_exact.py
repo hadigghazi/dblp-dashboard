@@ -106,9 +106,12 @@ def test_a_missing_value_is_dropped_rather_than_poisoning_the_correlation():
 
 def test_the_report_says_why_the_cheaper_route_was_not_taken(measured):
     payload, out, _ = measured
-    text = (out / "EXACT-BETWEENNESS.md").read_text(encoding="utf-8")
+    # whitespace is flattened first: these are claims the report has to make, not a promise about
+    # where its prose happens to wrap
+    text = " ".join((out / "EXACT-BETWEENNESS.md").read_text(encoding="utf-8").split())
     assert "different question" in text
     assert "all pairs" in text, "the reason a subgraph changes the answer has to be stated"
     assert str(payload["exact_subgraph"]["k"]) in text
     assert "Everett and Borgatti" in text, "the ego-betweenness claim needs its source"
     assert "reads better than it deserves to" in text, "the pooled figure must carry its caveat"
+    assert "Within each degree band" in text, "and the honest figures must be there too"
