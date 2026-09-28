@@ -80,7 +80,8 @@ def main(argv=None):
                     help="the finished centrality directory to compare against")
     ap.add_argument("--max-nodes", type=int, default=None,
                     help="how large a subgraph exact Brandes may be asked to finish")
-    ap.add_argument("--ego-random", type=int, default=None)
+    ap.add_argument("--ego-per-band", type=int, default=None,
+                    help="authors sampled from each degree band for the ego comparison")
     ap.add_argument("--ego-top", type=int, default=None)
     args = ap.parse_args(argv)
     config.MAX_AUTHORS = args.max_authors
@@ -108,7 +109,7 @@ def main(argv=None):
         measured = Path(args.measured) if args.measured else centrality_out_dir(source)
         target = Path(args.out) if args.out else measured
         payload = XB.run(source, measured, target, max_nodes=args.max_nodes or XB.MAX_EXACT_NODES,
-                         ego_random=args.ego_random or XB.EGO_RANDOM,
+                         ego_per_band=args.ego_per_band or XB.EGO_PER_BAND,
                          ego_top=args.ego_top or XB.EGO_TOP,
                          threads=args.threads, seed=args.seed, keep_temp=args.keep_temp)
         print(json.dumps(payload, indent=2))

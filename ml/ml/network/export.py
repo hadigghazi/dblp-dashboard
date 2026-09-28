@@ -118,8 +118,13 @@ def counts(con, with_bins):
         SELECT count(*) FROM s.pubs WHERE n_authors > {config.MAX_AUTHORS}""").fetchone()[0]
     biggest = con.execute(f"""
         SELECT coalesce(max(n_authors), 0) FROM s.pubs""").fetchone()[0]
+    busiest = con.execute("""
+        SELECT coalesce(max(c), 0) FROM (
+            SELECT id, count(*) AS c
+            FROM (SELECT u AS id FROM edge UNION ALL SELECT v FROM edge) GROUP BY id)""").fetchone()[0]
     return {"author_pages": int(nodes), "nodes_with_an_edge": int(linked), "edges": int(edges),
-            "papers_above_the_author_cap": int(dropped), "largest_paper_authors": int(biggest)}
+            "papers_above_the_author_cap": int(dropped), "largest_paper_authors": int(biggest),
+            "max_degree": int(busiest)}
 
 
 def probe(con, with_bins=False, target=None):
@@ -296,8 +301,10 @@ preprints - which is where its published edge count comes from; `all` keeps the 
 
 * **Disambiguation bins**{'' if p['with_bins'] else ' (excluded here)'}: a bare name such as "Wei Wang"
   holding the papers of hundreds of different people. Counting one as a person makes it the most
-  connected vertex in computer science - degree 6,570 with bins against 2,343 without, on this dump.
-  SNAP's com-DBLP does not do this.
+  connected vertex in computer science, which is why it is not counted as one here. The most
+  connected author in this file has {p['max_degree']:,} co-authors; build the same graph with
+  `--with-bins` to see what including them does to that number. SNAP's com-DBLP does not make the
+  distinction at all.
 * **Papers with more than {r['max_authors']} authors**: {p['papers_above_the_author_cap']:,} of them
   (the largest has {p['largest_paper_authors']:,} authors). One 200-author paper contributes 19,900
   edges of a single clique, which dominates betweenness and closeness.

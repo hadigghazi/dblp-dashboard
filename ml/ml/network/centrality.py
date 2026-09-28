@@ -384,9 +384,12 @@ def measures(G, threads, seed, betweenness_samples, closeness_samples, spot_chec
         "betweenness_projection": {"seconds_per_sampled_source": round(per_source, 3),
                                    "projected_seconds": round(projected, 1),
                                    "actual_seconds": timings["betweenness"],
-                                   "note": "projected from one timed source before the run; the "
-                                           "projection runs high because that source also paid the "
-                                           "one-off setup"},
+                                   "note": "projected from one source timed before the run. It "
+                                           "can land either side: that source pays the one-off setup, "
+                                           "which inflates it, but it also runs alone, so it never "
+                                           "meets the memory-bandwidth contention of every thread "
+                                           "doing this at once, which deflates it. Measured at 1.18x "
+                                           "on the full graph - the contention wins."},
         "seconds": timings}
 
 
@@ -454,7 +457,14 @@ def correlations(scores, back, top=100):
         ranked[name] = rankdata(column)          # ties share the average rank, as Spearman requires
         leaders_[name] = set(np.argsort(-column, kind="stable")[:top].tolist())
     out = {"spearman": {}, "top_overlap": {}, "top": int(top),
-           "measured_on": "largest connected component"}
+           "measured_on": "largest connected component",
+           # a measure with few distinct values has no meaningful top-k: the core number saturates
+           # at about 50, so thousands of authors tie and "the top 100 by core" is an arbitrary slice
+           # of them. That is why it overlaps nothing while correlating at 0.97, and it is a tie
+           # artifact rather than a finding.
+           "distinct_values": {name: int(len(np.unique(scores[name][back]))) for name in names},
+           "note": "a top-k overlap is only meaningful for a measure with more distinct values than "
+                   "k; check distinct_values before reading one"}
     for i, a in enumerate(names):
         for b in names[i + 1:]:
             rho = float(np.corrcoef(ranked[a], ranked[b])[0, 1])

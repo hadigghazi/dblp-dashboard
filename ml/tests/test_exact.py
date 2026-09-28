@@ -39,7 +39,7 @@ def measured(tmp_path_factory):
     write_members(source / f"{NC.NAME}.nodes.txt.gz", ["NodeId\tdblpKey\tName"], NODES)
     out = tmp_path_factory.mktemp("centrality-lollipop")
     CE.run(source, out, threads=1, seed=7, betweenness_samples=64, closeness_samples=4)
-    payload = XB.run(source, out, out, max_nodes=100, ego_random=7, ego_top=3, threads=1, seed=7)
+    payload = XB.run(source, out, out, max_nodes=100, ego_per_band=7, ego_top=3, threads=1, seed=7)
     return payload, out, source
 
 
@@ -69,9 +69,22 @@ def test_the_two_shortcuts_are_compared_against_the_full_graph(measured):
     shrink, ego = payload["shrinking_the_graph"], payload["ego_networks"]
     assert shrink["authors"] == payload["exact_subgraph"]["nodes"]
     assert -1.0001 <= shrink["spearman"] <= 1.0001
-    assert ego["authors"] == len(NODES), "seven random plus three hubs, deduplicated, is everybody"
-    assert -1.0001 <= ego["spearman"] <= 1.0001
+    assert ego["authors"] == len(NODES), "seven per band plus three hubs, deduplicated, is everybody"
+    assert -1.0001 <= ego["pooled"]["spearman"] <= 1.0001
     assert ego["degree_range"][0] >= 1
+
+
+def test_the_ego_comparison_is_not_carried_by_the_degree_spread(measured):
+    """A pool spanning every degree correlates well with almost anything, because betweenness rises
+    with degree. The within-band figures are the ones that mean something, so they have to be there
+    whenever a band has enough authors in it."""
+    payload, _, _ = measured
+    ego = payload["ego_networks"]
+    assert "within_degree_bands" in ego
+    assert "pooled" in ego and ego["pooled"]["authors"] == ego["authors"]
+    for label, got in ego["within_degree_bands"].items():
+        assert got["authors"] >= 10, label
+        assert got["spearman"] is None or -1.0001 <= got["spearman"] <= 1.0001
 
 
 def test_exact_betweenness_is_run_on_a_subgraph_that_fits(measured):
@@ -98,3 +111,4 @@ def test_the_report_says_why_the_cheaper_route_was_not_taken(measured):
     assert "all pairs" in text, "the reason a subgraph changes the answer has to be stated"
     assert str(payload["exact_subgraph"]["k"]) in text
     assert "Everett and Borgatti" in text, "the ego-betweenness claim needs its source"
+    assert "reads better than it deserves to" in text, "the pooled figure must carry its caveat"

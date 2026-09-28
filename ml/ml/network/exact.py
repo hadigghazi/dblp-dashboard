@@ -48,8 +48,12 @@ from . import centrality as CE, config
 log = logging.getLogger("dblp.ml.network.exact")
 
 MAX_EXACT_NODES = 50_000    # what exact Brandes can finish in minutes rather than days
-EGO_RANDOM = 500
+EGO_PER_BAND = 150      # sampled per degree band, not uniformly - see _ego_sample
 EGO_TOP = 50
+# Betweenness rises steeply with degree, so a pool spanning degree 1 to 2500 correlates well with
+# almost anything. Agreement is therefore reported within each band as well, where the degree spread
+# cannot do the work.
+DEGREE_BANDS = ((1, 4), (5, 19), (20, 99), (100, None))
 TOP = 100
 
 
@@ -163,7 +167,25 @@ def full_graph_betweenness(con, parquet: Path, nodes):
     return values, degrees
 
 
-def run(export_dir, centrality_dir, out_dir, max_nodes=MAX_EXACT_NODES, ego_random=EGO_RANDOM,
+def within_bands(reference, other, degree, minimum=10):
+    """The same agreement, inside each degree band.
+
+    A correlation over authors of every size mostly reports that the well-connected outrank the
+    barely-connected on both measures, which is true of any two centrality measures and answers
+    nothing. Inside a band that spread is gone, and what is left is the real question: told two
+    similarly-connected authors, does the shortcut order them the way the whole graph does?"""
+    out = {}
+    for low, high in DEGREE_BANDS:
+        inside = (degree >= low) & (degree <= high if high else degree >= low)
+        if int(inside.sum()) < minimum:
+            continue
+        label = f"{low}-{high}" if high else f"{low}+"
+        out[label] = {"authors": int(inside.sum()),
+                      "spearman": _spearman(reference[inside], other[inside])}
+    return out
+
+
+def run(export_dir, centrality_dir, out_dir, max_nodes=MAX_EXACT_NODES, ego_per_band=EGO_PER_BAND,
         ego_top=EGO_TOP, threads=None, seed=None, keep_temp=False):
     import networkit as nk
     export_dir, centrality_dir = Path(export_dir), Path(centrality_dir)
@@ -223,7 +245,7 @@ def run(export_dir, centrality_dir, out_dir, max_nodes=MAX_EXACT_NODES, ego_rand
     same_rate_samples = max(2, round(rate * core["nodes"]))
     same_rate, rate_seconds = sampled_betweenness(C, same_rate_samples, "same sampling rate as the full run")
 
-    ego_nodes = _ego_sample(H, degree_on_H, ego_random, ego_top, seed)
+    ego_nodes = _ego_sample(H, degree_on_H, ego_per_band, ego_top, seed)
     ego = ego_betweenness(H, ego_nodes)
 
     payload = {
@@ -249,10 +271,13 @@ def run(export_dir, centrality_dir, out_dir, max_nodes=MAX_EXACT_NODES, ego_rand
             estimate_on_H[back_C], exact, label="full-graph estimate vs exact on the k-core, same authors"),
         "ego_networks": {
             "authors": int(len(ego_nodes)),
-            "random": int(ego_random), "top_by_degree": int(ego_top),
+            "sampled_per_degree_band": int(ego_per_band), "top_by_degree": int(ego_top),
             "degree_range": [int(degree_on_H[ego_nodes].min()), int(degree_on_H[ego_nodes].max())],
-            **agreement(estimate_on_H[ego_nodes], ego, top=min(TOP, len(ego_nodes)),
-                        label="full-graph estimate vs ego betweenness, same authors"),
+            # the pooled figure, which reads better than it deserves to, and the honest one
+            "pooled": agreement(estimate_on_H[ego_nodes], ego, top=min(TOP, len(ego_nodes)),
+                                label="full-graph estimate vs ego betweenness, same authors"),
+            "within_degree_bands": within_bands(estimate_on_H[ego_nodes], ego,
+                                                degree_on_H[ego_nodes]),
         },
         "parameters": {"max_exact_nodes": int(max_nodes), "threads": threads, "seed": seed},
         "total_seconds": round(time.time() - t0, 1),
@@ -263,15 +288,30 @@ def run(export_dir, centrality_dir, out_dir, max_nodes=MAX_EXACT_NODES, ego_rand
     return payload
 
 
-def _ego_sample(H, degree, random_n, top_n, seed):
-    """Random authors, plus the biggest hubs. Random alone would be almost all small-degree authors,
-    and the hubs are the interesting case for a local measure: if ego betweenness tracks the real
-    thing anywhere it should be there."""
+def _ego_sample(H, degree, per_band, top_n, seed):
+    """Stratified by degree, plus the biggest hubs.
+
+    Uniform sampling would be almost entirely authors with two or three co-authors, because that is
+    what this graph is made of - which leaves nothing to compare in the range where betweenness
+    actually varies. A fixed number from each band fills the range instead, and the hubs are added
+    because they are the case a local measure is least likely to get right."""
     rng = np.random.default_rng(seed)
-    n = H.numberOfNodes()
-    chosen = set(rng.choice(n, size=min(random_n, n), replace=False).tolist())
+    chosen = set()
+    for low, high in DEGREE_BANDS:
+        inside = (degree >= low) & (degree <= high if high else degree >= low)
+        pool = np.flatnonzero(inside)
+        if len(pool):
+            chosen.update(rng.choice(pool, size=min(per_band, len(pool)), replace=False).tolist())
     chosen.update(np.argsort(-degree, kind="stable")[:top_n].tolist())
     return np.array(sorted(chosen), dtype=np.int64)
+
+
+def _band_table(bands):
+    if not bands:
+        return "_no band had enough sampled authors to report._\n"
+    rows = "".join(f"| {label} co-authors | {got['authors']:,} | {got['spearman']} |\n"
+                   for label, got in bands.items())
+    return "| Degree band | Authors | Spearman rho |\n|---|---|---|\n" + rows
 
 
 def report(p):
@@ -326,17 +366,24 @@ the measure means.
 ## 3. Ego networks: the cheapest shortcut
 
 Betweenness within one's own ego network, exactly, for {ego['authors']:,} authors
-({ego['random']:,} random plus the {ego['top_by_degree']} largest hubs; degrees
-{ego['degree_range'][0]:,} to {ego['degree_range'][1]:,}), against the full-graph estimate for the
-same people:
+({ego['sampled_per_degree_band']} sampled from each degree band plus the {ego['top_by_degree']}
+largest hubs; degrees {ego['degree_range'][0]:,} to {ego['degree_range'][1]:,}), against the
+full-graph estimate for the same people.
 
-| | |
-|---|---|
-| Spearman rho | {ego['spearman']} |
-| Top {ego['top']} overlap | {ego['top_overlap']}/{ego['top']} |
+Pooled over all of them: Spearman rho **{ego['pooled']['spearman']}**, top {ego['pooled']['top']}
+overlap {ego['pooled']['top_overlap']}/{ego['pooled']['top']}. That figure reads better than it
+deserves to. Betweenness rises steeply with degree, so any pool spanning degree
+{ego['degree_range'][0]:,} to {ego['degree_range'][1]:,} will correlate well with almost anything -
+most of what it measures is that the well-connected outrank the barely-connected, which is true of
+every centrality measure ever defined. The overlap is also the top {ego['pooled']['top']} of
+{ego['pooled']['authors']:,} sampled authors, not of {p['graph']['largest_component_nodes']:,}.
 
-Everett and Borgatti found ego betweenness correlates well with the real thing on small networks.
-The number above is whether that holds on four million authors.
+Within each degree band, where that spread is gone:
+
+{_band_table(ego['within_degree_bands'])}
+This is the number that answers the question. Given two similarly-connected authors, does ego
+betweenness order them the way the whole graph does? Everett and Borgatti found that it does on small
+networks; the rows above are whether it holds on four million authors.
 
 ## What this means for the deliverable
 
