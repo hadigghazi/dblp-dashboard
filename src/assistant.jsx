@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Chip, ChipGroup, SortableTable } from "./components.jsx";
 import { fmt } from "./charts.jsx";
 
@@ -224,6 +224,64 @@ const TOOL_LABEL = {
   author_centrality: "placed them in the network",
 };
 const toolLabel = (name) => TOOL_LABEL[name] || name.replace(/_/g, " ");
+
+function pick(list, n) {
+  const copy = list.slice();
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy.slice(0, n);
+}
+
+/**
+ * Suggested questions: two easy ones as chips, then three of the hard cases as small cards with a line
+ * saying what makes each one hard. Every suggestion is a question the gold set verifies, so none of
+ * them is a demo that fails. "Show others" deals a new three.
+ */
+function Suggestions({ examples, ask }) {
+  // older servers sent plain strings; treat those as basic questions rather than breaking
+  const all = (examples || []).map((e) => (typeof e === "string" ? { q: e, level: "basic" } : e));
+  const [deal, setDeal] = useState(0);
+  const shown = useMemo(() => ({
+    basics: pick(all.filter((e) => e.level !== "hard"), 2),
+    hard: pick(all.filter((e) => e.level === "hard"), 3),
+  // keyed on the content, not the array: a status refresh must not reshuffle under the reader
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [deal, all.map((e) => e.q).join("|")]);
+  const hardTotal = all.filter((e) => e.level === "hard").length;
+  if (!all.length) return null;
+  return (
+    <div className="suggest">
+      <ChipGroup>
+        {shown.basics.map((e) => <Chip key={e.q} label={e.q} on={false} onClick={() => ask(e.q)} />)}
+      </ChipGroup>
+      {shown.hard.length ? (
+        <>
+          <div className="suggesthead">
+            <span>Or try a hard one</span>
+            {hardTotal > shown.hard.length ? (
+              <button type="button" className="linkbtn" onClick={() => setDeal((n) => n + 1)}>
+                show others
+              </button>
+            ) : null}
+          </div>
+          <ul className="hardlist">
+            {shown.hard.map((e) => (
+              <li key={e.q}>
+                <button type="button" className="hardq" onClick={() => ask(e.q)}>
+                  <span className="hardtext">{e.q}</span>
+                  {e.why ? <span className="hardwhy">{e.why}</span> : null}
+                  {e.then ? <span className="hardthen">then ask: “{e.then}”</span> : null}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+    </div>
+  );
+}
 
 /** One tool call, collapsed to a single quiet line until asked. */
 function ToolCall({ event, go }) {
@@ -488,13 +546,7 @@ export function DeweyPanel({ open, onClose, go, onBusy }) {
                   <h3>{DEWEY.name}</h3>
                   <p className="introrole">{DEWEY.role}</p>
                   <p className="intropitch">{DEWEY.greeting}</p>
-                  {d?.examples ? (
-                    <ChipGroup>
-                      {d.examples.slice(0, 5).map((ex) => (
-                        <Chip key={ex} label={ex} on={false} onClick={() => ask(ex)} />
-                      ))}
-                    </ChipGroup>
-                  ) : null}
+                  <Suggestions examples={d?.examples} ask={ask} />
                 </div>
               ) : (
                 <div className="thread">

@@ -28,19 +28,44 @@ from .llm import Client
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("dblp.chat.server")
 
+# Suggested questions for the assistant panel. Every one is a question the gold set verifies - word
+# for word, and for a follow-up the whole exchange - so the panel never advertises something that
+# fails; tests/test_examples.py holds it to that. "hard" ones carry a line, in plain words, saying what
+# makes them hard, because the point of showing them is to show what the assistant can do.
 EXAMPLES = [
-    "Which author has the most papers in dblp?",
-    "How many papers did dblp add in 2024?",
-    "What does Jürgen Schmidhuber publish, and with whom?",
-    "How many different people are called Wei Wang?",
-    "Papers about learning robot manipulation from few demonstrations",
-    "Is 'blockchain' still rising in titles, compared with 'llm'?",
-    "Who publishes most in CVPR?",
-    "Which big venues almost never carry a DOI?",
-    "Has the number of authors per paper changed since 1990?",
-    "Where should a paper called 'Contrastive pretraining for medical image segmentation' go?",
-    "What is a disambiguation bin, and how many papers are affected?",
-    "Who is likely to co-author with Yoshua Bengio next?",
+    # the easy way in
+    {"q": "Which author has the most papers in dblp?", "level": "basic"},
+    {"q": "Tell me about CVPR", "level": "basic"},
+    {"q": "How many papers were published in 2024?", "level": "basic", "then": "And in 2014?"},
+    {"q": "Find papers about learning robot manipulation from a few demonstrations", "level": "basic"},
+
+    # the ones that show what it can do
+    {"q": "How many different people are called Wei Wang?", "level": "hard",
+     "why": "One name, hundreds of different people - it tells them apart"},
+    {"q": "What do Yang Liu's papers look like?", "level": "hard",
+     "why": "A name many people share - it says so instead of mixing them up"},
+    {"q": "Which authors bridge the most research communities?", "level": "hard",
+     "why": "The bridges between fields are not the people who publish most"},
+    {"q": "How many degrees of separation are there between computer scientists?", "level": "hard",
+     "why": "Measured across about four million authors"},
+    {"q": "How central is Yoshua Bengio in the co-authorship network?", "level": "hard",
+     "why": "His rank among about four million authors, on four different measures"},
+    {"q": "Have Yann LeCun and Yoshua Bengio written a paper together?", "level": "hard",
+     "why": "Checks every paper the two of them are on"},
+    {"q": "Who are Geoffrey Hinton's co-authors that also publish at ICML?", "level": "hard",
+     "why": "A person, their collaborators and a venue, all in one question"},
+    {"q": "Has NeurIPS grown faster than ICML since 2015?", "level": "hard",
+     "why": "Two venues compared year by year"},
+    {"q": "How many journal papers did Jürgen Schmidhuber publish since 2020?", "level": "hard",
+     "why": "One author, one kind of paper, one period - all at once"},
+    {"q": "Where should a paper called 'Contrastive pretraining for medical image segmentation' be "
+          "submitted?", "level": "hard",
+     "why": "Asks the venue-recommendation model"},
+    {"q": "What is Geoffrey Hinton's h-index?", "level": "hard",
+     "why": "dblp has no citations - watch it say so instead of guessing"},
+    {"q": "Who is the most central author by betweenness?", "level": "hard",
+     "then": "And how many papers do they have?",
+     "why": "Then ask the follow-up - it remembers who you meant"},
 ]
 
 

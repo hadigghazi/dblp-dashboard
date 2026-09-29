@@ -347,6 +347,24 @@ code { font-size: .92em; }
 .deweyintro .chipgroup { justify-content: center; }
 .deweyintro .chip { text-align: left; }
 
+/* suggested questions: two easy chips, then the hard cases as quiet cards that say why they're hard */
+.suggest { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 420px; }
+.suggesthead { display: flex; justify-content: space-between; align-items: baseline; margin-top: 6px;
+  font-size: 11.5px; color: var(--muted); }
+.linkbtn { background: none; border: 0; padding: 0; font: inherit; font-size: 11.5px;
+  color: var(--accent-ink); cursor: pointer; }
+.linkbtn:hover { text-decoration: underline; }
+.linkbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+.hardlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.hardq { width: 100%; display: flex; flex-direction: column; gap: 2px; text-align: left;
+  padding: 8px 11px; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface);
+  color: var(--ink); font: inherit; cursor: pointer; }
+.hardq:hover { border-color: var(--accent); background: var(--tint); }
+.hardq:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.hardtext { font-size: 13px; line-height: 1.4; }
+.hardwhy { font-size: 11.5px; line-height: 1.4; color: var(--muted); }
+.hardthen { font-size: 11.5px; line-height: 1.4; color: var(--accent-ink); }
+
 /* one exchange */
 .thread { display: flex; flex-direction: column; gap: 20px; }
 .turn { display: flex; flex-direction: column; gap: 10px; }
