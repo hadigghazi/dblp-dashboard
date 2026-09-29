@@ -10,6 +10,10 @@ refusal accuracy.
 `any_of` means at least one of these tools has to be called; `all_of` means every one. Resolution
 steps are listed explicitly, because "papers of this person" is only correct if a name was turned
 into a key first.
+
+`args` pins arguments as well: {tool: {parameter: value or [values]}}. It exists because the right
+tool with the wrong argument - "most connected" answered with betweenness - is a wrong answer that a
+tool-choice check passes.
 """
 
 CASES = [
@@ -28,7 +32,10 @@ CASES = [
     dict(q="Tell me about CVPR", all_of=["resolve_venue"], any_of=["venue_profile"]),
 
     # ---- superlatives and rankings
-    dict(q="Who are the ten most connected authors?", any_of=["top_authors"]),
+    # written before the network tools existed, when only top_authors could answer it. Both can now,
+    # and both are right - provided central_authors is asked for degree, not for brokers.
+    dict(q="Who are the ten most connected authors?", any_of=["top_authors", "central_authors"],
+         args={"central_authors": {"metric": "degree"}}),
     dict(q="What are the biggest conferences in dblp?", any_of=["top_venues"]),
     dict(q="Who publishes most in NeurIPS?", all_of=["resolve_venue"], any_of=["top_authors"]),
     dict(q="Which names are shared by the most people?", any_of=["most_shared_names"]),
@@ -108,7 +115,8 @@ CASES = [
     # different answers - on this dump only 58 of the 100 most-between authors are also among the 100
     # most-connected - so a model that answers one with the other is wrong in a way that reads fine.
     dict(q="Who is the most central author in computer science?", any_of=["central_authors"]),
-    dict(q="Which authors bridge the most research communities?", any_of=["central_authors"]),
+    dict(q="Which authors bridge the most research communities?", any_of=["central_authors"],
+         args={"central_authors": {"metric": "betweenness"}}),
     dict(q="How central is Yoshua Bengio in the co-authorship network?",
          all_of=["resolve_author"], any_of=["author_centrality"]),
     dict(q="How many degrees of separation are there between computer scientists?",

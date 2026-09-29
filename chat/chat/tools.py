@@ -1068,13 +1068,17 @@ SPECS += [
         "Use for 'how connected is computer science', 'six degrees of separation', 'is it a small "
         "world', 'how many authors never connect to the rest'.", {}),
     _fn("central_authors", "Authors ranked by their POSITION in the co-authorship network, not by "
-        "output. betweenness = the bridges between research communities; degree = most co-authors; "
-        "closeness = fewest hops to everybody else; eigenvector = co-author to the well connected. "
-        "Use for 'most central', 'most connected', 'who bridges fields'. For 'most prolific', 'most "
-        "papers' or 'most published' use top_authors instead - they give different people.",
+        "output. The measures rank DIFFERENT people, so choose by what was asked: "
+        "'most connected', 'most co-authors', 'biggest network' -> degree; "
+        "'bridges', 'brokers', 'connects different fields or communities' -> betweenness; "
+        "'closest to everyone', 'fewest steps away' -> closeness; "
+        "'connected to the most important people', 'most influential' -> eigenvector; "
+        "a bare 'most central' -> betweenness, and say in the answer which measure it was. "
+        "For 'most prolific', 'most papers' or 'most published' use top_authors instead.",
         {"metric": {"type": "string",
-                    "enum": ["betweenness", "degree", "closeness", "eigenvector", "pagerank", "core"]},
-         "limit": {"type": "integer"}}),
+                    "enum": ["betweenness", "degree", "closeness", "eigenvector", "pagerank", "core"],
+                    "description": "required: the measures disagree, so there is no default"},
+         "limit": {"type": "integer"}}, ["metric"]),
     _fn("author_centrality", "One author's position in the co-authorship network: their rank and "
         "percentile on each centrality measure, which is the only readable form of these numbers. "
         "Use for 'how central is X', 'how well connected is X', 'is X a bridge between fields'. "

@@ -127,8 +127,17 @@ def network_shape(ctx):
         link={"page": "network"})
 
 
-def central_authors(ctx, metric="betweenness", limit=10):
-    """The most central authors by one measure. Not the most prolific - that is top_authors."""
+def central_authors(ctx, metric=None, limit=10):
+    """The most central authors by one measure. Not the most prolific - that is top_authors.
+
+    There is deliberately no default measure. Betweenness used to be it, and "the most connected
+    authors" is a degree question - so a call that left the measure out would have ranked brokers
+    and presented them as hubs, confidently, with nothing downstream able to tell."""
+    if not metric:
+        return refusal("centrality has several measures and they rank different people",
+                       "call again with metric = degree (most co-authors), betweenness (bridges "
+                       "between communities), closeness (fewest hops to everyone) or eigenvector "
+                       "(co-author to the well connected)")
     if metric not in MEASURES:
         return refusal(f"'{metric}' is not one of the centrality measures",
                        "choose " + ", ".join(sorted(MEASURES)))

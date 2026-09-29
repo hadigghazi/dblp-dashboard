@@ -27,12 +27,32 @@ def _refused(text):
     return any(marker in low for marker in goldset.REFUSAL_MARKERS)
 
 
+def arguments_ok(case, calls):
+    """Whether every call to a pinned tool used the pinned arguments.
+
+    `case["args"]` maps a tool to {parameter: expected}, where expected is a value or a list of
+    acceptable values. A tool that was not called is not constrained here - whether it should have
+    been is the tool-choice check's job. This exists because the right tool with the wrong argument
+    is a wrong answer that looks exactly like a right one."""
+    wrong = []
+    for tool, pinned in (case.get("args") or {}).items():
+        for name, args in calls:
+            if name != tool:
+                continue
+            for param, expected in pinned.items():
+                allowed = expected if isinstance(expected, list) else [expected]
+                if (args or {}).get(param) not in allowed:
+                    wrong.append(f"{tool}({param}={(args or {}).get(param)!r}), expected {expected!r}")
+    return not wrong, wrong
+
+
 def run_case(ctx, client, case):
-    tools_called, payloads, t0 = [], [], time.time()
+    tools_called, calls, payloads, t0 = [], [], [], time.time()
 
     def emit(event):
         if event.get("type") == "tool":
             tools_called.append(event["name"])
+            calls.append((event["name"], event.get("arguments") or {}))
 
     # A case may be a conversation. Only the last turn is measured; the ones before it exist to give
     # the last one something to refer to ("and his co-authors?"), which is where a chatbot that looks
@@ -54,12 +74,19 @@ def run_case(ctx, client, case):
         passed = _refused(answer_text)
         reason = "" if passed else "answered instead of refusing"
     else:
-        passed = ok_tools
-        reason = "" if passed else f"missing tools: all_of={sorted(want_all - called)} any_of={sorted(want_any)}"
+        ok_args, wrong_args = arguments_ok(case, calls)
+        passed = ok_tools and ok_args
+        if not ok_tools:
+            reason = f"missing tools: all_of={sorted(want_all - called)} any_of={sorted(want_any)}"
+        elif not ok_args:
+            reason = "right tool, wrong arguments: " + "; ".join(wrong_args)
+        else:
+            reason = ""
     lint = grounding.check(answer_text, payloads, question=" ".join(turns))
     return {
         "question": " -> ".join(turns), "passed": bool(passed), "reason": reason, "grounding": lint,
-        "tools": tools_called, "grounded": bool(tools_called) or bool(case.get("refuses")),
+        "tools": tools_called, "calls": [{"tool": n, "arguments": a} for n, a in calls],
+        "grounded": bool(tools_called) or bool(case.get("refuses")),
         "refused": _refused(answer_text), "answer": answer_text,
         "seconds": round(time.time() - t0, 2), "cost_usd": out.get("cost_usd", 0.0),
         "rounds": out.get("rounds"), "error": out.get("error"),

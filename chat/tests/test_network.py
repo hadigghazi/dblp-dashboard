@@ -178,3 +178,16 @@ def test_rows_are_keyed_by_column_like_every_other_tool(ctx, run):
         for row in got["rows"]:
             assert isinstance(row, dict), tool
             assert set(got["columns"]) <= set(row), tool
+
+
+def test_there_is_no_default_measure(ctx, run):
+    """Betweenness used to be the default, and "most connected" is a degree question. A call with no
+    measure has to come back asking for one, not quietly rank brokers as if they were hubs."""
+    got = call(ctx, "central_authors")
+    assert got.get("refused")
+    assert "degree" in got.get("instead", "") and "betweenness" in got.get("instead", "")
+
+
+def test_the_schema_requires_the_measure():
+    params = T.spec("central_authors")["schema"]["function"]["parameters"]
+    assert "metric" in params["required"]
