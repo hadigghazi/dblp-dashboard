@@ -129,3 +129,22 @@ def test_status_names_the_embedding_model_in_use(client):
     body = client.get("/search/status").json()
     assert body["embeddings"]["model"] and body["embeddings"]["dimensions"]
     assert body["embeddings"]["vectors"].endswith(".float16")
+
+
+def test_the_warm_up_can_actually_reach_the_index(client):
+    """It could not, for a while, and nothing said so out loud: the warm-up thread attached the dump
+    but not the search store, so reading how far the index got raised every time. A failed warm-up is
+    only logged, so the cache silently stayed cold and the first real search after every deploy paid
+    the whole vector load while somebody waited."""
+    from search import server as SV
+
+    assert SV.state.fingerprint, "the fixture should have a store attached"
+    assert SV.state.warm_now() is True, "the warm-up must reach the index rather than raise"
+
+
+def test_the_warm_up_is_a_no_op_without_a_store():
+    """No store yet is a normal state on a fresh machine, not a failure."""
+    from search import server as SV
+
+    cold = SV.State()
+    assert cold.warm_now() is False

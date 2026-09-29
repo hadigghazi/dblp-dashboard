@@ -43,19 +43,31 @@ class State:
         finally:
             con.close()
 
+    def warm_now(self):
+        """Load the vector cache, synchronously. Returns whether there was anything to load.
+
+        The store is attached as well as the dump: how far the index got is recorded inside the
+        store, so without that attach this raised every time and the cache stayed cold - which meant
+        a live user paid the eleven-gigabyte load on the first search after every deploy, silently,
+        because a failed warm-up is only logged."""
+        if self.fingerprint is None:
+            return False
+        con, dump_meta = data.connect()
+        try:
+            S.attach_store(con, dump_meta)
+            V.warm(con, self.fingerprint)
+            return True
+        finally:
+            con.close()
+
     def warm_soon(self):
         """Pre-load the vector cache in the background, so a live user's first query never pays for
         it - a no-op once already warm. Runs off the startup/watch path so /search/health stays fast."""
         def run():
-            if self.fingerprint is None:
-                return
-            con, _ = data.connect()
             try:
-                V.warm(con, self.fingerprint)
+                self.warm_now()
             except Exception:
                 log.exception("vector warm-up failed")
-            finally:
-                con.close()
         threading.Thread(target=run, name="search-warm", daemon=True).start()
 
     def watch(self):
