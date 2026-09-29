@@ -220,6 +220,8 @@ const TOOL_LABEL = {
   rising_words: "compared title words between two periods", search_papers: "searched 5.4M titles",
   paper_detail: "opened the record", predict_venue: "asked the venue model",
   predict_coauthors: "asked the collaboration model", run_sql: "ran a one-off query",
+  network_shape: "measured the whole network", central_authors: "ranked authors by centrality",
+  author_centrality: "placed them in the network",
 };
 const toolLabel = (name) => TOOL_LABEL[name] || name.replace(/_/g, " ");
 

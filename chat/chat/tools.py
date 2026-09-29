@@ -1057,6 +1057,34 @@ HANDLERS = {
     "predict_venue": predict_venue, "predict_coauthors": predict_coauthors, "run_sql": run_sql,
 }
 
+# Imported here rather than at the top: network.py uses `result`, `refusal` and `rows_of` from
+# this module, so it can only be imported once those are defined. At the top it is a circular import.
+from . import network as NW  # noqa: E402
+
+SPECS += [
+    _fn("network_shape", "The shape of the whole dblp co-authorship network: how many authors have a "
+        "co-author, how many collaborations there are, how many separate groups exist and how much "
+        "sits in the largest, the clustering coefficient, and the degrees of separation across it. "
+        "Use for 'how connected is computer science', 'six degrees of separation', 'is it a small "
+        "world', 'how many authors never connect to the rest'.", {}),
+    _fn("central_authors", "Authors ranked by their POSITION in the co-authorship network, not by "
+        "output. betweenness = the bridges between research communities; degree = most co-authors; "
+        "closeness = fewest hops to everybody else; eigenvector = co-author to the well connected. "
+        "Use for 'most central', 'most connected', 'who bridges fields'. For 'most prolific', 'most "
+        "papers' or 'most published' use top_authors instead - they give different people.",
+        {"metric": {"type": "string",
+                    "enum": ["betweenness", "degree", "closeness", "eigenvector", "pagerank", "core"]},
+         "limit": {"type": "integer"}}),
+    _fn("author_centrality", "One author's position in the co-authorship network: their rank and "
+        "percentile on each centrality measure, which is the only readable form of these numbers. "
+        "Use for 'how central is X', 'how well connected is X', 'is X a bridge between fields'. "
+        "Call resolve_author first to get the key.",
+        {"key": {"type": "string", "description": "author page key from resolve_author"}}, ["key"]),
+]
+
+HANDLERS.update({"network_shape": NW.network_shape, "central_authors": NW.central_authors,
+                 "author_centrality": NW.author_centrality})
+
 # `from`/`to` are reserved words in Python, so the schema's names are mapped on the way in.
 RENAME = {"from": "frm", "to": "to"}
 

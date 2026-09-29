@@ -104,6 +104,21 @@ CASES = [
     dict(turns=["Which venues are the biggest?", "Who publishes most in the first one?"],
          any_of=["top_authors"]),
 
+    # ---- the co-authorship network. "Central" and "prolific" are different questions with
+    # different answers - on this dump only 58 of the 100 most-between authors are also among the 100
+    # most-connected - so a model that answers one with the other is wrong in a way that reads fine.
+    dict(q="Who is the most central author in computer science?", any_of=["central_authors"]),
+    dict(q="Which authors bridge the most research communities?", any_of=["central_authors"]),
+    dict(q="How central is Yoshua Bengio in the co-authorship network?",
+         all_of=["resolve_author"], any_of=["author_centrality"]),
+    dict(q="How many degrees of separation are there between computer scientists?",
+         any_of=["network_shape"]),
+    dict(q="Is the dblp co-authorship network a small world?", any_of=["network_shape"]),
+    # the trap: this one must NOT go to central_authors
+    dict(q="Which author has published the most papers?", any_of=["top_authors"]),
+    dict(turns=["Who is the most central author by betweenness?", "And how many papers do they have?"],
+         any_of=["central_authors", "resolve_author", "author_profile"]),
+
     # ---- out of scope: the answer must say the data cannot support it
     dict(q="What is the most cited paper in dblp?", refuses=True),
     dict(q="What is Geoffrey Hinton's h-index?", refuses=True),
