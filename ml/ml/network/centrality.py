@@ -73,6 +73,12 @@ BETWEENNESS_SAMPLES = 32768
 CLOSENESS_SAMPLES = 1024
 CLOSENESS_EPSILON = 0.1
 SPOT_CHECK = 200        # exact single-source runs used to measure the closeness error
+# Explanatory text is the code's, not the run's: it is refreshed whenever the files are written, so a
+# resumed run does not republish a sentence an older version of this module got wrong.
+PROJECTION_NOTE = ("projected from one source timed before the run. It can land either side: that "
+                   "source pays the one-off setup, which inflates it, but it also runs alone, so it "
+                   "never meets the memory-bandwidth contention of every thread doing this at once, "
+                   "which deflates it. Measured at 1.18x on the full graph - the contention wins.")
 CHECKPOINT = "scores.npz"              # the expensive results, saved before anything is joined
 CHECKPOINT_SUMMARY = "scores-summary.json"
 DIAMETER_ERROR = 0.05
@@ -384,12 +390,7 @@ def measures(G, threads, seed, betweenness_samples, closeness_samples, spot_chec
         "betweenness_projection": {"seconds_per_sampled_source": round(per_source, 3),
                                    "projected_seconds": round(projected, 1),
                                    "actual_seconds": timings["betweenness"],
-                                   "note": "projected from one source timed before the run. It "
-                                           "can land either side: that source pays the one-off setup, "
-                                           "which inflates it, but it also runs alone, so it never "
-                                           "meets the memory-bandwidth contention of every thread "
-                                           "doing this at once, which deflates it. Measured at 1.18x "
-                                           "on the full graph - the contention wins."},
+                                   "note": PROJECTION_NOTE},
         "seconds": timings}
 
 
@@ -613,6 +614,8 @@ def run(export_dir, out_dir, threads, seed, betweenness_samples=BETWEENNESS_SAMP
 
         if resuming:
             scores, person_id, back, summary, checked = load_checkpoint(out)
+            if summary.get("betweenness_projection"):
+                summary["betweenness_projection"]["note"] = PROJECTION_NOTE
         else:
             edges_plain = decompress(edges_gz, scratch / "edges.tsv")
             graph_file = scratch / "graph.el"
