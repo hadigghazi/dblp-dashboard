@@ -41,7 +41,7 @@ export function SourceTag({ job }) {
  * A card. Pass `state` (from useApi) to get loading, warming-up and error handling for free;
  * children render once data exists (they receive it via the render prop when `children` is a function).
  */
-export function Card({ title, sub, span2, state, job, height = 260, controls, children }) {
+export function Card({ id, title, sub, span2, state, job, height = 260, controls, children }) {
   const hasState = state !== undefined;
   const data = hasState ? state.data : undefined;
   let body;
@@ -55,7 +55,7 @@ export function Card({ title, sub, span2, state, job, height = 260, controls, ch
     body = typeof children === "function" ? children(data) : children;
   }
   return (
-    <section className={"card" + (span2 ? " span2" : "")} aria-busy={hasState && state.loading}>
+    <section id={id} className={"card" + (span2 ? " span2" : "")} aria-busy={hasState && state.loading}>
       <div className="cardhead">
         <h3>{title}</h3>
         <div className="cardtags">

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useApi, useDebounced } from "./api.js";
+import { useApi, useDebounced, useStatic } from "./api.js";
 import { Chart, usePalette, lineOption, barOption, hbarOption, loglogOption, growthOption, treemapOption, scatterOption, densityOption, boxplotOption, fmt } from "./charts.jsx";
 import {
   KpiStrip, PageHead, Card, Filters, FilterLabel, Chip, ChipGroup, Seg, RangeSlider, NumberInput,
@@ -246,6 +246,74 @@ export function PageIdentity({ go }) {
 }
 
 // ============================================================= Network ====
+const DATASET = "/downloads/dblp-coauthor/";
+
+function bytes(n) {
+  if (n >= 1e9) return `${(n / 1e9).toFixed(2)} GB`;
+  if (n >= 1e6) return `${Math.round(n / 1e6)} MB`;
+  if (n >= 1e3) return `${Math.round(n / 1e3)} kB`;
+  return `${n} B`;
+}
+
+/**
+ * The whole graph as files, listed from the manifest the publish step writes - so the page shows what
+ * is actually on disk, sizes and checksums included, and cannot drift from it. Served by nginx, so
+ * large downloads resume.
+ */
+function DatasetDownload() {
+  const dl = useStatic(`${DATASET}manifest.json`);
+  const m = dl.data;
+  const data = m?.files.filter((f) => f.kind === "data") || [];
+  const docs = m?.files.filter((f) => f.kind === "doc") || [];
+  const s = m?.summary || {};
+  let body;
+  if (dl.missing) {
+    body = <EmptyNote>The dataset hasn’t been published on this server yet.</EmptyNote>;
+  } else if (dl.error) {
+    body = <div className="cardmsg error" role="alert"><b>Couldn’t load the file list.</b> {dl.error}</div>;
+  } else if (!m) {
+    body = <div className="skel" style={{ height: 200, marginTop: 10 }} />;
+  } else {
+    body = (
+      <>
+        <p className="dlsum">
+          {fmt.comma(s.authors_with_a_coauthor)} authors and {fmt.comma(s.coauthorships)} co-authorships from the
+          dblp snapshot of {m.dump?.latest_mdate} — every record type, not a sample. {m.format}.
+          License: {m.license}.
+        </p>
+        <div className="tablewrap">
+          <table className="data dltable">
+            <thead><tr><th>File</th><th>What it is</th><th style={{ textAlign: "right" }}>Size</th></tr></thead>
+            <tbody>
+              {data.map((f) => (
+                <tr key={f.name}>
+                  <td><a className="mono" href={DATASET + f.name} download>{f.name}</a></td>
+                  <td>{f.description}</td>
+                  <td className="num">{bytes(f.bytes)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="dldocs">
+          <span>Read first:</span>
+          {docs.map((f) => <a key={f.name} href={DATASET + f.name} target="_blank" rel="noreferrer">{f.name}</a>)}
+          <a href={`${DATASET}SHA256SUMS`}>SHA256SUMS</a>
+        </div>
+        <pre className="dlcode mono">{`import pandas as pd
+edges = pd.read_csv("dblp-coauthor.ungraph.txt.gz", sep="\\t", comment="#",
+                    names=["from", "to", "papers_together"])`}</pre>
+      </>
+    );
+  }
+  return (
+    <Card id="download" span2 title="Download the network"
+          sub={m ? `${data.length} files, ${bytes(m.total_bytes)} in total · published ${m.published_at?.slice(0, 10)}` : "The graph, the node list, venue communities and centrality for every author."}>
+      {body}
+    </Card>
+  );
+}
+
 export function PageNetwork({ go }) {
   const p = usePalette();
   const net = useApi("network");
@@ -265,7 +333,11 @@ export function PageNetwork({ go }) {
     <>
       <PageHead eyebrow="03 · The co-authorship network" title="A small world, built from author pairs">
         Two authors are linked if they share a paper with 2–50 authors. Building and measuring this graph takes minutes
-        of compute, so this page shows the latest run of the network job rather than a per-request query.
+        of compute, so this page shows the latest run of the network job rather than a per-request query.{" "}
+        <button type="button" className="linkbtn"
+                onClick={() => document.getElementById("download")?.scrollIntoView({ behavior: "smooth" })}>
+          The whole graph can be downloaded.
+        </button>
       </PageHead>
       {net.data && !d ? <Callout>{net.data.reason}</Callout> : null}
       <KpiStrip loading={!d} items={d && [
@@ -314,6 +386,7 @@ export function PageNetwork({ go }) {
                                      { key: "pct", label: "Share", num: true, render: (r) => `${r.pct}%` }]} />
           )}
         </Card>
+        <DatasetDownload />
       </div>
     </>
   );

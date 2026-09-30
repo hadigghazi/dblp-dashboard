@@ -1,5 +1,35 @@
 import { useEffect, useRef, useState } from "react";
 
+/**
+ * Fetch a static JSON file served by nginx rather than an /api endpoint - the published dataset's
+ * manifest. A 404 there means "nothing published yet", which is a state to show, not an error.
+ */
+export function useStatic(url) {
+  const [state, setState] = useState({ data: null, error: null, loading: true, missing: false });
+  useEffect(() => {
+    let cancelled = false;
+    const ctrl = new AbortController();
+    fetch(url, { signal: ctrl.signal, cache: "no-cache" })
+      .then(async (res) => {
+        if (cancelled) return;
+        if (res.status === 404) {
+          setState({ data: null, error: null, loading: false, missing: true });
+          return;
+        }
+        if (!res.ok) throw new Error(`The server answered ${res.status}`);
+        const body = await res.json();
+        if (!cancelled) setState({ data: body, error: null, loading: false, missing: false });
+      })
+      .catch((e) => {
+        if (!cancelled && e.name !== "AbortError") {
+          setState({ data: null, error: e.message || "Request failed", loading: false, missing: false });
+        }
+      });
+    return () => { cancelled = true; ctrl.abort(); };
+  }, [url]);
+  return state;
+}
+
 /** Build /api/<path>?<params>, dropping empty values. */
 export function apiUrl(path, params) {
   const qs = new URLSearchParams(

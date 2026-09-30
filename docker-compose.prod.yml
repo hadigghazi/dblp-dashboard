@@ -23,6 +23,9 @@ services:
     container_name: dblp-dashboard
     ports:
       - "127.0.0.1:8081:80"   # Caddy on the VM owns :80/:443 and forwards the catch-all here
+    volumes:
+      # the published dataset, and nothing else from models/: `ml.network.cli publish` fills it
+      - ./models/downloads:/usr/share/nginx/downloads:ro
     depends_on: [api, mlapi, searchapi, chatapi]
     restart: unless-stopped
 

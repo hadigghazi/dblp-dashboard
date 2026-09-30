@@ -8,6 +8,7 @@ The co-authorship network as a published dataset, and its centrality measures.
   python -m ml.network.cli centrality                # degree, betweenness, closeness, eigenvector
   python -m ml.network.cli centrality --resume        # finish a run whose measures already succeeded
   python -m ml.network.cli exact-betweenness          # what the estimate and the shortcuts cost
+  python -m ml.network.cli publish                    # make the dataset downloadable from the site
 
 `--expect-edges` is worth using, with the matching scope: the dashboard's network analysis computed
 22,200,244 edges from every record type except preprints, which is `--scope no-preprints`, so that
@@ -49,7 +50,8 @@ def main(argv=None):
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     ap = argparse.ArgumentParser(prog="ml.network.cli", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["export", "scopes", "centrality", "exact-betweenness"])
+    ap.add_argument("command", choices=["export", "scopes", "centrality", "exact-betweenness",
+                                        "publish"])
     ap.add_argument("--with-bins", action="store_true",
                     help="count disambiguation pages as people (they are not; for comparison only)")
     ap.add_argument("--max-authors", type=int, default=config.MAX_AUTHORS)
@@ -101,6 +103,17 @@ def main(argv=None):
         print("\nmost between: " + ", ".join(
             f"{r['name']} ({r['value']:.2e})" for r in payload["top"]["betweenness"][:5]))
         print(f"\nwritten to {target}")
+        return 0
+
+    if args.command == "publish":
+        from . import centrality as CE, publish as PB
+        source = Path(args.source) if args.source else CE.find_export()
+        measured = Path(args.measured) if args.measured else centrality_out_dir(source)
+        manifest = PB.publish(source, measured, root=args.out)
+        print(json.dumps({k: v for k, v in manifest.items() if k != "files"}, indent=2))
+        for f in manifest["files"]:
+            print(f"  {f['bytes'] / 1e6:8.1f} MB  {f['name']}")
+        print(f"\nserved at /downloads/{PB.SLUG}/ - the network page lists it")
         return 0
 
     if args.command == "exact-betweenness":

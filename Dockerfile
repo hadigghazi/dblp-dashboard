@@ -17,6 +17,8 @@ RUN npm run build
 # ---- Stage 2: serve it with nginx ------------------------------------------
 FROM nginx:1.27-alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+# a config nginx rejects must fail this build, not take the live site down after a deploy
+RUN nginx -t
 COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 80
 HEALTHCHECK --interval=30s --timeout=3s CMD wget -qO- http://127.0.0.1/ >/dev/null || exit 1
