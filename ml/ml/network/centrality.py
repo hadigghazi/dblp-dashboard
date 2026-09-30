@@ -698,8 +698,15 @@ def _table(rows, columns):
     return head + body
 
 
+def _cell(text):
+    """Author names are data, and this Markdown ends up inside the website's pages: escape what would
+    be markup, and the pipe that would split a table cell."""
+    import html
+    return html.escape(str(text), quote=False).replace("|", "\\|")
+
+
 def _top_table(entries, value_label):
-    return _table([(e["rank"], e["name"], f"{e['degree']:,}",
+    return _table([(e["rank"], _cell(e["name"]), f"{e['degree']:,}",
                     "-" if e["value"] is None else f"{e['value']:.3e}")
                    for e in entries[:10]], ["#", "Author", "Co-authors", value_label])
 

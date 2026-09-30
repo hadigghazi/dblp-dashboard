@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { PageOverview, PagePublishing, PageIdentity, PageNetwork, PageTitles, PageVenues, PageQuality, PageEnrichment, PageTails } from "./pages.jsx";
+import { PageOverview, PagePublishing, PageIdentity, PageNetwork, PageDatasheet, PageTitles, PageVenues, PageQuality, PageEnrichment, PageTails } from "./pages.jsx";
 import { PageAuthors, PageVenueExplorer, PagePapers } from "./explore.jsx";
 import { PageDisambiguation, PageCollaborators, PageWhereToPublish } from "./ml.jsx";
 import { DeweyButton, DeweyPanel, ASSISTANT_NAME } from "./assistant.jsx";
@@ -21,6 +21,9 @@ const PAGES = [
   { id: "disambiguation", no: "M1", label: "Disambiguation", group: "Machine learning", Comp: PageDisambiguation },
   { id: "collaborators", no: "M2", label: "Next co-authors", group: "Machine learning", Comp: PageCollaborators },
   { id: "where-to-publish", no: "M3", label: "Where to publish", group: "Machine learning", Comp: PageWhereToPublish },
+  // reached from the network page's download card rather than from the menu; while it is open the
+  // menu keeps the network page highlighted, since that is where the reader is
+  { id: "datasheet", label: "Datasheet", hidden: true, parent: "network", Comp: PageDatasheet },
 ];
 
 /** "#authors?key=homepages/1/2" -> { page: "authors", params: { key: "homepages/1/2" } } */
@@ -97,13 +100,13 @@ export default function App() {
           <span className="no">★</span>Ask {ASSISTANT_NAME}
         </button>
         <nav className="pages" aria-label="Sections">
-          {PAGES.map((p) => {
+          {PAGES.filter((p) => !p.hidden).map((p) => {
             const showGroup = p.group && p.group !== lastGroup;
             lastGroup = p.group;
             return (
               <div key={p.id}>
                 {showGroup ? <div className="navsec">{p.group}</div> : null}
-                <a className={"navbtn" + (route.page === p.id ? " active" : "")} href={`#${p.id}`}
+                <a className={"navbtn" + (route.page === p.id || current.parent === p.id ? " active" : "")} href={`#${p.id}`}
                    aria-current={route.page === p.id ? "page" : undefined}
                    onClick={(e) => { e.preventDefault(); go(p.id, {}); }}>
                   <span className="no">{p.no}</span>{p.label}

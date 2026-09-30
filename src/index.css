@@ -355,8 +355,27 @@ code { font-size: .92em; }
 .dldocs { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; margin: 12px 0 0;
   font-size: 12.5px; color: var(--muted); }
 .dldocs a { color: var(--accent-ink); }
-.dlverify { margin: 8px 0 0; font-size: 12px; color: var(--muted); }
-.dlverify a { color: var(--accent-ink); }
+/* a published datasheet, shown as a page of the site */
+.datasheetnav { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 0 0 12px; }
+.datasheetnav .linkbtn { font-size: 13px; }
+.datasheet { max-width: 920px; }
+.prose { font-size: 14px; line-height: 1.7; color: var(--ink-2); }
+.prose h2 { font-size: 17px; color: var(--ink); margin: 26px 0 8px; padding-top: 14px; border-top: 1px solid var(--rule-2); }
+.prose h2:first-child { margin-top: 4px; padding-top: 0; border-top: 0; }
+.prose p, .prose ul { margin: 0 0 12px; max-width: 78ch; }
+.prose li { margin: 3px 0; }
+.prose strong { color: var(--ink); font-weight: 600; }
+.prose a { color: var(--accent-ink); }
+.prose code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: .88em;
+  background: var(--surface-2); border: 1px solid var(--rule-2); padding: 0 4px; border-radius: 4px; }
+.prose pre { background: var(--surface-2); border: 1px solid var(--rule-2); border-radius: 8px;
+  padding: 10px 12px; overflow-x: auto; line-height: 1.5; }
+.prose pre code { background: none; border: 0; padding: 0; }
+.prose .tablewrap { overflow-x: auto; margin: 8px 0 16px; }
+.prose table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.prose th, .prose td { text-align: left; padding: 6px 14px 6px 0; border-bottom: 1px solid var(--rule-2); vertical-align: top; }
+.prose th { color: var(--muted); font-weight: 500; font-size: 12px; }
+.prose td { font-variant-numeric: tabular-nums; }
 
 /* suggested questions: two easy chips, then the hard cases as quiet cards that say why they're hard */
 .suggest { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 420px; }

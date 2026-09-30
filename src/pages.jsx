@@ -247,6 +247,46 @@ export function PageIdentity({ go }) {
 
 // ============================================================= Network ====
 const DATASET = "/downloads/dblp-coauthor/";
+const DATASHEETS = {
+  network: { label: "About the graph", title: "How the graph was built",
+             lede: "What makes an edge, what was left out and why, and how the files are laid out." },
+  centrality: { label: "About the centrality table", title: "How centrality was measured",
+                lede: "Which measures are exact and which are estimated, how each was checked, and who comes out on top." },
+};
+
+/**
+ * A published datasheet, shown as a page of the site. The content is written by the publish step
+ * (rendered from its Markdown, with author names escaped there), so the page and the download are
+ * always the same document.
+ */
+export function PageDatasheet({ params, go }) {
+  const about = DATASHEETS[params?.about] ? params.about : "network";
+  const sheet = DATASHEETS[about];
+  const doc = useStatic(`${DATASET}datasheet-${about}.html`, "text");
+  const other = about === "network" ? "centrality" : "network";
+  const back = () => {
+    go("network", {});
+    setTimeout(() => document.getElementById("download")?.scrollIntoView({ behavior: "smooth" }), 80);
+  };
+  return (
+    <>
+      <PageHead eyebrow="03 · The co-authorship network · datasheet" title={sheet.title}>{sheet.lede}</PageHead>
+      <div className="datasheetnav">
+        <button type="button" className="linkbtn" onClick={back}>← Back to the download</button>
+        <button type="button" className="linkbtn" onClick={() => go("datasheet", { about: other })}>
+          {DATASHEETS[other].label} →
+        </button>
+      </div>
+      <section className="card datasheet">
+        {doc.missing ? <EmptyNote>This datasheet hasn’t been published on this server yet.</EmptyNote>
+          : doc.error ? <div className="cardmsg error" role="alert"><b>Couldn’t load the datasheet.</b> {doc.error}</div>
+          : !doc.data ? <div className="skel" style={{ height: 420 }} />
+          // written by the publish step from this project's own Markdown; names are escaped there
+          : <article className="prose" dangerouslySetInnerHTML={{ __html: doc.data }} />}
+      </section>
+    </>
+  );
+}
 
 function bytes(n) {
   if (n >= 1e9) return `${(n / 1e9).toFixed(2)} GB`;
@@ -260,7 +300,7 @@ function bytes(n) {
  * is actually on disk, sizes and checksums included, and cannot drift from it. Served by nginx, so
  * large downloads resume.
  */
-function DatasetDownload() {
+function DatasetDownload({ go }) {
   const dl = useStatic(`${DATASET}manifest.json`);
   const m = dl.data;
   const data = m?.files.filter((f) => f.kind === "data") || [];
@@ -297,16 +337,16 @@ function DatasetDownload() {
         </div>
         <div className="dldocs">
           <span>Read first:</span>
-          {docs.map((f) => (
-            <a key={f.name} href={DATASET + f.name} target="_blank" rel="noreferrer">
-              {f.name.includes("centrality") ? "About the centrality table" : "About the graph"}
-            </a>
-          ))}
+          {docs.map((f) => {
+            const about = f.name.replace(/^datasheet-|\.html$/g, "");
+            return (
+              <a key={f.name} href={`#datasheet?about=${about}`}
+                 onClick={(e) => { e.preventDefault(); go("datasheet", { about }); }}>
+                {DATASHEETS[about]?.label || f.name}
+              </a>
+            );
+          })}
         </div>
-        <p className="dlverify">
-          To check a download arrived intact, compare it against the{" "}
-          <a href={DATASET + (m.checksums || "SHA256SUMS.txt")} target="_blank" rel="noreferrer">SHA-256 checksums</a>.
-        </p>
       </>
     );
   }
@@ -390,7 +430,7 @@ export function PageNetwork({ go }) {
                                      { key: "pct", label: "Share", num: true, render: (r) => `${r.pct}%` }]} />
           )}
         </Card>
-        <DatasetDownload />
+        <DatasetDownload go={go} />
       </div>
     </>
   );

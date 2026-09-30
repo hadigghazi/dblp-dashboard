@@ -132,14 +132,25 @@ def test_the_manifest_says_what_the_page_needs(built, tmp_path):
     assert "CC0" in manifest["license"]
 
 
-def test_the_datasheets_are_readable_pages_not_markdown_source(built, tmp_path):
+def test_the_datasheets_are_rendered_content_for_the_site(built, tmp_path):
+    """The website shows these inside its own page, so what is published is the content alone:
+    rendered, but with no document around it and no second top heading."""
     network, centrality = built
     PB.publish(network, centrality, root=tmp_path)
-    page = (tmp_path / PB.SLUG / "datasheet-network.html").read_text(encoding="utf-8")
-    assert page.startswith("<!doctype html>")
-    assert "<table>" in page and "<h2>" in page, "tables and headings are rendered"
-    assert "\n## " not in page and "|---|" not in page, "no Markdown syntax left showing"
-    assert 'href="/#network"' in page, "a way back to the site"
+    for about in ("network", "centrality"):
+        page = (tmp_path / PB.SLUG / f"datasheet-{about}.html").read_text(encoding="utf-8")
+        assert "<table>" in page and "<h2>" in page, "tables and headings are rendered"
+        assert "\n## " not in page and "|---|" not in page, "no Markdown syntax left showing"
+        assert "<html" not in page and "<h1>" not in page, "the page around it comes from the site"
+
+
+def test_author_names_cannot_become_markup():
+    """Names are data, and this Markdown ends up inside the website."""
+    from ml.network import centrality as CE
+    table = CE._top_table([{"rank": 1, "name": "<img src=x onerror=alert(1)> | A", "degree": 3,
+                            "value": 0.5}], "Betweenness")
+    assert "<img" not in table and "&lt;img" in table
+    assert "\\|" in table, "a pipe in a name must not split the table cell"
 
 
 def test_the_exclusions_are_measured_not_described(built):
