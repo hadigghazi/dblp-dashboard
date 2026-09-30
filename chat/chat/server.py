@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 import queue
+import re
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -143,7 +144,8 @@ class Turn(BaseModel):
 
 
 class Ask(BaseModel):
-    question: str = Field(..., min_length=3)
+    # any non-empty question: a three-character minimum turned "hi" into a validation error
+    question: str = Field(..., min_length=1)
     history: List[Turn] = Field(default_factory=list)
     refresh: bool = False
 
@@ -224,7 +226,38 @@ def _run(question, history):
         yield event
 
 
+GREETINGS = {"hi", "hello", "hey", "hiya", "yo", "howdy", "greetings", "salam", "salaam", "marhaba",
+             "ahlan", "bonjour", "salut", "hola", "good morning", "good afternoon", "good evening"}
+THANKS = {"thanks", "thank you", "thx", "ty", "cheers", "merci", "shukran", "great thanks",
+          "thanks a lot", "thank you so much", "ok thanks", "perfect thanks"}
+
+
+def small_talk(question):
+    """A greeting or a thank-you is not a question about dblp. Sending it to the model costs a request
+    and, under a house style of "no greetings", reads oddly; rejecting it - as a minimum length once
+    did - is worse. So it gets a short reply here: who Dewey is and two things worth asking, both of
+    them questions the gold set verifies."""
+    words = re.sub(r"[^\w\s]", " ", question.lower()).split()
+    if not words or len(words) > 4:
+        return None
+    phrase = " ".join(words)
+    if phrase in THANKS:
+        return "You're welcome - ask me anything else about dblp."
+    if phrase in GREETINGS or (words[0] in GREETINGS and len(words) <= 2) or " ".join(words[:2]) in GREETINGS:
+        hard = [e["q"] for e in EXAMPLES if e["level"] == "hard"][:2]
+        return ("Hi, I'm Dewey. I answer questions about dblp - its authors, venues and papers, how they "
+                "have changed over the years, and who works with whom. For example: "
+                + " or ".join(f"\u201c{q}\u201d" for q in hard) + ".")
+    return None
+
+
 def ask_stream(question, history, refresh=False):
+    reply = small_talk(question)
+    if reply:
+        yield _sse({"type": "token", "text": reply})
+        yield _sse({"type": "done", "answer": reply, "seconds": 0.0, "tools": [], "cached": False,
+                    "cost_usd": 0.0, "model": None, "small_talk": True})
+        return
     fingerprint = data.pool.fingerprint()
     path = _cache_path(question, fingerprint) if not history else None
     if path and refresh:
@@ -265,6 +298,8 @@ def _guard(question):
     if not state.ready():
         raise HTTPException(503, detail=state.error or "The dblp snapshot is still being attached; "
                                                       "try again in a moment.")
+    if not question.strip():
+        raise HTTPException(422, detail="Type a question first.")
     if len(question) > config.MAX_QUESTION_CHARS:
         raise HTTPException(422, detail=f"Question too long (limit {config.MAX_QUESTION_CHARS} characters).")
 
@@ -280,7 +315,7 @@ def ask(body: Ask, request: Request, _ok=Depends(require_token)):
 
 
 @app.get("/chat/ask")
-def ask_get(question: str = Query(..., min_length=3), refresh: bool = False, _ok=Depends(require_token)):
+def ask_get(question: str = Query(..., min_length=1), refresh: bool = False, _ok=Depends(require_token)):
     """The same thing for a terminal: curl -N '.../chat/ask?question=...&token=...'"""
     _guard(question)
     return StreamingResponse(ask_stream(question, [], refresh), media_type="text/event-stream",

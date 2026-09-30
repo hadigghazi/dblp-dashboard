@@ -118,7 +118,9 @@ async function streamAnswer({ question, history, token, onEvent, signal }) {
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(res.status === 401 ? "needs-token" : (body.detail || `The service answered ${res.status}`));
+    // a validation failure arrives as a list of objects; handed to Error as-is it reads "[object Object]"
+    const detail = Array.isArray(body.detail) ? body.detail.map((d) => d.msg).join("; ") : body.detail;
+    throw new Error(res.status === 401 ? "needs-token" : (detail || `The service answered ${res.status}`));
   }
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -426,13 +428,16 @@ export function DeweyPanel({ open, onClose, go, onBusy }) {
   useEffect(() => { bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [turns]);
   useEffect(() => { if (open) input.current?.focus(); }, [open]);
   useEffect(() => { chatsRef.current = chats; }, [chats]);
-  // Switching chats replaces what the panel shows, from a store that lives outside React
-  // (localStorage); a new chat (no id) starts empty. Keyed on the id alone on purpose: re-running
-  // this when the chat's own turns change would overwrite the answer being streamed into it.
-  useEffect(() => {
-    const saved = chatsRef.current.find((c) => c.id === activeId);
+  // What the panel shows changes only when the reader switches chats - never as a side effect of the
+  // id changing. It used to be an effect keyed on the id, and the first question of a new chat mints
+  // an id: the effect then "loaded" that chat - not saved yet, so empty - over the question being
+  // answered, which vanished. The second try worked only because the id already existed.
+  const openChat = useCallback((id) => {
+    const saved = id ? chatsRef.current.find((c) => c.id === id) : null;
+    setActiveId(id);
     setTurns(saved ? saved.turns.map((t) => ({ ...t, tools: t.tools || [] })) : []);
-  }, [activeId]);
+    setListOpen(false);
+  }, [setActiveId]);
   useEffect(() => {
     if (!open) return undefined;
     const onKey = (e) => { if (e.key === "Escape") onClose(); };
@@ -468,7 +473,7 @@ export function DeweyPanel({ open, onClose, go, onBusy }) {
           else if (e.type === "tool") patch((t) => ({ ...t, tools: [...t.tools, e] }));
           else if (e.type === "token") patch((t) => ({ ...t, answer: t.answer + e.text, status: null }));
           else if (e.type === "done") patch((t) => ({ ...t, done: e, status: null, answer: t.answer || e.answer }));
-          else if (e.type === "error") patch((t) => ({ ...t, error: e.message, status: null }));
+          else if (e.type === "error") patch((t) => ({ ...t, error: String(e.message || "Something went wrong."), status: null }));
         },
       });
     } catch (e) {
@@ -499,7 +504,7 @@ export function DeweyPanel({ open, onClose, go, onBusy }) {
           </div>
           {turns.length ? (
             <button type="button" className="deweyicon" title="New chat" aria-label="New chat"
-                    onClick={() => { setActiveId(null); setTurns([]); setListOpen(false); }}>＋</button>
+                    onClick={() => openChat(null)}>＋</button>
           ) : null}
           {chats.length ? (
             <button type="button" className={"deweyicon" + (listOpen ? " on" : "")} title="Earlier chats"
@@ -516,7 +521,7 @@ export function DeweyPanel({ open, onClose, go, onBusy }) {
               {chats.map((c) => (
                 <li key={c.id} className={c.id === activeId ? "on" : undefined}>
                   <button type="button" className="chatopen"
-                          onClick={() => { setActiveId(c.id); setListOpen(false); }}>
+                          onClick={() => openChat(c.id)}>
                     <span className="chattitle">{c.title}</span>
                     <span className="chatwhen">{c.turns.length} question{c.turns.length === 1 ? "" : "s"}
                       {" · "}{new Date(c.at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>

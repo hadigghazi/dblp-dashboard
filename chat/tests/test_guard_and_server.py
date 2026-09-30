@@ -207,3 +207,46 @@ def test_the_money_ceiling_is_shared_by_every_channel(dump, monkeypatch):
     for channel in ("web", "cli"):
         ok, why = ledger.check(channel)
         assert not ok and "budget" in why, channel
+
+
+def test_a_greeting_is_answered_not_rejected(client):
+    """"hi" used to fail a three-character minimum and came back as "[object Object]". It now gets a
+    reply that says what Dewey is for - without a model call, so without a cost."""
+    r = client.post("/chat/ask", json={"question": "hi"})
+    assert r.status_code == 200
+    events = events_of(r)
+    text = "".join(e.get("text", "") for e in events if e.get("type") == "token")
+    assert "Dewey" in text and "dblp" in text
+    done = events[-1]
+    assert done["type"] == "done" and done["cost_usd"] == 0.0 and done["tools"] == []
+
+
+def test_the_greeting_suggests_questions_that_are_verified(client):
+    from chat import goldset
+    verified = {case["q"] for case in goldset.CASES if "q" in case}
+    events = events_of(client.post("/chat/ask", json={"question": "Hello!"}))
+    text = "".join(e.get("text", "") for e in events if e.get("type") == "token")
+    assert any(q in text for q in verified)
+
+
+def test_thanks_is_answered_too(client):
+    events = events_of(client.post("/chat/ask", json={"question": "thanks"}))
+    assert "welcome" in "".join(e.get("text", "") for e in events if e.get("type") == "token")
+
+
+def test_a_short_real_question_still_reaches_the_model(client):
+    """Only greetings are intercepted. "AI" is two characters and a real question."""
+    events = events_of(client.post("/chat/ask", json={"question": "AI"}))
+    assert any(e.get("type") == "tool" for e in events), "a real question goes through the agent"
+
+
+def test_a_greeting_inside_a_real_question_is_not_intercepted():
+    from chat.server import small_talk
+    assert small_talk("hi, who has the most papers in dblp?") is None
+    assert small_talk("hello there") is not None
+
+
+def test_an_empty_question_is_refused_with_words(client):
+    r = client.post("/chat/ask", json={"question": "   "})
+    assert r.status_code == 422
+    assert r.json()["detail"] == "Type a question first."
