@@ -287,6 +287,9 @@ def _comparison_table(rows):
 def datasheet(p):
     """What a reader needs to use the files and to judge them."""
     r = p["rules"]
+    # the sentence may only point at a table that is there
+    table_note = (", and the table below measures every other definition on this same dump"
+                  if p.get("scope_comparison") else "")
     return f"""# {p['name']}
 
 The co-authorship network of dblp, in the format SNAP uses for `com-DBLP`.
@@ -319,8 +322,7 @@ Two authors share a paper with {r['min_authors']}-{r['max_authors']} authors; th
 many such papers they share. Record types: {r['record_types']}. Years: {r['years']}.
 
 Scope is the one choice that moves the numbers most, so this file states it rather than implying it:
-it was built with `scope = {r['scope']}`, and the table below measures every other definition on this
-same dump. The dashboard's own network analysis uses `no-preprints` - every record type except
+it was built with `scope = {r['scope']}`{table_note}. The dashboard's own network analysis uses `no-preprints` - every record type except
 preprints - which is where its published edge count comes from; `all` keeps the preprints too, and
 `journal-conference` drops books, chapters, theses and data records as well.
 

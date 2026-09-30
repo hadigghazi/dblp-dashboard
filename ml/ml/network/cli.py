@@ -58,8 +58,10 @@ def main(argv=None):
     ap.add_argument("--scope", choices=sorted(config.SCOPES), default=config.SCOPE,
                     help="which records make an edge (default: every type)")
     ap.add_argument("--expect-edges", type=int, default=None)
-    ap.add_argument("--probe", action="store_true",
-                    help="also measure every other definition and put the table in the datasheet")
+    # on by default: two minutes, and a datasheet that gets published should always carry the table
+    ap.add_argument("--probe", action=argparse.BooleanOptionalAction, default=True,
+                    help="measure every other definition of a paper and put the table in the datasheet "
+                         "(--no-probe to skip)")
     ap.add_argument("--out", default=None)
     # centrality only
     ap.add_argument("--in", dest="source", default=None,
