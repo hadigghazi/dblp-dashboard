@@ -132,9 +132,11 @@ def bins_effect(con, scope):
     with them kept, and how many author slots sit on a bin - or on no author page at all. The datasheet
     used to say "bins are excluded" with no size attached; here the size turned out to be about a
     sixth of all collaborations, which a reader needs to know."""
+    # a bin by the same definition the graph uses - the author page's kind - so the two cannot disagree
     slots, unlinked, on_bins = con.execute("""
-        SELECT count(*), count(*) FILTER (WHERE person_id IS NULL), count(*) FILTER (WHERE on_bin)
-        FROM s.slots""").fetchone()
+        SELECT count(*), count(*) FILTER (WHERE sl.person_id IS NULL),
+               count(*) FILTER (WHERE p.page_kind = 'disambiguation')
+        FROM s.slots sl LEFT JOIN s.persons p ON p.person_id = sl.person_id""").fetchone()
     # its own tables, so the graph being exported is not disturbed
     con.execute(MEMBER_SQL.replace("TEMP TABLE member AS", "TEMP TABLE member_bins AS").format(
         min_authors=config.MIN_AUTHORS, max_authors=config.MAX_AUTHORS,
