@@ -127,6 +127,29 @@ def counts(con, with_bins):
             "max_degree": int(busiest)}
 
 
+def bins_effect(con, scope):
+    """What leaving the disambiguation bins out actually costs, measured on this dump: the same graph
+    with them kept, and how many author slots sit on a bin - or on no author page at all. The datasheet
+    used to say "bins are excluded" with no size attached; here the size turned out to be about a
+    sixth of all collaborations, which a reader needs to know."""
+    slots, unlinked, on_bins = con.execute("""
+        SELECT count(*), count(*) FILTER (WHERE person_id IS NULL), count(*) FILTER (WHERE on_bin)
+        FROM s.slots""").fetchone()
+    # its own tables, so the graph being exported is not disturbed
+    con.execute(MEMBER_SQL.replace("TEMP TABLE member AS", "TEMP TABLE member_bins AS").format(
+        min_authors=config.MIN_AUTHORS, max_authors=config.MAX_AUTHORS,
+        scope=_scope_clause(scope), bins=""))
+    con.execute("CREATE OR REPLACE TEMP TABLE edge_bins AS "
+                + EDGES_SQL.replace("member a JOIN member b", "member_bins a JOIN member_bins b"))
+    edges = con.execute("SELECT count(*) FROM edge_bins").fetchone()[0]
+    nodes = con.execute("SELECT count(*) FROM (SELECT u FROM edge_bins UNION SELECT v FROM edge_bins)"
+                        ).fetchone()[0]
+    con.execute("DROP TABLE edge_bins")
+    con.execute("DROP TABLE member_bins")
+    return {"author_slots": int(slots), "slots_on_bins": int(on_bins), "slots_with_no_page": int(unlinked),
+            "edges_with_bins": int(edges), "nodes_with_an_edge_with_bins": int(nodes)}
+
+
 def probe(con, with_bins=False, target=None):
     """Count the graph under every definition, so the one behind a published number can be named
     rather than guessed at. A definition the serving database cannot express is reported, not
@@ -202,6 +225,7 @@ def export(con, meta, out_dir, with_bins=False, expect_edges=None, scope=None, p
     # measured, not asserted: five definitions of "a co-authorship paper" and what each one counts,
     # so a reader can see which one produced these files and what the alternatives would give
     comparison = probe(con, with_bins=with_bins, target=expect_edges) if probe_scopes else None
+    left_out = None if with_bins else bins_effect(con, scope)
 
     payload = {
         "name": config.NAME, "generated_at": stamp,
@@ -213,6 +237,7 @@ def export(con, meta, out_dir, with_bins=False, expect_edges=None, scope=None, p
                   "years": "all"},
         **stats, **communities,
         "scope_comparison": comparison,
+        "bins_effect": left_out,
         "files": sorted(p.name for p in out.glob("*.gz")),
         "seconds": round(time.time() - t0, 1),
     }
@@ -299,17 +324,60 @@ preprints - which is where its published edge count comes from; `all` keeps the 
 
 {_comparison_table(p.get("scope_comparison"))}## What is excluded, and why
 
-* **Disambiguation bins**{'' if p['with_bins'] else ' (excluded here)'}: a bare name such as "Wei Wang"
-  holding the papers of hundreds of different people. Counting one as a person makes it the most
-  connected vertex in computer science, which is why it is not counted as one here. The most
-  connected author in this file has {p['max_degree']:,} co-authors; build the same graph with
-  `--with-bins` to see what including them does to that number. SNAP's com-DBLP does not make the
-  distinction at all.
-* **Papers with more than {r['max_authors']} authors**: {p['papers_above_the_author_cap']:,} of them
+{_bins_paragraph(p)}* **Papers with more than {r['max_authors']} authors**: {p['papers_above_the_author_cap']:,} of them
   (the largest has {p['largest_paper_authors']:,} authors). One 200-author paper contributes 19,900
-  edges of a single clique, which dominates betweenness and closeness.
-* **Author names with no dblp page**: they have no identity to be a node.
-
-Authors whose papers are all single-author appear in `nodes.txt` with no edges: an edge list cannot
+  edges of a single clique, which dominates betweenness and closeness. Their authors are still in the
+  graph through their other papers.
+* **Proceedings volumes**: they list the editors of a volume, not authors, and editing a volume is
+  not co-authorship. The papers inside the volume are all included.
+{_unlinked_paragraph(p)}
+Authors whose papers are all single-author appear in the nodes file with no edges: an edge list cannot
 represent an isolated vertex.
+
+## Reading the files
+
+Every file is gzipped, tab-separated text; lines starting with `#` are comments. Most tools read the
+compressed files directly. In Python:
+
+```python
+import pandas as pd
+edges = pd.read_csv("dblp-coauthor.ungraph.txt.gz", sep="\\t", comment="#",
+                    names=["from", "to", "papers_together"])
+nodes = pd.read_csv("dblp-coauthor.nodes.txt.gz", sep="\\t", comment="#",
+                    names=["id", "dblp_key", "name", "records", "first_year", "last_year"])
+```
+
+At {p['edges']:,} edges the whole graph fits comfortably in NetworKit or igraph; NetworkX will load it
+but needs a machine with a lot of memory and is slow on anything beyond degree.
 """
+
+
+def _bins_paragraph(p):
+    b = p.get("bins_effect")
+    if p.get("with_bins"):
+        return ("* **Disambiguation bins are included here**, for comparison only: a bin is a bare name "
+                "holding the papers of many different people, so here one name is one node.\n")
+    base = ("* **Disambiguation bins**: a bare name such as \"Wei Wang\" holding the papers of hundreds of "
+            "different people. Counting one as a person would make it the most connected vertex in "
+            "computer science, so bins are not nodes here. SNAP's com-DBLP does not make this "
+            "distinction at all.")
+    if not b:
+        return base + "\n"
+    lost = b["edges_with_bins"] - p["edges"]
+    return (base + f" This is the largest exclusion, and it is not small: {b['slots_on_bins']:,} of "
+            f"{b['author_slots']:,} author slots ({100 * b['slots_on_bins'] / max(1, b['author_slots']):.1f}%) sit "
+            f"on a bin, and keeping them would give {b['edges_with_bins']:,} edges instead of "
+            f"{p['edges']:,} - so {lost:,} collaborations ({100 * lost / max(1, b['edges_with_bins']):.1f}%) are "
+            f"with people dblp could not identify. They are real collaborations; there is just no person "
+            f"to attach them to.\n")
+
+
+def _unlinked_paragraph(p):
+    b = p.get("bins_effect")
+    if not b:
+        return "* **Author names with no dblp page**: they have no identity to be a node.\n"
+    if b["slots_with_no_page"] == 0:
+        return (f"* **Author names with no dblp page**: none. All {b['author_slots']:,} author slots on "
+                f"this dump link to an author page.\n")
+    return (f"* **Author names with no dblp page**: {b['slots_with_no_page']:,} of {b['author_slots']:,} "
+            f"author slots - they have no identity to be a node.\n")

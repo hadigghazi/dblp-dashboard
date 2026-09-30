@@ -43,7 +43,7 @@ def test_every_file_is_there_with_a_checksum_that_matches_its_bytes(built, tmp_p
         on_disk = live / f["name"]
         assert on_disk.stat().st_size == f["bytes"], f["name"]
         assert sha(on_disk) == f["sha256"], f["name"]
-    sums = dict(reversed(line.split("  ")) for line in (live / "SHA256SUMS").read_text().splitlines())
+    sums = dict(reversed(line.split("  ")) for line in (live / PB.CHECKSUMS).read_text().splitlines())
     assert sums == {f["name"]: f["sha256"] for f in manifest["files"]}
     assert json.loads((live / "manifest.json").read_text()) == manifest
 
@@ -65,7 +65,7 @@ def test_nothing_but_the_dataset_is_exposed(built, tmp_path):
     finally:
         (network / "stray-secret.txt").unlink()
     published = {p.name for p in (tmp_path / PB.SLUG).iterdir()}
-    assert published == {name for name, *_ in PB.files()} | {"SHA256SUMS", "manifest.json"}
+    assert published == {name for name, *_ in PB.files()} | {PB.CHECKSUMS, "manifest.json"}
 
 
 def test_the_web_server_can_read_everything(built, tmp_path):
@@ -130,3 +130,23 @@ def test_the_manifest_says_what_the_page_needs(built, tmp_path):
     assert manifest["total_bytes"] == sum(f["bytes"] for f in manifest["files"] if f["kind"] == "data")
     assert all(f["description"] for f in manifest["files"])
     assert "CC0" in manifest["license"]
+
+
+def test_the_datasheets_are_readable_pages_not_markdown_source(built, tmp_path):
+    network, centrality = built
+    PB.publish(network, centrality, root=tmp_path)
+    page = (tmp_path / PB.SLUG / "datasheet-network.html").read_text(encoding="utf-8")
+    assert page.startswith("<!doctype html>")
+    assert "<table>" in page and "<h2>" in page, "tables and headings are rendered"
+    assert "\n## " not in page and "|---|" not in page, "no Markdown syntax left showing"
+    assert 'href="/#network"' in page, "a way back to the site"
+
+
+def test_the_exclusions_are_measured_not_described(built):
+    network, _ = built
+    stats = json.loads((network / "stats.json").read_text(encoding="utf-8"))
+    b = stats["bins_effect"]
+    assert b["author_slots"] > 0
+    assert b["edges_with_bins"] >= stats["edges"], "keeping the bins can only add edges"
+    text = (network / "README.md").read_text(encoding="utf-8")
+    assert f"{b['author_slots']:,}" in text, "the datasheet states the measured size"

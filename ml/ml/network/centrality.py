@@ -804,9 +804,9 @@ By eigenvector - co-author to the well-connected:
 | File | Contents |
 |---|---|
 | `{p['name'].split('.')[0]}.centrality.tsv.gz` | one row per author, tab separated, with a header line |
-| `{p['name'].split('.')[0]}.centrality.parquet` | the same table, for the dashboard |
-| `metrics.json` | every number above, including the parameters and the checks |
-| `scores.npz` | the raw measures, saved before any joining; `centrality --resume` rebuilds the files above from it in a minute rather than repeating the hours |
+| `{p['name'].split('.')[0]}.centrality.parquet` | the same table as Parquet, used by the dashboard - on the server only, not in the download |
+| `metrics.json` | every number above, including the parameters and the checks - on the server only |
+| `scores.npz` | the raw measures, saved before any joining; `centrality --resume` rebuilds the files above from it in a minute rather than repeating the hours - on the server only |
 
 Columns: `person_id`, `key`, `name`, `records`, `first_year`, `last_year`, `degree`, `core`,
 `pagerank`, `eigenvector`, `betweenness`, `closeness`, the four `rank_*` columns (1 is most

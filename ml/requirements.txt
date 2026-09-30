@@ -9,3 +9,5 @@ uvicorn>=0.30
 # image is cp311, so nothing is compiled during the build. A version without a wheel for the
 # image's Python would compile from source for twenty minutes instead.
 networkit==11.2.2
+# renders the published datasheets as readable pages
+markdown>=3.5,<4

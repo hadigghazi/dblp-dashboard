@@ -297,12 +297,16 @@ function DatasetDownload() {
         </div>
         <div className="dldocs">
           <span>Read first:</span>
-          {docs.map((f) => <a key={f.name} href={DATASET + f.name} target="_blank" rel="noreferrer">{f.name}</a>)}
-          <a href={`${DATASET}SHA256SUMS`}>SHA256SUMS</a>
+          {docs.map((f) => (
+            <a key={f.name} href={DATASET + f.name} target="_blank" rel="noreferrer">
+              {f.name.includes("centrality") ? "About the centrality table" : "About the graph"}
+            </a>
+          ))}
         </div>
-        <pre className="dlcode mono">{`import pandas as pd
-edges = pd.read_csv("dblp-coauthor.ungraph.txt.gz", sep="\\t", comment="#",
-                    names=["from", "to", "papers_together"])`}</pre>
+        <p className="dlverify">
+          To check a download arrived intact, compare it against the{" "}
+          <a href={DATASET + (m.checksums || "SHA256SUMS.txt")} target="_blank" rel="noreferrer">SHA-256 checksums</a>.
+        </p>
       </>
     );
   }

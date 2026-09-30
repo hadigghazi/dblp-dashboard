@@ -37,6 +37,7 @@ from . import config
 log = logging.getLogger("dblp.ml.network.publish")
 
 SLUG = "dblp-coauthor"
+CHECKSUMS = "SHA256SUMS.txt"   # the standard name, plus an extension so a browser shows it
 CHUNK = 4 * 1024 * 1024
 
 
@@ -58,10 +59,11 @@ def files(name=None):
          f"The {top:,} largest of those communities"),
         (f"{name}.venues.names.txt.gz", "network", f"{name}.venues.names.txt.gz", "data",
          "Which venue each community line is"),
-        ("README-network.md", "network", "README.md", "doc",
-         "Datasheet for the graph: how it was built, and what was left out and why"),
-        ("README-centrality.md", "centrality", "README.md", "doc",
-         "Datasheet for the centrality table: how each measure was computed and checked"),
+        # the datasheets are published as readable pages, rendered from their Markdown
+        ("datasheet-network.html", "network", "README.md", "doc",
+         "About the graph: how it was built, and what was left out and why"),
+        ("datasheet-centrality.html", "centrality", "README.md", "doc",
+         "About the centrality table: how each measure was computed and checked"),
     ]
 
 
@@ -85,6 +87,72 @@ def check_same_graph(stats, metrics):
     if problems:
         raise ValueError("refusing to publish a centrality table for a different graph: "
                          + "; ".join(problems) + ". Re-run `centrality` on this export first.")
+
+
+PAGE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {{ --ground:#f4f5f7; --surface:#fff; --ink:#12151a; --ink-2:#4c5361; --muted:#868d99;
+  --rule:#e2e5ea; --rule-2:#edeff3; --accent-ink:#1c5cab; --code:#f6f7f9; }}
+@media (prefers-color-scheme: dark) {{ :root {{ --ground:#0f1115; --surface:#171a20; --ink:#eef0f3;
+  --ink-2:#b7bec9; --muted:#7c8492; --rule:#282e38; --rule-2:#20242c; --accent-ink:#8ab8f5; --code:#1b1f26; }} }}
+* {{ box-sizing: border-box; }}
+body {{ margin:0; background:var(--ground); color:var(--ink); font:15px/1.65 "IBM Plex Sans", system-ui, sans-serif; }}
+main {{ max-width:860px; margin:0 auto; padding:28px 16px 64px; }}
+.back {{ font-size:13px; color:var(--accent-ink); text-decoration:none; }}
+.back:hover {{ text-decoration:underline; }}
+article {{ background:var(--surface); border:1px solid var(--rule); border-radius:12px; padding:8px 28px 24px; margin-top:14px; }}
+h1 {{ font-size:26px; line-height:1.25; margin:22px 0 6px; }}
+h2 {{ font-size:18px; margin:30px 0 8px; padding-top:14px; border-top:1px solid var(--rule-2); }}
+p, li {{ color:var(--ink-2); }}
+strong {{ color:var(--ink); font-weight:600; }}
+a {{ color:var(--accent-ink); }}
+code, pre {{ font-family:"IBM Plex Mono", ui-monospace, monospace; font-size:.88em; }}
+code {{ background:var(--code); padding:1px 5px; border-radius:4px; }}
+pre {{ background:var(--code); border:1px solid var(--rule-2); border-radius:8px; padding:12px 14px; overflow-x:auto; line-height:1.5; }}
+pre code {{ background:none; padding:0; }}
+.tablewrap {{ overflow-x:auto; margin:10px 0 14px; }}
+table {{ border-collapse:collapse; width:100%; font-size:14px; }}
+th, td {{ text-align:left; padding:6px 12px 6px 0; border-bottom:1px solid var(--rule-2); vertical-align:top; }}
+th {{ color:var(--muted); font-weight:500; font-size:12.5px; }}
+td {{ color:var(--ink-2); font-variant-numeric:tabular-nums; }}
+@media (max-width:600px) {{ article {{ padding:4px 16px 18px; }} }}
+</style>
+</head>
+<body>
+<main>
+<a class="back" href="/#network">&larr; The co-authorship network on dblp Explorer</a>
+<article>
+{body}
+</article>
+</main>
+</body>
+</html>
+"""
+
+
+def render_page(markdown_text):
+    """A datasheet as a page a person can read, rather than Markdown source shown as plain text.
+    Tables are wrapped so a wide one scrolls on a phone instead of stretching the page."""
+    import markdown
+    body = markdown.markdown(markdown_text, extensions=["tables", "fenced_code"])
+    body = body.replace("<table>", '<div class="tablewrap"><table>').replace("</table>", "</table></div>")
+    first = next((line[2:].strip() for line in markdown_text.splitlines() if line.startswith("# ")),
+                 "dblp co-authorship network")
+    return PAGE.format(title=f"{first} - datasheet", body=body)
+
+
+def _write_and_hash(text: str, dst: Path):
+    raw = text.encode("utf-8")
+    dst.write_bytes(raw)
+    os.chmod(dst, 0o644)
+    return len(raw), hashlib.sha256(raw).hexdigest()
 
 
 def _copy_and_hash(src: Path, dst: Path):
@@ -149,11 +217,15 @@ def publish(export_dir, centrality_dir, root=None):
     try:
         published = []
         for out_name, where, src, kind, about in files(name):
-            size, sha = _copy_and_hash(sources[where] / src, staging / out_name)
+            if out_name.endswith(".html"):
+                page = render_page((sources[where] / src).read_text(encoding="utf-8"))
+                size, sha = _write_and_hash(page, staging / out_name)
+            else:
+                size, sha = _copy_and_hash(sources[where] / src, staging / out_name)
             published.append({"name": out_name, "kind": kind, "bytes": size, "sha256": sha,
                               "description": about})
             log.info("published %s (%.1f MB)", out_name, size / 1e6)
-        (staging / "SHA256SUMS").write_text(
+        (staging / CHECKSUMS).write_text(
             "".join(f"{f['sha256']}  {f['name']}\n" for f in published), encoding="utf-8")
         manifest = {
             "name": SLUG,
@@ -168,10 +240,11 @@ def publish(export_dir, centrality_dir, root=None):
             "published_at": stamp.isoformat(timespec="seconds"),
             "summary": summary(stats, metrics),
             "total_bytes": sum(f["bytes"] for f in published if f["kind"] == "data"),
+            "checksums": CHECKSUMS,
             "files": published,
         }
         (staging / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-        for extra in ("SHA256SUMS", "manifest.json"):
+        for extra in (CHECKSUMS, "manifest.json"):
             os.chmod(staging / extra, 0o644)
         os.chmod(staging, 0o755)
 
