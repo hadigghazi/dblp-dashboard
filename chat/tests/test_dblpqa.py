@@ -139,3 +139,34 @@ def test_the_report_puts_models_side_by_side(tmp_path):
     got = DQ.report(tmp_path / "r", out=lines.append)
     assert set(got["qa1"]) >= {"m1", "m2", "question"}
     assert any("below 2" in line for line in lines)
+
+
+def test_a_local_model_that_fails_once_is_retried(monkeypatch):
+    attempts = []
+
+    class Flaky:
+        def __init__(self, api_key=None, base_url=None, timeout=None):
+            pass
+
+        def complete(self, messages, model, tools=None, temperature=None, extra=None):
+            attempts.append(model)
+            if len(attempts) == 1:
+                raise RuntimeError("500 mid-generation")
+            return {"content": "fine", "usage": {}}
+
+    import chat.llm as L
+    monkeypatch.setattr(L, "Client", Flaky)
+    monkeypatch.setattr(DQ.time, "sleep", lambda _s: None)
+    assert DQ.answer_closed_book(object(), DQ.Meter(), "ollama:m", "q", "paper") == "fine"
+    assert len(attempts) == 2
+
+
+def test_a_hosted_model_failure_is_not_retried_here(monkeypatch):
+    """The hosted client already retries rate limits itself; anything else is reported at once."""
+    class Broken:
+        def complete(self, *a, **k):
+            raise RuntimeError("no")
+
+    with pytest.raises(RuntimeError, match="gpt-x failed"):
+        DQ.answer_closed_book(Broken(), DQ.Meter(), "gpt-x", "q", "ours")
+

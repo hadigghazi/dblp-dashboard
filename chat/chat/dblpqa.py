@@ -48,6 +48,7 @@ SAMPLING = {
     "paper": {"temperature": 0.7, "extra": {"top_p": 0.9, "max_tokens": 512}},
 }
 OLLAMA_PREFIX = "ollama:"
+LOCAL_RETRIES = 3
 
 
 def client_for(model, hosted):
@@ -195,13 +196,21 @@ class Meter:
 def answer_closed_book(client, meter, model, question, sampling="ours"):
     settings = SAMPLING[sampling]
     target, name = client_for(model, client)
-    try:
-        step = target.complete([{"role": "system", "content": ANSWER_SYSTEM},
-                                {"role": "user", "content": question}], model=name,
-                               temperature=settings["temperature"], extra=settings["extra"])
-    except Exception as e:
-        # the client's message is written for a website visitor; an experiment needs the server's own
-        raise RuntimeError(f"{model} failed: {getattr(e, 'raw', '') or e}") from e
+    # a local server on a busy CPU fails the odd request mid-generation (a 500 after ~15 good answers
+    # stopped the first calibration run); one failure must not throw away half an hour of answers
+    for attempt in range(LOCAL_RETRIES + 1):
+        try:
+            step = target.complete([{"role": "system", "content": ANSWER_SYSTEM},
+                                    {"role": "user", "content": question}], model=name,
+                                   temperature=settings["temperature"], extra=settings["extra"])
+            break
+        except Exception as e:
+            raw = getattr(e, "raw", "") or str(e)
+            if attempt == LOCAL_RETRIES or not model.startswith(OLLAMA_PREFIX):
+                # the client's message is written for a website visitor; an experiment needs the server's
+                raise RuntimeError(f"{model} failed: {raw}") from e
+            log.warning("%s failed (%s), retrying", model, raw[:200])
+            time.sleep(3 * (attempt + 1))
     if not model.startswith(OLLAMA_PREFIX):          # a local model costs nothing
         meter.add(model, step.get("usage", {}))
     return (step.get("content") or "").strip()
@@ -287,8 +296,12 @@ def run_closed_book(client, models, judge_model, rows, sha, out_dir=None, out=pr
     records, summary = [], {}
     for model in models:
         scores, rouges = [], []
-        for row in rows:
+        model_started = time.time()
+        for i, row in enumerate(rows, 1):
             answer = answer_closed_book(client, meter, model, row["question"], sampling)
+            if i % 10 == 0 or i == len(rows):
+                # a CPU-bound model takes half an hour for fifty answers; say where it is
+                out(f"  {model}: {i}/{len(rows)} answered, {time.time() - model_started:.0f}s")
             verdict = judge(client, meter, judge_model, row["question"], row["answer"], answer)
             rl = rouge_l(answer, row["answer"])
             scores.append(verdict["score"])
