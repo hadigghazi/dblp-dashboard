@@ -117,16 +117,27 @@ def pages(ctx, subject_name):
     return subject, [p for p in found if p is not subject]
 
 
-def right_person(calls, answer, subject, other_keys):
+def right_person(calls, answer, subject, others):
     """Whether the answer is about the subject and nobody it could be confused with.
 
     When a page-specific tool was called, the keys it was given decide: the subject's must be among
     them and no namesake's may be. A co-author's key is fine - "has he written with the first one"
     needs it. When none was called - a plain count, which the name lookup answers on its own - the
     answer has to quote the subject's count."""
-    used = {(c.get("arguments") or {}).get(a) for c in calls for a in AUTHOR_KEY_ARGS}
-    used.discard(None)
-    wrong = sorted(used & set(other_keys))
+    # a page's exact name is accepted as its key, so it counts as that page; a failed call looked
+    # nobody up, so it does not count at all
+    alias = {subject["name"].lower(): subject["key"]}
+    alias.update({p["name"].lower(): p["key"] for p in others})
+    other_keys = {p["key"] for p in others}
+    used = set()
+    for c in calls:
+        if c.get("refused"):
+            continue
+        for a in AUTHOR_KEY_ARGS:
+            value = (c.get("arguments") or {}).get(a)
+            if value:
+                used.add(alias.get(str(value).strip().lower(), value))
+    wrong = sorted(used & other_keys)
     if wrong:
         return False, f"used the wrong person's page: {', '.join(wrong)}"
     if used:
@@ -167,8 +178,7 @@ def run(ctx, client, suite="instructor", limit=None, out=print):
                  "calls": [], "answer": "", "seconds": 0, "cost_usd": 0,
                  "grounding": {"ok": True, "ungrounded": []}}
         if case.get("subject") and not case.get("refuses"):
-            ok, why = right_person(r.get("calls", []), r.get("answer"), subject,
-                                   [p["key"] for p in others])
+            ok, why = right_person(r.get("calls", []), r.get("answer"), subject, others)
             if not ok:
                 r["passed"] = False
                 r["reason"] = "; ".join(x for x in (r["reason"], why) if x)
@@ -198,7 +208,13 @@ def _print(out, i, r):
     out(f"{'PASS' if r['passed'] else 'FAIL'}  {i}. {r['question']}")
     for c in r.get("calls", []):
         args = ", ".join(f"{k}={v!r}" for k, v in (c.get("arguments") or {}).items())
-        out(f"        {c['tool']}({args})")
+        out(f"      {'x ' if c.get('refused') else '  '}{c['tool']}({args})"
+            + (f"   <- refused: {c.get('summary')}" if c.get("refused") else ""))
+    if not r["grounding"]["ok"]:
+        # the rows the numbers should have come from, so a misread is visible without rerunning
+        for c in r.get("calls", []):
+            for row in c.get("rows") or []:
+                out(f"          {c['tool']} row: {row}")
     if r.get("note"):
         out(f"        note: {r['note']}")
     if not r["passed"]:

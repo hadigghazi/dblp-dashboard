@@ -59,12 +59,15 @@ def arguments_ok(case, calls):
 
 def run_case(ctx, client, case):
     tools_called, calls, payloads, t0 = [], [], [], time.time()
-    succeeded = set()
+    succeeded, log = set(), []
 
     def emit(event):
         if event.get("type") == "tool":
             tools_called.append(event["name"])
             calls.append((event["name"], event.get("arguments") or {}))
+            log.append({"tool": event["name"], "arguments": event.get("arguments") or {},
+                        "refused": bool(event.get("refused")), "summary": event.get("summary"),
+                        "rows": (event.get("rows") or [])[:6]})
             if not event.get("refused"):
                 succeeded.add(event["name"])
 
@@ -92,6 +95,11 @@ def run_case(ctx, client, case):
         ok_args, wrong_args = arguments_ok(case, calls)
         # called is not the same as worked: a guessed key calls the right tool and gets nothing back
         failed = sorted(set(case.get("succeed", [])) - succeeded)
+        # several tools can each answer some questions - author_profile already lists the top
+        # co-authors - so a case can ask that one of them worked rather than a particular one
+        either = case.get("succeed_any")
+        if either and not set(either) & succeeded:
+            failed.append("one of " + "/".join(either))
         passed = ok_tools and ok_args and not failed
         if not ok_tools:
             reason = f"missing tools: all_of={sorted(want_all - called)} any_of={sorted(want_any)}"
@@ -108,7 +116,7 @@ def run_case(ctx, client, case):
     lint = grounding.check(answer_text, payloads, question=" ".join(turns))
     return {
         "question": " -> ".join(turns), "passed": bool(passed), "reason": reason, "grounding": lint,
-        "tools": tools_called, "calls": [{"tool": n, "arguments": a} for n, a in calls],
+        "tools": tools_called, "calls": log,
         "grounded": bool(tools_called) or bool(case.get("refuses")),
         "refused": _refused(answer_text), "answer": answer_text,
         "seconds": round(time.time() - t0, 2), "cost_usd": out.get("cost_usd", 0.0),

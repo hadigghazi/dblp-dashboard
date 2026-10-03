@@ -70,3 +70,26 @@ def test_an_invented_figure_is_caught():
 
 def test_an_answer_with_no_numbers_passes():
     assert grounding.check("dblp does not record citations.", payload({"summary": "x"}))["ok"]
+
+
+def test_a_number_beside_a_non_ascii_character_is_still_found():
+    """Serialised with escapes, the dash in "2–50 authors" became \\u2013 and swallowed the 50."""
+    from chat import grounding
+    got = grounding.check("Co-authorship counts papers with 2 to 50 authors.",
+                          [{"name": "coauthors", "result": {"note": "papers with 2–50 authors"}}])
+    assert got["ok"], got
+
+
+def test_a_small_decimal_rounded_to_two_places_is_grounded():
+    """"0.03%" for a share of 0.0284% is honest rounding, as "about 3,400" is for 3,351."""
+    from chat import grounding
+    got = grounding.check("It was 0.03% of titles in 2016.",
+                          [{"name": "title_terms", "result": {"rows": [{"year": 2016, "pct": 0.0284}]}}])
+    assert got["ok"], got
+
+
+def test_rounding_does_not_excuse_a_different_number():
+    from chat import grounding
+    got = grounding.check("It was 0.05% of titles in 2016.",
+                          [{"name": "title_terms", "result": {"rows": [{"year": 2016, "pct": 0.0284}]}}])
+    assert not got["ok"]

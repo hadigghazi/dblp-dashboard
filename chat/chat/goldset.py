@@ -12,7 +12,8 @@ steps are listed explicitly, because "papers of this person" is only correct if 
 into a key first.
 
 `succeed` lists tools that must have returned a result, not a refusal - called is not the same as
-worked, and a guessed key calls the right tool and gets nothing back.
+worked, and a guessed key calls the right tool and gets nothing back. `succeed_any` asks that at least
+one of several did, for questions more than one tool answers.
 
 `args` pins arguments as well: {tool: {parameter: value or [values]}}. It exists because the right
 tool with the wrong argument - "most connected" answered with betweenness - is a wrong answer that a
@@ -120,7 +121,7 @@ CASES = [
                 "The second one - give me some details about him"],
          all_of=["author_profile"], succeed=["author_profile"]),
     dict(turns=["Tell me about Yoshua Bengio", "Who are his most frequent co-authors?"],
-         any_of=["coauthors", "author_profile"], succeed=["coauthors"]),
+         any_of=["coauthors", "author_profile"], succeed_any=["coauthors", "author_profile"]),
 
     # ---- the co-authorship network. "Central" and "prolific" are different questions with
     # different answers - on this dump only 58 of the 100 most-between authors are also among the 100

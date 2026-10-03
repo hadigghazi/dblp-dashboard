@@ -212,6 +212,31 @@ def as_key(cur, value):
     return found[0][0] if len(found) == 1 else value
 
 
+def as_sid(cur, value):
+    """A venue's exact name, accepted where a series id is expected - the same courtesy as `as_key`.
+    Anything that is not exactly one series' usual name is returned unchanged for check_sid."""
+    text = (value or "").strip()
+    if not text or "/" in text:
+        return value
+    found = cur.execute("SELECT sid FROM s.series WHERE lower(usual_name) = lower(?) LIMIT 2",
+                        [text]).fetchall()
+    return found[0][0] if len(found) == 1 else value
+
+
+def check_sid(cur, sid):
+    """(sid, refusal or None). A filter on a venue id that does not exist matches nothing, and an empty
+    result reads as "never" - which is how "has he published in IEEE Access?" got a confident, false
+    no from a guessed id. So an unknown id is refused before anything is counted."""
+    if not sid:
+        return sid, None
+    sid = as_sid(cur, sid)
+    if cur.execute("SELECT 1 FROM s.series WHERE sid = ?", [sid]).fetchone():
+        return sid, None
+    return sid, refusal(f"there is no venue series {sid!r}",
+                        "call resolve_venue with the venue's name to get its id - never guess one; an "
+                        "empty result from a guessed id is not evidence that something never happened")
+
+
 def _not_latin(text):
     """True for a name written wholly in another script - Arabic, Chinese, Cyrillic..."""
     return bool(re.search(r"[^\W\d_]", text)) and not re.search(r"[A-Za-z]", text)
@@ -224,8 +249,9 @@ def resolve_author(ctx, name, limit=8):
         return refusal("an author name needs at least two characters")
     if _not_latin(q):
         return refusal("dblp writes every author name in Latin script",
-                       "call again with the name transliterated into Latin letters, trying the usual "
-                       "spellings if the first finds nothing (for example Hussein, Husein or Hussain)")
+                       "transliterate the name yourself into its usual Latin spelling and call "
+                       "resolve_author again now, trying other common spellings if the first finds "
+                       "nothing (Hussein, Husein, Hussain) - never ask the user to do it")
     cols, rows = rows_of(cur, """
         WITH hits AS (SELECT DISTINCT person_id FROM s.person_names WHERE name ILIKE ?),
         """ + RESOLVE_SELECT.format(order="(lower(p.base_name) = lower(?)) DESC, papers DESC, p.name"),
@@ -311,6 +337,9 @@ def author_profile(ctx, key):
 def author_papers(ctx, key, frm=None, to=None, kind=None, sid=None, title_contains=None, limit=20):
     cur = ctx.cursor()
     key = as_key(cur, key)
+    sid, bad = check_sid(cur, sid)
+    if bad:
+        return bad
     pid = one_of(cur, "SELECT person_id FROM s.persons WHERE key = ?", [key])
     if not pid:
         return refusal(f"there is no author page with the key {key!r}",
@@ -391,6 +420,9 @@ def namesakes(ctx, name, limit=25):
 def coauthors(ctx, key, sid=None, min_papers=1, limit=15):
     cur = ctx.cursor()
     key = as_key(cur, key)
+    sid, bad = check_sid(cur, sid)
+    if bad:
+        return bad
     pid = one_of(cur, "SELECT person_id, name FROM s.persons WHERE key = ?", [key])
     if not pid:
         return refusal(f"there is no author page with the key {key!r}",
@@ -479,6 +511,11 @@ IN_BOTH_CTE = """
 
 def authors_in_both(ctx, sid_a, sid_b, limit=15):
     cur = ctx.cursor()
+    for which in ("a", "b"):
+        checked, bad = check_sid(cur, sid_a if which == "a" else sid_b)
+        if bad:
+            return bad
+        sid_a, sid_b = (checked, sid_b) if which == "a" else (sid_a, checked)
     cols, rows = rows_of(cur, IN_BOTH_CTE + """
         SELECT p.key, p.name, ca.papers_a, cb.papers_b, ca.papers_a + cb.papers_b AS papers_total
         FROM ca JOIN cb USING (person_id) JOIN s.persons p USING (person_id)
@@ -538,6 +575,7 @@ def resolve_venue(ctx, name, kind=None, limit=8):
 
 def venue_profile(ctx, sid):
     cur = ctx.cursor()
+    sid = as_sid(cur, sid)
     head = one_of(cur, """
         SELECT sid, kind, usual_name AS name, papers, first_year, last_year, active_years, name_variants,
                round(100 * doi_share, 1) AS pct_doi, round(100 * oa_share, 1) AS pct_oa
@@ -604,6 +642,9 @@ def top_venues(ctx, metric="papers", kind=None, frm=None, to=None, limit=10, min
 # --------------------------------------------------------------------------- leaderboards
 def top_authors(ctx, metric="papers", sid=None, frm=None, to=None, limit=10):
     cur = ctx.cursor()
+    sid, bad = check_sid(cur, sid)
+    if bad:
+        return bad
     if sid is None and frm is None and to is None:
         table = "c.top_author_coauthors" if metric == "coauthors" else "c.top_author_papers"
         if not store.has_table(cur, table.split(".")[1]):
@@ -646,6 +687,9 @@ def count_papers(ctx, frm=None, to=None, kind=None, sid=None, author_key=None, m
                  max_authors=None, open_access=None, has_doi=None, with_unidentified_author=None,
                  title_contains=None):
     cur = ctx.cursor()
+    sid, bad = check_sid(cur, sid)
+    if bad:
+        return bad
     where, params = ["TRUE"], []
     if frm is not None:
         where.append("b.year >= ?")
@@ -716,6 +760,9 @@ METRICS = {
 
 def papers_timeseries(ctx, metric="papers", frm=None, to=None, sid=None, kind=None):
     cur = ctx.cursor()
+    sid, bad = check_sid(cur, sid)
+    if bad:
+        return bad
     if metric not in METRICS:
         return refusal(f"unknown metric {metric!r}", f"one of: {', '.join(METRICS)}")
     expr, base, population = METRICS[metric]
@@ -992,6 +1039,12 @@ def _fn(name, description, properties, required=(), heavy=False, remote=False):
 
 
 YEAR = {"type": "integer", "description": "year, inclusive"}
+AUTHOR_KEY = {"type": "string", "description": "the author page key a tool returned (resolve_author), or "
+              "the page's exact name when the user gave one, such as 'Wei Wang 0003'. Keys are opaque - "
+              "homepages/165/0820-2 - and can never be built from a name."}
+VENUE_ID = {"type": "string", "description": "the venue series id resolve_venue returned, such as conf/cvpr "
+            "or journals/tkde, or the venue's exact name. Never build one: an id that does not exist is "
+            "refused."}
 KIND = {"type": "string", "enum": ["journal", "conference", "preprint"]}
 
 SPECS = [
@@ -1014,12 +1067,12 @@ SPECS = [
         {"name": {"type": "string"}, "limit": {"type": "integer"}}, ["name"]),
     _fn("author_profile", "Everything about one author page: record count, active years, distinct "
         "co-authors, mean team size, top venues, top co-authors, recent papers, affiliations.",
-        {"key": {"type": "string", "description": "author page key from resolve_author"}}, ["key"]),
+        {"key": AUTHOR_KEY}, ["key"]),
     _fn("author_papers", "One author's papers, newest first, with optional year, kind, venue and title-word "
         "filters. "
         "Returns the matching total as well as the listed rows.",
-        {"key": {"type": "string"}, "from": YEAR, "to": YEAR, "kind": KIND,
-         "sid": {"type": "string", "description": "venue series key"},
+        {"key": AUTHOR_KEY, "from": YEAR, "to": YEAR, "kind": KIND,
+         "sid": VENUE_ID,
          "title_contains": {"type": "string", "description": "words that must all appear in the title, "
                                                             "for 'their papers about X'"},
          "limit": {"type": "integer"}}, ["key"]),
@@ -1030,13 +1083,13 @@ SPECS = [
          "limit": {"type": "integer"}}, ["name"]),
     _fn("coauthors", "One author's co-authors, most frequent first. With `sid`, only co-authors who also "
         "publish in that venue series - use this for two-step questions.",
-        {"key": {"type": "string"}, "sid": {"type": "string"}, "min_papers": {"type": "integer"},
+        {"key": AUTHOR_KEY, "sid": VENUE_ID, "min_papers": {"type": "integer"},
          "limit": {"type": "integer"}}, ["key"]),
     _fn("pair_papers", "The papers two authors wrote together, if any.",
-        {"key_a": {"type": "string"}, "key_b": {"type": "string"}, "limit": {"type": "integer"}},
+        {"key_a": AUTHOR_KEY, "key_b": AUTHOR_KEY, "limit": {"type": "integer"}},
         ["key_a", "key_b"]),
     _fn("authors_in_both", "People who have published in both of two venue series, most active first.",
-        {"sid_a": {"type": "string"}, "sid_b": {"type": "string"}, "limit": {"type": "integer"}},
+        {"sid_a": VENUE_ID, "sid_b": VENUE_ID, "limit": {"type": "integer"}},
         ["sid_a", "sid_b"], heavy=True),
 
     _fn("resolve_venue", "Turn a conference or journal name into dblp series keys (conf/cvpr, "
@@ -1048,7 +1101,7 @@ SPECS = [
     _fn("venue_profile", "Everything about one venue series: size, span, DOI and open-access share, "
         "the last ten years, its most frequent authors, and the name variants it has used. This is "
         "the answer to any open question about a venue; resolve_venue only identifies it.",
-        {"sid": {"type": "string"}}, ["sid"], heavy=True),
+        {"sid": VENUE_ID}, ["sid"], heavy=True),
     _fn("top_venues", "Largest or most open venue series, optionally within a period or restricted to "
         "journals or conferences.",
         {"metric": {"type": "string", "enum": ["papers", "open_access", "authors_per_paper"]},
@@ -1059,14 +1112,14 @@ SPECS = [
     _fn("top_authors", "Authors ranked by records or by distinct co-authors. Global and all-time is a "
         "precomputed leaderboard and instant; with a venue (`sid`) or a year range it is computed live.",
         {"metric": {"type": "string", "enum": ["papers", "coauthors"]},
-         "sid": {"type": "string", "description": "venue series key, e.g. conf/nips"},
+         "sid": VENUE_ID,
          "from": YEAR, "to": YEAR, "limit": {"type": "integer"}}, heavy=True),
     _fn("most_shared_names", "The names shared by the most separate people.", {"limit": {"type": "integer"}}),
 
     _fn("count_papers", "How many records match a combination of filters, broken down by kind. Use this "
         "for every 'how many' question rather than counting rows yourself.",
-        {"from": YEAR, "to": YEAR, "kind": KIND, "sid": {"type": "string"},
-         "author_key": {"type": "string"}, "min_authors": {"type": "integer"},
+        {"from": YEAR, "to": YEAR, "kind": KIND, "sid": VENUE_ID,
+         "author_key": AUTHOR_KEY, "min_authors": {"type": "integer"},
          "max_authors": {"type": "integer"}, "open_access": {"type": "boolean"},
          "has_doi": {"type": "boolean"}, "with_unidentified_author": {"type": "boolean"},
          "title_contains": {"type": "string"}}, heavy=True),
@@ -1074,7 +1127,7 @@ SPECS = [
         "10+-author share, open-access, DOI, ORCID or unidentified-author share, or preprint counts. "
         "Optionally for one venue series or one kind.",
         {"metric": {"type": "string", "enum": list(METRICS)}, "from": YEAR, "to": YEAR,
-         "sid": {"type": "string"}, "kind": {"type": "string", "enum": ["journal", "conference"]}},
+         "sid": VENUE_ID, "kind": {"type": "string", "enum": ["journal", "conference"]}},
         ["metric"], heavy=True),
     _fn("title_terms", "Share of titles per year containing each of up to six terms - the way to answer "
         "'is X rising', 'when did Y take off', 'compare X and Y'.",
@@ -1099,7 +1152,7 @@ SPECS = [
          "top": {"type": "integer"}}, ["title"], remote=True),
     _fn("predict_coauthors", "Who an author is likely to publish with next, from the link-prediction "
         "model, with the shared co-authors that explain each suggestion.",
-        {"author_key": {"type": "string"}, "top": {"type": "integer"}}, ["author_key"], remote=True),
+        {"author_key": AUTHOR_KEY, "top": {"type": "integer"}}, ["author_key"], remote=True),
 
     _fn("run_sql", "Last resort: one read-only SELECT over the serving tables (pubs, persons, "
         "person_names, slots, career, person_stats, series, word_year, person_degree, src) when no typed "
@@ -1146,7 +1199,7 @@ SPECS += [
         "percentile on each centrality measure, which is the only readable form of these numbers. "
         "Use for 'how central is X', 'how well connected is X', 'is X a bridge between fields'. "
         "Call resolve_author first to get the key.",
-        {"key": {"type": "string", "description": "author page key from resolve_author"}}, ["key"]),
+        {"key": AUTHOR_KEY}, ["key"]),
 ]
 
 HANDLERS.update({"network_shape": NW.network_shape, "central_authors": NW.central_authors,

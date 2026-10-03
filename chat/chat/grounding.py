@@ -44,7 +44,9 @@ def _sources(payloads, question=None):
     the tools have to support."""
     found = set(_floats(question or ""))
     for entry in payloads:
-        for value in _floats(json.dumps(entry, default=str)):
+        # ensure_ascii=False: escaped, the dash in "2–50 authors" became \u2013 and its digits
+        # swallowed the 50
+        for value in _floats(json.dumps(entry, default=str, ensure_ascii=False)):
             found.add(value)
     return found
 
@@ -66,6 +68,9 @@ def _accounted_for(value, sources):
         ratio = value / source
         for digits in (1, 2, 3):                     # "about 3,400" for 3,351
             if round(source, -max(0, len(str(int(abs(source)))) - digits)) == value:
+                return True
+        for places in (0, 1, 2, 3):                  # "0.03%" for 0.0284%: rounded to two places
+            if round(source, places) == value:
                 return True
     return False
 

@@ -419,3 +419,33 @@ def test_an_invented_key_is_refused_before_the_model_is_asked(ctx):
     got = call(ctx, "predict_coauthors", author_key="homepages/hh2")
     assert got.get("refused") and "unreachable" not in got["summary"]
     assert "resolve_author" in got.get("instead", "")
+
+
+def test_a_guessed_venue_id_is_refused_not_answered_with_nothing(ctx):
+    """"Has he ever published in IEEE Access?" got a confident "never" from a guessed id that matched
+    nothing. An id that does not exist is refused before anything is counted."""
+    for tool, args in (("author_papers", {"key": "homepages/a/Ada", "sid": "conf/guessed"}),
+                       ("count_papers", {"sid": "conf/guessed"}),
+                       ("coauthors", {"key": "homepages/a/Ada", "sid": "conf/guessed"}),
+                       ("papers_timeseries", {"sid": "conf/guessed"}),
+                       ("top_authors", {"sid": "conf/guessed"}),
+                       ("authors_in_both", {"sid_a": "conf/aaa", "sid_b": "conf/guessed"})):
+        got = T.call(ctx, tool, args)
+        assert got.get("refused"), tool
+        assert "resolve_venue" in got.get("instead", ""), tool
+
+
+def test_a_venues_exact_name_is_accepted_as_its_id(ctx):
+    from chat.tools import as_sid
+    cur = ctx.cursor()
+    name = cur.execute("SELECT usual_name FROM s.series WHERE sid = 'conf/aaa'").fetchone()[0]
+    assert as_sid(cur, name) == "conf/aaa"
+    assert not call(ctx, "author_papers", key="homepages/a/Ada", sid=name).get("refused")
+
+
+def test_every_key_and_venue_parameter_says_what_it_accepts():
+    for spec in T.SPECS:
+        props = spec["schema"]["function"]["parameters"]["properties"]
+        for name in ("key", "key_a", "key_b", "author_key", "sid", "sid_a", "sid_b"):
+            if name in props and spec["name"] != "paper_detail":
+                assert props[name].get("description"), f"{spec['name']}.{name}"

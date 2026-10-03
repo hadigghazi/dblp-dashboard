@@ -6,7 +6,7 @@ from chat import evaluate as E
 from chat import scenarios as SC
 
 SUBJECT = {"key": "homepages/s/2", "name": "Sam Same 0002", "papers": 25}
-OTHERS = ["homepages/s/1", "homepages/s/bin"]
+OTHERS = [{"key": "homepages/s/1", "name": "Sam Same 0001"}, {"key": "homepages/s/bin", "name": "Sam Same"}]
 
 
 def test_the_namesake_is_the_wrong_person():
@@ -40,7 +40,7 @@ def test_the_pages_are_found_by_name_at_run_time(ctx):
 
 
 def test_every_scenario_is_well_formed():
-    known = {"q", "turns", "any_of", "all_of", "succeed", "args", "refuses", "subject", "note"}
+    known = {"q", "turns", "any_of", "all_of", "succeed", "succeed_any", "args", "refuses", "subject", "note"}
     for name, suite in SC.SUITES.items():
         assert suite["subject"] and suite["cases"], name
         for case in suite["cases"]:
@@ -53,3 +53,16 @@ def test_scenarios_use_the_same_case_format_as_the_gold_set():
     """So any scenario that proves itself can be moved into the gold set unchanged."""
     case = SC.SUITES["instructor"]["cases"][0]
     assert E.arguments_ok(case, []) == (True, [])
+
+
+def test_the_exact_name_counts_as_the_page():
+    calls = [{"tool": "author_profile", "arguments": {"key": "Sam Same 0002"}}]
+    assert SC.right_person(calls, "", SUBJECT, OTHERS) == (True, "")
+    namesake = [{"tool": "author_profile", "arguments": {"key": "sam same 0001"}}]
+    assert not SC.right_person(namesake, "", SUBJECT, OTHERS)[0]
+
+
+def test_a_failed_lookup_looked_nobody_up():
+    calls = [{"tool": "author_profile", "arguments": {"key": "homepages/hh2"}, "refused": True},
+             {"tool": "author_profile", "arguments": {"key": "homepages/s/2"}}]
+    assert SC.right_person(calls, "", SUBJECT, OTHERS) == (True, "")
