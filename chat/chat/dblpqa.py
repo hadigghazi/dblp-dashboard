@@ -43,7 +43,12 @@ SEED = 7
 ANSWER_SYSTEM = "You answer questions about computer-science research. Answer in one to three sentences."
 CONTEXT_SYSTEM = ("You answer questions about computer-science research using the abstract you are given. "
                   "Answer in one to three sentences.")
-CONDITIONS = ("closed-book", "oracle")
+# the retrieved papers are numbered and titled, as any search result list is; nothing tells the model
+# that some of them may be off-topic - finding that out is part of what is being measured
+RAG_SYSTEM = ("You answer questions about computer-science research using the paper abstracts you are "
+              "given. Answer in one to three sentences.")
+RAG_PREFIX = "rag-"
+CONDITIONS = ("closed-book", "oracle")      # plus rag-<ranker>, see dblpqa_rag
 
 # Generation settings. "paper" is Table 1 of the paper (Mistral-7B and TinyLlama rows): what a
 # reproduction of their models has to use. "ours" is deterministic, for the hosted models.
@@ -284,7 +289,15 @@ def messages_for(condition, question, abstract=None):
     if condition == "oracle":
         return [{"role": "system", "content": CONTEXT_SYSTEM},
                 {"role": "user", "content": f"Abstract:\n{abstract}\n\nQuestion: {question}"}]
+    if condition.startswith(RAG_PREFIX):
+        return [{"role": "system", "content": RAG_SYSTEM},
+                {"role": "user", "content": f"Abstracts:\n{abstract}\n\nQuestion: {question}"}]
     return [{"role": "system", "content": ANSWER_SYSTEM}, {"role": "user", "content": question}]
+
+
+def system_prompt(condition):
+    return (CONTEXT_SYSTEM if condition == "oracle" else RAG_SYSTEM if condition.startswith(RAG_PREFIX)
+            else ANSWER_SYSTEM)
 
 
 def answer_closed_book(client, meter, model, question, sampling="ours"):
@@ -387,6 +400,8 @@ def paired_delta(model, sampling, records, runs_dir, against="closed-book"):
             if rec and rec["model"] == model and rec.get("score") is not None:
                 theirs[rec["id"]] = rec["score"]
         shared = sorted(set(mine) & set(theirs))
+        if not shared:
+            return None
         diffs = [mine[q] - theirs[q] for q in shared]
         return {"against_run": summary.parent.name, "questions": len(shared),
                 "delta": bootstrap_ci(diffs),
@@ -453,13 +468,16 @@ def run_condition(client, models, judge_model, rows, sha, condition, contexts=No
                         judging, stopped = False, f"judging stopped at {model} {row['id']}: {e}"
                         out(f"!! {stopped}\n   answers are still generated and saved; score them later "
                             f"with: dblpqa rescore --run {out_dir.name}")
+                ctx = (contexts or {}).get(row["id"], {})
                 rec = {"condition": condition, "model": model, "id": row["id"],
-                       "context_source": (contexts or {}).get(row["id"], {}).get("source")
-                       if condition == "oracle" else None,
+                       "context_source": ctx.get("source") if condition != "closed-book" else None,
                        "question": row["question"], "gold": row["answer"], "answer": got,
                        "score": verdict["score"] if verdict else None,
                        "reason": verdict["reason"] if verdict else None,
                        "rouge_l": round(rouge_l(got, row["answer"]), 4)}
+                if condition.startswith(RAG_PREFIX):
+                    rec.update(retrieved=ctx.get("retrieved"), source_rank=ctx.get("source_rank"),
+                               source_in_context=ctx.get("source_in_context"))
                 records.append(rec)
                 fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
                 fh.flush()
@@ -470,7 +488,7 @@ def run_condition(client, models, judge_model, rows, sha, condition, contexts=No
         "condition": condition, "run_at": stamp, "dataset_sha256": sha, "questions": len(rows),
         "questions_in_dataset": len(all_rows),
         "models": models, "judge": judge_model, "sampling": {sampling: SAMPLING[sampling]},
-        "answer_prompt": CONTEXT_SYSTEM if condition == "oracle" else ANSWER_SYSTEM,
+        "answer_prompt": system_prompt(condition),
         "rouge_l": "LCS F1 over lower-cased alphanumeric tokens, no stemming",
         "judge_controls": controls, "results": summary,
         "paper_reference": {"note": "the paper's no-context baseline, manual 0-2 score",
@@ -499,6 +517,17 @@ def summarize(records, condition, sampling, runs_dir):
                  "rouge_l": round(sum(r["rouge_l"] for r in mine) / len(mine), 4)}
         if condition != "closed-book" and judged:
             entry["vs_closed_book"] = paired_delta(model, sampling, judged, runs_dir)
+        if condition.startswith(RAG_PREFIX) and judged:
+            entry["vs_oracle"] = paired_delta(model, sampling, judged, runs_dir, against="oracle")
+            # the question the oracle could not ask: when retrieval brings the wrong papers, does a
+            # model do worse than if it had been given nothing at all?
+            entry["by_retrieval"] = {}
+            for label, hit in (("source retrieved", True), ("source missed", False)):
+                part = [r for r in judged if bool(r.get("source_in_context")) == hit]
+                if part:
+                    entry["by_retrieval"][label] = {
+                        "questions": len(part), "judge_score": bootstrap_ci([r["score"] for r in part]),
+                        "vs_closed_book": paired_delta(model, sampling, part, runs_dir)}
         summary[model] = entry
     return summary
 
@@ -521,6 +550,18 @@ def print_summary(summary, condition, out=print):
                 f"{paired['better']}, worse on {paired['worse']}, same on {paired['same']}")
         elif condition != "closed-book":
             out(f"{'':14s} (no closed-book run with this model and sampling to compare with)")
+        oracle = entry.get("vs_oracle")
+        if oracle:
+            d = oracle["delta"]
+            out(f"{'':14s} vs oracle on the same {oracle['questions']} questions: {d['mean']:+.2f} "
+                f"(95% CI {d['low']:+.2f} to {d['high']:+.2f})")
+        for label, part in (entry.get("by_retrieval") or {}).items():
+            ci, paired = part["judge_score"], part.get("vs_closed_book")
+            line = f"{'':14s} {label}: {part['questions']} questions, {ci['mean']:.2f}"
+            if paired:
+                line += (f", vs closed-book {paired['delta']['mean']:+.2f}; better on {paired['better']}, "
+                         f"worse on {paired['worse']}")
+            out(line)
 
 
 def rescore(client, run_dir, judge_model, out=print):
