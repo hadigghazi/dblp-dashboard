@@ -49,3 +49,33 @@ def test_keys_shown_to_the_user_are_caught():
     assert shown_keys("Published in journals/access in 2025.", "q") == ["journals/access"]
     assert shown_keys("Here is conf/nips/VaswaniSPUJGKP17.", "Show me conf/nips/VaswaniSPUJGKP17") == []
     assert shown_keys("He has 25 papers.", "q") == []
+
+
+def test_provider_errors_are_readable_and_classified():
+    from chat.llm import provider_error
+    credit = provider_error(429, '{"error": {"code": "insufficient_quota", "message": "You exceeded your current quota"}}')
+    assert credit.kind == "credit" and credit.terminal
+    assert "{" not in str(credit) and "credit" in str(credit)
+    busy = provider_error(429, '{"error": {"code": "rate_limit_exceeded"}}')
+    assert busy.kind == "busy" and not busy.terminal
+    assert provider_error(401, "bad key").kind == "key"
+    assert provider_error(500, "oops").kind == "down"
+
+
+def test_an_evaluation_stops_at_the_first_error_waiting_will_not_fix(loaded, monkeypatch):
+    """Past that point every case fails the same way; scoring them reports wrong answers that were
+    never answers."""
+    from chat import evaluate as EV
+    seen = []
+
+    def fake(ctx, client, case):
+        seen.append(case["q"])
+        if case["q"] == "second":
+            return {"error": "out of credit", "error_kind": "credit"}
+        return {"question": case["q"], "passed": True}
+
+    monkeypatch.setattr(EV, "run_case", fake)
+    results, stopped = EV.run_cases(None, None, [{"q": "first"}, {"q": "second"}, {"q": "third"}])
+    assert [r["question"] for r in results] == ["first"]
+    assert seen == ["first", "second"], "nothing after the terminal error is attempted"
+    assert "stopped after 1 of 3" in stopped

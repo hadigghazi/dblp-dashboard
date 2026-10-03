@@ -395,9 +395,12 @@ def test_an_exact_page_name_is_accepted_as_a_key(ctx):
 
 
 def test_a_name_in_another_script_asks_for_a_transliteration(ctx):
+    """An instruction to retry, not a refusal: framed as "not answerable", the model refused and asked
+    the user to transliterate the name."""
     got = call(ctx, "resolve_author", name="حسين حزيمة")
-    assert got.get("refused") and "Latin" in got["summary"]
-    assert "transliterat" in got.get("instead", "")
+    assert not got.get("refused")
+    assert "Latin" in got["summary"] and "Transliterate it yourself" in got["summary"]
+    assert got["meta"]["retry"] is True
 
 
 def test_a_typo_of_a_numbered_name_finds_the_numbered_pages(ctx):

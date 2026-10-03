@@ -20,7 +20,33 @@ log = logging.getLogger("dblp.chat.llm")
 
 
 class LLMError(RuntimeError):
-    pass
+    """A provider failure, with a message a visitor can read. `kind` says whether waiting will help:
+    "credit" and "key" will not, "busy" and "down" may. `raw` keeps the provider's own words for logs."""
+
+    def __init__(self, message, kind="down", raw=""):
+        super().__init__(message)
+        self.kind = kind
+        self.raw = raw
+
+    @property
+    def terminal(self):
+        return self.kind in ("credit", "key")
+
+
+def provider_error(status, text):
+    """Turn a provider's error response into an LLMError a person can read."""
+    low = (text or "").lower()
+    if "insufficient_quota" in low or "billing" in low or "exceeded your current quota" in low:
+        return LLMError("Dewey has used up its AI credit for now, so it can't answer questions until the "
+                        "site's owner tops it up. Everything else on the site still works.", "credit", text)
+    if status in (401, 403) or "invalid_api_key" in low:
+        return LLMError("Dewey isn't set up correctly right now (the AI provider rejected its key). "
+                        "Everything else on the site still works.", "key", text)
+    if status == 429:
+        return LLMError("Dewey is getting a lot of questions at once. Please try again in a minute.",
+                        "busy", text)
+    return LLMError(f"Dewey couldn't reach its AI provider just now (error {status}). Please try again "
+                    f"in a moment.", "down", text)
 
 
 def _usage(payload):
@@ -61,9 +87,10 @@ class Client:
             r = self._http.post(f"{self.base_url}/chat/completions", headers=self._headers(),
                                 json=self._body(messages, model, tools, temperature))
         except httpx.HTTPError as e:
-            raise LLMError(f"could not reach the model provider: {e}") from e
+            raise LLMError("Dewey couldn't reach its AI provider just now. Please try again in a moment.",
+                           "down", str(e)) from e
         if r.status_code >= 400:
-            raise LLMError(f"model provider returned {r.status_code}: {r.text[:400]}")
+            raise provider_error(r.status_code, r.text[:600])
         payload = r.json()
         choice = (payload.get("choices") or [{}])[0]
         message = choice.get("message") or {}
@@ -88,7 +115,7 @@ class Client:
             with self._http.stream("POST", f"{self.base_url}/chat/completions", headers=self._headers(),
                                    json=body) as r:
                 if r.status_code >= 400:
-                    raise LLMError(f"model provider returned {r.status_code}: {r.read()[:400]!r}")
+                    raise provider_error(r.status_code, r.read()[:600].decode("utf-8", "replace"))
                 usage = {"input_tokens": 0, "output_tokens": 0}
                 for line in r.iter_lines():
                     if not line or not line.startswith("data:"):

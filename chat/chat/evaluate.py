@@ -120,19 +120,42 @@ def run_case(ctx, client, case):
         "grounded": bool(tools_called) or bool(case.get("refuses")),
         "refused": _refused(answer_text), "answer": answer_text,
         "seconds": round(time.time() - t0, 2), "cost_usd": out.get("cost_usd", 0.0),
-        "rounds": out.get("rounds"), "error": out.get("error"),
+        "rounds": out.get("rounds"), "error": out.get("error"), "error_kind": out.get("error_kind"),
     }
+
+
+TERMINAL = ("credit", "key")
+
+
+def run_cases(ctx, client, cases, each=None):
+    """Run cases in order, stopping at the first provider error waiting will not fix. Past that point
+    every case fails the same way, and scoring them would report wrong answers that were never
+    answers. Returns (results, why it stopped or None)."""
+    results = []
+    for case in cases:
+        r = run_case(ctx, client, case)
+        if r.get("error") and r.get("error_kind") in TERMINAL:
+            return results, f"stopped after {len(results)} of {len(cases)}: {r['error']}"
+        results.append(r)
+        if each:
+            each(case, r)
+    return results, None
 
 
 def run(ctx, client, cases=None, limit=None):
     cases = (cases or goldset.CASES)[:limit] if limit else (cases or goldset.CASES)
-    results = [run_case(ctx, client, case) for case in cases]
+    results, stopped = run_cases(ctx, client, cases)
+    cases = cases[:len(results)]
     scoped = [r for c, r in zip(cases, results) if not c.get("refuses")]
     out_of_scope = [r for c, r in zip(cases, results) if c.get("refuses")]
     n = len(results) or 1
     summary = {
         "run_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "cases": len(results),
+        # a provider error is not a wrong answer; it is counted on its own, and a terminal one stops
+        # the run before it can be scored as one
+        "stopped": stopped,
+        "provider_errors": sum(1 for r in results if r.get("error")),
         "tool_choice_accuracy": round(sum(r["passed"] for r in scoped) / (len(scoped) or 1), 3),
         "refusal_accuracy": round(sum(r["passed"] for r in out_of_scope) / (len(out_of_scope) or 1), 3),
         "grounded_share": round(sum(r["grounded"] for r in results) / n, 3),

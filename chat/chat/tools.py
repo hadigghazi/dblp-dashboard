@@ -248,10 +248,12 @@ def resolve_author(ctx, name, limit=8):
     if len(q) < 2:
         return refusal("an author name needs at least two characters")
     if _not_latin(q):
-        return refusal("dblp writes every author name in Latin script",
-                       "transliterate the name yourself into its usual Latin spelling and call "
-                       "resolve_author again now, trying other common spellings if the first finds "
-                       "nothing (Hussein, Husein, Hussain) - never ask the user to do it")
+        # not a refusal: framed as "not answerable from this data", the model refused and asked the
+        # user to transliterate. This is an instruction to retry, and it reads as one.
+        return result(f"dblp writes author names in Latin script, so “{q}” has to be transliterated "
+                      f"first. Transliterate it yourself into its usual Latin spelling and call "
+                      f"resolve_author again now; if that finds nothing, try the other common "
+                      f"spellings. Do not ask the user to do it.", rows=[], retry=True)
     cols, rows = rows_of(cur, """
         WITH hits AS (SELECT DISTINCT person_id FROM s.person_names WHERE name ILIKE ?),
         """ + RESOLVE_SELECT.format(order="(lower(p.base_name) = lower(?)) DESC, papers DESC, p.name"),
@@ -371,10 +373,14 @@ def author_papers(ctx, key, frm=None, to=None, kind=None, sid=None, title_contai
         WITH mine AS (SELECT pid FROM s.slots WHERE person_id = ?)
         SELECT count(*) AS n FROM s.pubs b JOIN mine USING (pid) WHERE {' AND '.join(where)}""",
                    [pid["person_id"]] + params)
+    title_note = (f" These are titles containing every word of “{title_contains}”: a title search, not "
+                  f"a topic search. Say so - a paper can be about a topic without naming it in its "
+                  f"title, so never turn none found into none on the topic."
+                  if title_contains else "")
     return result(f"{total['n']:,} matching records; the {min(int(limit), total['n'])} most recent are listed.",
                   cols, rows, link={"page": "authors", "key": key},
                   note="Quote the total above, not the number of rows. position is the author's slot "
-                       "on the paper.",
+                       "on the paper." + title_note,
                   matching=total["n"])
 
 

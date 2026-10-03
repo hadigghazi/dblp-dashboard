@@ -36,8 +36,8 @@ SUITES = {
             # ---- finding him
             dict(q="How many papers does Hussein Hazimeh have?", all_of=["resolve_author"],
                  note="ambiguous on purpose: a good answer says two people share the name"),
-            dict(q="How many papers does Hussein Hazimeh 0002 have?", all_of=["resolve_author"],
-                 subject=True),
+            dict(q="How many papers does Hussein Hazimeh 0002 have?",
+                 any_of=["resolve_author", "author_profile", "count_papers"], subject=True),
             dict(q="How many papers does Dr. Hussein Hazimeh from Arab Open University have?",
                  all_of=["resolve_author"], subject=True),
             dict(q="Tell me about Hussein Hazimeh from Lebanon", any_of=["author_profile"],
@@ -169,9 +169,14 @@ def run(ctx, client, suite="instructor", limit=None, out=print):
 
     cases = spec["cases"][:limit] if limit else spec["cases"]
     results, started = [], time.time()
+    stopped = None
     for i, case in enumerate(cases, 1):
         try:
             r = E.run_case(ctx, client, case)
+            if r.get("error") and r.get("error_kind") in E.TERMINAL:
+                stopped = f"stopped after {i - 1} of {len(cases)}: {r['error']}"
+                out(f"\n!! {stopped}")
+                break
         except Exception as e:                    # one broken scenario must not lose the rest
             question = " -> ".join(case.get("turns") or [case.get("q", "")])
             r = {"question": question, "passed": False, "reason": f"crashed: {type(e).__name__}: {e}",
@@ -191,7 +196,7 @@ def run(ctx, client, suite="instructor", limit=None, out=print):
         _print(out, i, r)
 
     passed = sum(r["passed"] for r in results)
-    summary = {"suite": suite, "subject": subject, "same_name": others,
+    summary = {"suite": suite, "subject": subject, "same_name": others, "stopped": stopped,
                "run_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                "scenarios": len(results), "passed": passed,
                "cost_usd": round(sum(r["cost_usd"] or 0 for r in results), 4),

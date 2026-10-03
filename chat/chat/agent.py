@@ -253,8 +253,9 @@ def answer(ctx, client, question, history=None, emit=None, ledger=None, collect=
         try:
             step = client.complete(messages, model=config.MODEL_FAST, tools=T.schemas())
         except LLMError as e:
+            log.warning("provider error (%s): %s", getattr(e, "kind", "?"), getattr(e, "raw", "")[:300])
             emit({"type": "error", "message": str(e)})
-            return {"error": str(e), "rounds": rounds}
+            return {"error": str(e), "error_kind": getattr(e, "kind", "down"), "rounds": rounds}
         account(step.get("model", config.MODEL_FAST), step.get("usage", {}))
         calls = step.get("tool_calls") or []
         if not calls:
@@ -294,8 +295,10 @@ def answer(ctx, client, question, history=None, emit=None, ledger=None, collect=
                 elif kind == "usage":
                     account(model, value)
         except LLMError as e:
+            log.warning("provider error (%s): %s", getattr(e, "kind", "?"), getattr(e, "raw", "")[:300])
             emit({"type": "error", "message": str(e)})
-            return {"error": str(e), "rounds": rounds, "tools": used_tools}
+            return {"error": str(e), "error_kind": getattr(e, "kind", "down"), "rounds": rounds,
+                    "tools": used_tools}
         text = "".join(pieces)
 
     if ledger is not None:

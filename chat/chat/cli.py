@@ -79,6 +79,11 @@ def cmd_evaluate(args):
     if not client.configured():
         sys.exit("No OPENAI_API_KEY set.")
     payload = E.run(ctx, client, limit=args.limit)
+    if payload["summary"].get("stopped"):
+        # not saved: a run cut short by the provider would replace the last real measurement
+        print(json.dumps(payload["summary"], indent=2))
+        sys.exit("\nThe evaluation stopped early because the model provider refused - see 'stopped' "
+                 "above. Nothing was saved; the last complete report still stands.")
     path = E.save(payload, ctx.meta.get("fingerprint", "unknown"))
     print(json.dumps(payload["summary"], indent=2))
     print(f"\nwritten to {path}")
