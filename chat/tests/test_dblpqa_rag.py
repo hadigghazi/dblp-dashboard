@@ -39,7 +39,7 @@ def test_bm25_normalises_for_length():
 
 def test_rank_fusion_rewards_agreement():
     assert RAG.rrf([["a", "b", "c"], ["b", "a", "c"]])[-1] == "c"
-    assert RAG.rrf([["a", "b", "c"], ["c", "b", "a"]])[0] == "b", "second in both beats first in one"
+    assert RAG.rrf([["x", "b"], ["y", "b"]])[0] == "b", "second in both beats first in only one"
 
 
 def test_the_source_is_found_under_any_of_its_keys():
