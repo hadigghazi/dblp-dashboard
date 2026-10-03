@@ -32,6 +32,7 @@ from pathlib import Path
 import httpx
 
 from . import config
+from .llm import LLMError
 
 log = logging.getLogger("dblp.chat.dblpqa")
 
@@ -378,12 +379,12 @@ def paired_delta(model, sampling, records, runs_dir, against="closed-book"):
             got = json.loads(summary.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        if model not in (got.get("models") or []) or sampling not in (got.get("sampling") or {}):
+        if model not in (got.get("models") or []) or sampling not in (got.get("sampling") or {"ours": None}):
             continue
         theirs = {}
         for line in (summary.parent / "answers.jsonl").read_text(encoding="utf-8").splitlines():
             rec = json.loads(line) if line.strip() else None
-            if rec and rec["model"] == model:
+            if rec and rec["model"] == model and rec.get("score") is not None:
                 theirs[rec["id"]] = rec["score"]
         shared = sorted(set(mine) & set(theirs))
         diffs = [mine[q] - theirs[q] for q in shared]
@@ -414,7 +415,10 @@ def run_condition(client, models, judge_model, rows, sha, condition, contexts=No
     out_dir.mkdir(parents=True, exist_ok=True)
 
     controls = reusable_controls(judge_model, sha, out_dir.parent) if reuse_controls else None
-    if controls:
+    if judge_model == "none":
+        controls = {"passed": True, "skipped": "answers generated without scoring; see dblpqa rescore"}
+        out("no judge: answers are generated and saved; score them later with dblpqa rescore")
+    elif controls:
         out(f"judge controls: passed on this dataset in run {controls['reused_from']} - reused")
     else:
         controls = judge_controls(client, meter, judge_model, all_rows, out)
@@ -426,43 +430,42 @@ def run_condition(client, models, judge_model, rows, sha, condition, contexts=No
              "cost_usd": meter.cost()}, indent=2), encoding="utf-8")
         out(f"stopped: the judge failed its controls (see {out_dir / 'summary.json'}); --force to run anyway")
         return None
-    records, summary = [], {}
-    for model in models:
-        scores, rouges = [], []
-        model_started = time.time()
-        for i, row in enumerate(rows, 1):
-            abstract = (contexts or {}).get(row["id"], {}).get("abstract")
-            got = answer(client, meter, model, messages_for(condition, row["question"], abstract), sampling)
-            if i % 10 == 0 or i == len(rows):
-                # a CPU-bound model takes half an hour for fifty answers; say where it is
-                out(f"  {model}: {i}/{len(rows)} answered, {time.time() - model_started:.0f}s")
-            verdict = judge(client, meter, judge_model, row["question"], row["answer"], got)
-            rl = rouge_l(got, row["answer"])
-            scores.append(verdict["score"])
-            rouges.append(rl)
-            records.append({"condition": condition, "model": model, "id": row["id"],
-                            "context_source": (contexts or {}).get(row["id"], {}).get("source")
-                            if condition == "oracle" else None,
-                            "question": row["question"], "gold": row["answer"], "answer": got,
-                            "score": verdict["score"], "reason": verdict["reason"], "rouge_l": round(rl, 4)})
-        summary[model] = {"judge_score": bootstrap_ci(scores),
-                          "distribution": {s: scores.count(s) for s in (2, 1, 0)},
-                          "rouge_l": round(sum(rouges) / len(rouges), 4)}
-        ci = summary[model]["judge_score"]
-        if condition != "closed-book":
-            summary[model]["vs_closed_book"] = paired_delta(model, sampling, records, out_dir.parent)
-        out(f"{model:14s} {condition}: {ci['mean']:.2f} / 2  (95% CI {ci['low']:.2f}-{ci['high']:.2f})  "
-            f"2s: {scores.count(2)}  1s: {scores.count(1)}  0s: {scores.count(0)}  "
-            f"ROUGE-L {summary[model]['rouge_l']:.3f}")
-        paired = summary[model].get("vs_closed_book")
-        if paired:
-            d = paired["delta"]
-            out(f"{'':14s} vs closed-book on the same {paired['questions']} questions: "
-                f"{d['mean']:+.2f} (95% CI {d['low']:+.2f} to {d['high']:+.2f}); better on "
-                f"{paired['better']}, worse on {paired['worse']}, same on {paired['same']}")
-        elif condition != "closed-book":
-            out(f"{'':14s} (no closed-book run with this model and sampling to compare with)")
+    records, judging, stopped = [], judge_model != "none", None
+    # written as produced: a crash, or the credit running out, loses nothing already generated
+    with open(out_dir / "answers.jsonl", "w", encoding="utf-8") as fh:
+        for model in models:
+            model_started = time.time()
+            for i, row in enumerate(rows, 1):
+                abstract = (contexts or {}).get(row["id"], {}).get("abstract")
+                got = answer(client, meter, model, messages_for(condition, row["question"], abstract),
+                             sampling)
+                if i % 10 == 0 or i == len(rows):
+                    # a CPU-bound model takes half an hour for fifty answers; say where it is
+                    out(f"  {model}: {i}/{len(rows)} answered, {time.time() - model_started:.0f}s")
+                verdict = None
+                if judging:
+                    try:
+                        verdict = judge(client, meter, judge_model, row["question"], row["answer"], got)
+                    except LLMError as e:
+                        if not e.terminal:
+                            raise
+                        # out of credit: keep generating, score later
+                        judging, stopped = False, f"judging stopped at {model} {row['id']}: {e}"
+                        out(f"!! {stopped}\n   answers are still generated and saved; score them later "
+                            f"with: dblpqa rescore --run {out_dir.name}")
+                rec = {"condition": condition, "model": model, "id": row["id"],
+                       "context_source": (contexts or {}).get(row["id"], {}).get("source")
+                       if condition == "oracle" else None,
+                       "question": row["question"], "gold": row["answer"], "answer": got,
+                       "score": verdict["score"] if verdict else None,
+                       "reason": verdict["reason"] if verdict else None,
+                       "rouge_l": round(rouge_l(got, row["answer"]), 4)}
+                records.append(rec)
+                fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                fh.flush()
 
+    summary = summarize(records, condition, sampling, out_dir.parent)
+    print_summary(summary, condition, out)
     payload = {
         "condition": condition, "run_at": stamp, "dataset_sha256": sha, "questions": len(rows),
         "questions_in_dataset": len(all_rows),
@@ -475,12 +478,87 @@ def run_condition(client, models, judge_model, rows, sha, condition, contexts=No
                             "FLAN-T5-Large": 0.30, "FLAN-T5-XXL": 0.60,
                             "best_with_retrieval": {"Mistral-7B Top-5-CD": 1.74}},
         "usage": meter.usage, "cost_usd": meter.cost(), "seconds": round(time.time() - started, 1),
+        "stopped": stopped,
     }
     (out_dir / "summary.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    with open(out_dir / "answers.jsonl", "w", encoding="utf-8") as fh:
+    out(f"\n${payload['cost_usd']} · {payload['seconds']}s · written to {out_dir}")
+    return payload
+
+
+def summarize(records, condition, sampling, runs_dir):
+    """Per model: answered and judged counts, the mean with its interval over the judged answers, and -
+    for any condition but closed-book - the paired difference from the same model's closed-book run."""
+    summary = {}
+    for model in dict.fromkeys(r["model"] for r in records):
+        mine = [r for r in records if r["model"] == model]
+        judged = [r for r in mine if r.get("score") is not None]
+        scores = [r["score"] for r in judged]
+        entry = {"answered": len(mine), "judged": len(judged),
+                 "judge_score": bootstrap_ci(scores) if scores else None,
+                 "distribution": {s: scores.count(s) for s in (2, 1, 0)},
+                 "rouge_l": round(sum(r["rouge_l"] for r in mine) / len(mine), 4)}
+        if condition != "closed-book" and judged:
+            entry["vs_closed_book"] = paired_delta(model, sampling, judged, runs_dir)
+        summary[model] = entry
+    return summary
+
+
+def print_summary(summary, condition, out=print):
+    for model, entry in summary.items():
+        ci = entry["judge_score"]
+        if not ci:
+            out(f"{model:14s} {condition}: {entry['answered']} answered, none scored yet")
+            continue
+        partial = f" ({entry['judged']} of {entry['answered']} scored)" if entry["judged"] < entry["answered"] else ""
+        dist = entry["distribution"]
+        out(f"{model:14s} {condition}: {ci['mean']:.2f} / 2  (95% CI {ci['low']:.2f}-{ci['high']:.2f})  "
+            f"2s: {dist[2]}  1s: {dist[1]}  0s: {dist[0]}  ROUGE-L {entry['rouge_l']:.3f}{partial}")
+        paired = entry.get("vs_closed_book")
+        if paired:
+            d = paired["delta"]
+            out(f"{'':14s} vs closed-book on the same {paired['questions']} questions: "
+                f"{d['mean']:+.2f} (95% CI {d['low']:+.2f} to {d['high']:+.2f}); better on "
+                f"{paired['better']}, worse on {paired['worse']}, same on {paired['same']}")
+        elif condition != "closed-book":
+            out(f"{'':14s} (no closed-book run with this model and sampling to compare with)")
+
+
+def rescore(client, run_dir, judge_model, out=print):
+    """Score whatever a run left unscored - generated with --judge none, or cut short when the credit
+    ran out - and recompute its summary. Already-scored answers are not paid for again."""
+    runs = config.MODELS_DIR / "dblpqa" / "runs"
+    run_dir = Path(run_dir) if run_dir and Path(run_dir).is_absolute() else runs / (run_dir or "")
+    if not (run_dir / "answers.jsonl").exists():
+        raise SystemExit(f"no answers in {run_dir}")
+    payload = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+    records = [json.loads(line) for line in
+               (run_dir / "answers.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    meter = Meter()
+    todo = [r for r in records if r.get("score") is None]
+    if todo:
+        rows, sha = load_dataset()
+        controls = reusable_controls(judge_model, sha, runs)
+        if not controls:
+            controls = judge_controls(client, meter, judge_model, rows, out)
+            if not controls["passed"]:
+                raise SystemExit("the judge failed its controls; nothing was scored")
+        payload["judge_controls"] = controls
+    for i, rec in enumerate(todo, 1):
+        verdict = judge(client, meter, judge_model, rec["question"], rec["gold"], rec["answer"])
+        rec.update(score=verdict["score"], reason=verdict["reason"])
+        if i % 10 == 0 or i == len(todo):
+            out(f"  scored {i}/{len(todo)}")
+    with open(run_dir / "answers.jsonl", "w", encoding="utf-8") as fh:
         for rec in records:
             fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
-    out(f"\n${payload['cost_usd']} · {payload['seconds']}s · written to {out_dir}")
+    sampling = next(iter(payload.get("sampling") or {"ours": None}))
+    payload["results"] = summarize(records, payload["condition"], sampling, run_dir.parent)
+    payload["judge"] = judge_model
+    payload["stopped"] = None
+    payload["cost_usd"] = round((payload.get("cost_usd") or 0) + meter.cost(), 4)
+    (run_dir / "summary.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    out(f"{run_dir.name}: {len(todo)} answers scored, ${meter.cost()}")
+    print_summary(payload["results"], payload["condition"], out)
     return payload
 
 

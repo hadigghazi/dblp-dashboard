@@ -98,6 +98,11 @@ def cmd_dblpqa(args):
     if args.condition == "report":
         DQ.report(args.run)
         return
+    if args.condition == "rescore":
+        if not args.run:
+            sys.exit("rescore needs --run <run directory name>")
+        DQ.rescore(client, args.run, args.judge)
+        return
     rows, sha = DQ.load_dataset()
     if args.limit:
         rows = rows[:args.limit]
@@ -208,8 +213,9 @@ def main():
     ql.add_argument("--days", type=int, default=30)
     ql.set_defaults(fn=cmd_questions)
     dq = sub.add_parser("dblpqa", help="experiments on the DBLP-QA benchmark")
-    dq.add_argument("condition", choices=["closed-book", "oracle", "report"],
-                    help="oracle = each question with the abstract it was written from")
+    dq.add_argument("condition", choices=["closed-book", "oracle", "report", "rescore"],
+                    help="oracle = each question with the abstract it was written from; rescore = score "
+                         "the unscored answers of --run")
     dq.add_argument("--run", default=None, help="for report: a run directory (default: the latest)")
     dq.add_argument("--sampling", choices=["ours", "paper"], default="ours",
                     help="'paper' = the paper's Table 1 settings, for reproducing its models")
@@ -217,7 +223,8 @@ def main():
                     help="run the judge's controls again even if they passed on this dataset before")
     dq.add_argument("--models", default="gpt-4.1-mini,gpt-4.1",
                     help="comma-separated; 'ollama:<tag>' runs an open model on the local Ollama container")
-    dq.add_argument("--judge", default="gpt-4.1")
+    dq.add_argument("--judge", default="gpt-4.1",
+                    help="'none' generates and saves answers without scoring them (rescore later)")
     dq.add_argument("--limit", type=int, default=None, help="first N questions only, for a dry run")
     dq.add_argument("--force", action="store_true", help="run even if the judge fails its controls")
     dq.set_defaults(fn=cmd_dblpqa)

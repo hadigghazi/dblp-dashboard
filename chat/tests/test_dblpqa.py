@@ -214,3 +214,41 @@ def test_an_oracle_run_leaves_out_questions_with_no_abstract_and_pairs_with_clos
     assert got["questions"] == 2 and got["questions_in_dataset"] == 3
     paired = got["results"]["m1"]["vs_closed_book"]
     assert paired["questions"] == 2 and paired["against_run"].endswith("closed-book")
+
+
+def test_answers_survive_the_credit_running_out_and_are_scored_later(tmp_path, monkeypatch):
+    """The Mistral oracle run lost ten free answers when judging hit a credit error. Now generation
+    carries on, everything is saved, and rescore finishes the job."""
+    from chat.llm import LLMError
+    rows = DQ.parse(CSV)
+
+    class Broke(Scripted):
+        def complete(self, messages, model, tools=None, temperature=None, extra=None):
+            if messages[0]["content"] == DQ.JUDGE_SYSTEM:
+                raise LLMError("out of credit", "credit")
+            return super().complete(messages, model, tools, temperature, extra)
+
+    runs = tmp_path / "runs"
+    # the judge passed its controls earlier; the credit runs out while scoring the answers
+    monkeypatch.setattr(DQ, "reusable_controls", lambda *a, **k: {"passed": True, "reused_from": "earlier"})
+    got = DQ.run_condition(Broke(), ["m1"], "judge", rows, "sha", "closed-book",
+                           out_dir=runs / "20260101T000000Z-closed-book", out=lambda *_: None)
+    assert got["stopped"] and "out of credit" in got["stopped"]
+    saved = [json.loads(x) for x in (runs / "20260101T000000Z-closed-book" / "answers.jsonl")
+             .read_text(encoding="utf-8").splitlines()]
+    assert len(saved) == 3 and all(r["score"] is None for r in saved), "every answer kept, none scored"
+
+    monkeypatch.setattr(DQ.config, "MODELS_DIR", tmp_path / "models-unused")
+    monkeypatch.setattr(DQ, "load_dataset", lambda: (rows, "sha"))
+    done = DQ.rescore(Scripted(), runs / "20260101T000000Z-closed-book", "judge", out=lambda *_: None)
+    assert done["results"]["m1"]["judged"] == 3 and done["stopped"] is None
+
+
+def test_a_closed_book_run_from_before_the_sampling_field_still_pairs(tmp_path):
+    old = tmp_path / "20250101T000000Z-closed-book"
+    old.mkdir()
+    (old / "summary.json").write_text(json.dumps({"models": ["m1"]}), encoding="utf-8")
+    (old / "answers.jsonl").write_text(json.dumps({"model": "m1", "id": "qa1", "score": 1}) + "\n",
+                                        encoding="utf-8")
+    got = DQ.paired_delta("m1", "ours", [{"model": "m1", "id": "qa1", "score": 2}], tmp_path)
+    assert got and got["questions"] == 1 and got["better"] == 1
