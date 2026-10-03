@@ -95,9 +95,10 @@ class Client:
     def _headers(self):
         return {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
 
-    def _body(self, messages, model, tools=None, temperature=None, stream=False):
+    def _body(self, messages, model, tools=None, temperature=None, stream=False, extra=None):
         body = {"model": model, "messages": messages,
                 "temperature": config.TEMPERATURE if temperature is None else temperature}
+        body.update(extra or {})                  # e.g. top_p and max_tokens, for a reproduction
         if tools:
             body["tools"] = tools
             body["parallel_tool_calls"] = True
@@ -106,11 +107,11 @@ class Client:
             body["stream_options"] = {"include_usage": True}
         return body
 
-    def complete(self, messages, model, tools=None, temperature=None):
+    def complete(self, messages, model, tools=None, temperature=None, extra=None):
         """{content, tool_calls: [{id, name, arguments}], usage, model, finish_reason}."""
         if not self.configured():
             raise LLMError("no API key configured (set OPENAI_API_KEY)")
-        body = self._body(messages, model, tools, temperature)
+        body = self._body(messages, model, tools, temperature, extra=extra)
         for attempt in range(config.RATE_RETRIES + 1):
             try:
                 r = self._http.post(f"{self.base_url}/chat/completions", headers=self._headers(),
@@ -200,7 +201,7 @@ class FakeClient:
     def configured(self):
         return True
 
-    def complete(self, messages, model, tools=None, temperature=None):
+    def complete(self, messages, model, tools=None, temperature=None, extra=None):
         self.calls.append({"kind": "complete", "model": model, "messages": messages})
         if self.script:
             step = self.script.pop(0)

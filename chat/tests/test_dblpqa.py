@@ -65,7 +65,7 @@ class Scripted:
         self.honest = honest
         self.calls = 0
 
-    def complete(self, messages, model, tools=None, temperature=None):
+    def complete(self, messages, model, tools=None, temperature=None, extra=None):
         self.calls += 1
         user = messages[-1]["content"]
         if messages[0]["content"] == DQ.JUDGE_SYSTEM:
@@ -79,7 +79,8 @@ class Scripted:
 
 def test_a_closed_book_run_writes_scores_intervals_and_cost(tmp_path):
     rows = DQ.parse(CSV)
-    got = DQ.run_closed_book(Scripted(), ["m1"], "judge", rows, "sha", out_dir=tmp_path, out=lambda *_: None)
+    got = DQ.run_closed_book(Scripted(), ["m1"], "judge", rows, "sha", out_dir=tmp_path, out=lambda *_: None,
+                             reuse_controls=False)
     assert got["judge_controls"]["passed"]
     assert got["results"]["m1"]["judge_score"]["mean"] == 0.0, "'I do not know' is not the answer"
     assert got["cost_usd"] >= 0 and got["usage"]["judge"]["calls"] == 3 * 2 + 3
@@ -91,8 +92,50 @@ def test_a_judge_that_fails_its_controls_stops_the_run_before_any_answer_is_paid
     """A judge that gives everything 2 would report a perfect model. The control catches that."""
     client = Scripted(honest=False)
     got = DQ.run_closed_book(client, ["m1"], "judge", DQ.parse(CSV), "sha", out_dir=tmp_path,
-                             out=lambda *_: None)
+                             out=lambda *_: None, reuse_controls=False)
     assert got is None
     saved = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
     assert "failed its controls" in saved["stopped"]
     assert client.calls == 6, "only the control judgements were made - no answers were generated"
+
+
+def test_open_models_are_routed_to_the_local_server_and_cost_nothing(monkeypatch):
+    seen = {}
+
+    class Local:
+        def __init__(self, api_key=None, base_url=None, timeout=None):
+            seen["base_url"] = base_url
+
+        def complete(self, messages, model, tools=None, temperature=None, extra=None):
+            seen.update(model=model, temperature=temperature, extra=extra)
+            return {"content": "local answer", "usage": {"input_tokens": 9, "output_tokens": 9}}
+
+    import chat.llm as L
+    monkeypatch.setattr(L, "Client", Local)
+    meter = DQ.Meter()
+    got = DQ.answer_closed_book(object(), meter, "ollama:mistral:v0.1", "What is A?", "paper")
+    assert got == "local answer"
+    assert seen["model"] == "mistral:v0.1" and seen["base_url"].endswith("/v1")
+    assert seen["temperature"] == 0.7 and seen["extra"] == {"top_p": 0.9, "max_tokens": 512}
+    assert meter.cost() == 0 and not meter.usage, "a local model is not billed"
+
+
+def test_a_judge_that_passed_its_controls_is_reused(tmp_path):
+    run = tmp_path / "20261003T000000Z-closed-book"
+    run.mkdir()
+    (run / "summary.json").write_text(json.dumps({
+        "judge": "gpt-4.1", "dataset_sha256": "abc", "questions": 50,
+        "judge_controls": {"passed": True, "gold_scored_2": 1.0}}), encoding="utf-8")
+    assert DQ.reusable_controls("gpt-4.1", "abc", tmp_path)["reused_from"] == run.name
+    assert DQ.reusable_controls("gpt-4.1", "other-dataset", tmp_path) is None
+    assert DQ.reusable_controls("gpt-4.1-mini", "abc", tmp_path) is None
+
+
+def test_the_report_puts_models_side_by_side(tmp_path):
+    rows = DQ.parse(CSV)
+    DQ.run_closed_book(Scripted(), ["m1", "m2"], "judge", rows, "sha", out_dir=tmp_path / "r",
+                       out=lambda *_: None, reuse_controls=False)
+    lines = []
+    got = DQ.report(tmp_path / "r", out=lines.append)
+    assert set(got["qa1"]) >= {"m1", "m2", "question"}
+    assert any("below 2" in line for line in lines)

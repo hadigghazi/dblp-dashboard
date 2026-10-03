@@ -41,6 +41,23 @@ SEED = 7
 
 ANSWER_SYSTEM = "You answer questions about computer-science research. Answer in one to three sentences."
 
+# Generation settings. "paper" is Table 1 of the paper (Mistral-7B and TinyLlama rows): what a
+# reproduction of their models has to use. "ours" is deterministic, for the hosted models.
+SAMPLING = {
+    "ours": {"temperature": 0, "extra": {}},
+    "paper": {"temperature": 0.7, "extra": {"top_p": 0.9, "max_tokens": 512}},
+}
+OLLAMA_PREFIX = "ollama:"
+
+
+def client_for(model, hosted):
+    """The hosted client, or one pointed at the local Ollama container for "ollama:<tag>" models. Both
+    speak the same API, so the experiment code does not know the difference."""
+    if model.startswith(OLLAMA_PREFIX):
+        from .llm import Client
+        return Client(api_key="ollama", base_url=config.OLLAMA_URL, timeout=600), model[len(OLLAMA_PREFIX):]
+    return hosted, model
+
 # The paper's rubric, with its own example (Table 2) as the anchor, so the judge reproduces the scale
 # rather than inventing one.
 JUDGE_SYSTEM = """You grade answers to questions about computer-science papers against a ground-truth
@@ -175,10 +192,14 @@ class Meter:
         return round(total, 4)
 
 
-def answer_closed_book(client, meter, model, question):
-    step = client.complete([{"role": "system", "content": ANSWER_SYSTEM},
-                            {"role": "user", "content": question}], model=model, temperature=0)
-    meter.add(model, step.get("usage", {}))
+def answer_closed_book(client, meter, model, question, sampling="ours"):
+    settings = SAMPLING[sampling]
+    target, name = client_for(model, client)
+    step = target.complete([{"role": "system", "content": ANSWER_SYSTEM},
+                            {"role": "user", "content": question}], model=name,
+                           temperature=settings["temperature"], extra=settings["extra"])
+    if not model.startswith(OLLAMA_PREFIX):          # a local model costs nothing
+        meter.add(model, step.get("usage", {}))
     return (step.get("content") or "").strip()
 
 
@@ -223,14 +244,34 @@ def judge_controls(client, meter, judge_model, rows, out=print):
     return result
 
 
-def run_closed_book(client, models, judge_model, rows, sha, out_dir=None, out=print, force=False):
+def reusable_controls(judge_model, sha, runs_dir=None):
+    """A judge that passed its controls on this exact dataset already has: no need to pay again."""
+    runs = Path(runs_dir or config.MODELS_DIR / "dblpqa" / "runs")
+    for summary in sorted(runs.glob("*/summary.json"), reverse=True):
+        try:
+            got = json.loads(summary.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        controls = got.get("judge_controls") or {}
+        if (got.get("judge") == judge_model and got.get("dataset_sha256") == sha
+                and controls.get("passed") and got.get("questions") == 50):
+            return dict(controls, reused_from=summary.parent.name)
+    return None
+
+
+def run_closed_book(client, models, judge_model, rows, sha, out_dir=None, out=print, force=False,
+                    sampling="ours", reuse_controls=True):
     started = time.time()
     meter = Meter()
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out_dir = Path(out_dir or config.MODELS_DIR / "dblpqa" / "runs" / f"{stamp}-closed-book")
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    controls = judge_controls(client, meter, judge_model, rows, out)
+    controls = reusable_controls(judge_model, sha, out_dir.parent) if reuse_controls else None
+    if controls:
+        out(f"judge controls: passed on this dataset in run {controls['reused_from']} - reused")
+    else:
+        controls = judge_controls(client, meter, judge_model, rows, out)
     if not controls["passed"] and not force:
         # no point paying for answers that a judge which fails its own controls would score
         (out_dir / "summary.json").write_text(json.dumps(
@@ -243,7 +284,7 @@ def run_closed_book(client, models, judge_model, rows, sha, out_dir=None, out=pr
     for model in models:
         scores, rouges = [], []
         for row in rows:
-            answer = answer_closed_book(client, meter, model, row["question"])
+            answer = answer_closed_book(client, meter, model, row["question"], sampling)
             verdict = judge(client, meter, judge_model, row["question"], row["answer"], answer)
             rl = rouge_l(answer, row["answer"])
             scores.append(verdict["score"])
@@ -261,7 +302,8 @@ def run_closed_book(client, models, judge_model, rows, sha, out_dir=None, out=pr
 
     payload = {
         "condition": "closed-book", "run_at": stamp, "dataset_sha256": sha, "questions": len(rows),
-        "models": models, "judge": judge_model, "temperature": 0, "answer_prompt": ANSWER_SYSTEM,
+        "models": models, "judge": judge_model, "sampling": {sampling: SAMPLING[sampling]},
+        "answer_prompt": ANSWER_SYSTEM,
         "rouge_l": "LCS F1 over lower-cased alphanumeric tokens, no stemming",
         "judge_controls": controls, "results": summary,
         "paper_reference": {"note": "the paper's no-context baseline, manual 0-2 score",
@@ -276,3 +318,28 @@ def run_closed_book(client, models, judge_model, rows, sha, out_dir=None, out=pr
             fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
     out(f"\n${payload['cost_usd']} · {payload['seconds']}s · written to {out_dir}")
     return payload
+
+
+def report(run_dir=None, out=print):
+    """One line per question with every model's score side by side, then the judge's reasons for
+    anything below 2 - the readable form of a run."""
+    runs = config.MODELS_DIR / "dblpqa" / "runs"
+    run_dir = Path(run_dir) if run_dir else max((d for d in runs.iterdir() if d.is_dir()),
+                                                key=lambda d: d.name)
+    records = [json.loads(line) for line in
+               (run_dir / "answers.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    models = list(dict.fromkeys(r["model"] for r in records))
+    by_id = {}
+    for r in records:
+        by_id.setdefault(r["id"], {"question": r["question"]})[r["model"]] = r
+    out(f"{run_dir.name}\n")
+    out("id    " + "  ".join(f"{m[-12:]:>12s}" for m in models) + "  question")
+    for qid, row in by_id.items():
+        out(f"{qid:5s} " + "  ".join(f"{row[m]['score'] if m in row else '-':>12}" for m in models)
+            + f"  {row['question'][:70]}")
+    out("\nbelow 2, with the judge's reason:")
+    for qid, row in by_id.items():
+        for m in models:
+            if m in row and row[m]["score"] < 2:
+                out(f"  {qid} {m} = {row[m]['score']}: {row[m]['reason']}")
+    return by_id

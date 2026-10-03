@@ -95,12 +95,17 @@ def cmd_dblpqa(args):
     client = Client()
     if not client.configured():
         sys.exit("No OPENAI_API_KEY set.")
+    if args.condition == "report":
+        DQ.report(args.run)
+        return
     rows, sha = DQ.load_dataset()
     if args.limit:
         rows = rows[:args.limit]
-    print(f"DBLP-QA: {len(rows)} questions (sha256 {sha[:12]}), judge {args.judge}")
+    print(f"DBLP-QA: {len(rows)} questions (sha256 {sha[:12]}), judge {args.judge}, "
+          f"sampling {args.sampling}")
     models = [m.strip() for m in args.models.split(",") if m.strip()]
-    DQ.run_closed_book(client, models, args.judge, rows, sha, force=args.force)
+    DQ.run_closed_book(client, models, args.judge, rows, sha, force=args.force, sampling=args.sampling,
+                       reuse_controls=not args.recheck_judge and not args.limit)
 
 
 def cmd_scenarios(args):
@@ -201,8 +206,14 @@ def main():
     ql.add_argument("--days", type=int, default=30)
     ql.set_defaults(fn=cmd_questions)
     dq = sub.add_parser("dblpqa", help="experiments on the DBLP-QA benchmark")
-    dq.add_argument("condition", choices=["closed-book"])
-    dq.add_argument("--models", default="gpt-4.1-mini,gpt-4.1")
+    dq.add_argument("condition", choices=["closed-book", "report"])
+    dq.add_argument("--run", default=None, help="for report: a run directory (default: the latest)")
+    dq.add_argument("--sampling", choices=["ours", "paper"], default="ours",
+                    help="'paper' = the paper's Table 1 settings, for reproducing its models")
+    dq.add_argument("--recheck-judge", action="store_true",
+                    help="run the judge's controls again even if they passed on this dataset before")
+    dq.add_argument("--models", default="gpt-4.1-mini,gpt-4.1",
+                    help="comma-separated; 'ollama:<tag>' runs an open model on the local Ollama container")
     dq.add_argument("--judge", default="gpt-4.1")
     dq.add_argument("--limit", type=int, default=None, help="first N questions only, for a dry run")
     dq.add_argument("--force", action="store_true", help="run even if the judge fails its controls")
