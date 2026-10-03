@@ -195,9 +195,13 @@ class Meter:
 def answer_closed_book(client, meter, model, question, sampling="ours"):
     settings = SAMPLING[sampling]
     target, name = client_for(model, client)
-    step = target.complete([{"role": "system", "content": ANSWER_SYSTEM},
-                            {"role": "user", "content": question}], model=name,
-                           temperature=settings["temperature"], extra=settings["extra"])
+    try:
+        step = target.complete([{"role": "system", "content": ANSWER_SYSTEM},
+                                {"role": "user", "content": question}], model=name,
+                               temperature=settings["temperature"], extra=settings["extra"])
+    except Exception as e:
+        # the client's message is written for a website visitor; an experiment needs the server's own
+        raise RuntimeError(f"{model} failed: {getattr(e, 'raw', '') or e}") from e
     if not model.startswith(OLLAMA_PREFIX):          # a local model costs nothing
         meter.add(model, step.get("usage", {}))
     return (step.get("content") or "").strip()
