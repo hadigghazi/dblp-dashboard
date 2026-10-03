@@ -112,8 +112,9 @@ CASES = [
          any_of=["count_papers", "papers_timeseries"]),
     dict(turns=["What does Jürgen Schmidhuber publish?", "Only the journal papers since 2020, please"],
          any_of=["author_papers", "count_papers"]),
+    # venue_profile carries the venue's top authors too, so either tool answers it
     dict(turns=["Which venues are the biggest?", "Who publishes most in the first one?"],
-         any_of=["top_authors"]),
+         any_of=["top_authors", "venue_profile"], succeed_any=["top_authors", "venue_profile"]),
     # a follow-up that picks one of several pages the previous answer found. It needs that page's key,
     # which used to be lost between turns: the model guessed one and asked the user to identify the
     # page instead. Two different people have dblp pages under this name.
