@@ -11,6 +11,8 @@ a second even when the answer takes four.
 """
 import json
 import logging
+import re
+import time
 
 import httpx
 
@@ -31,6 +33,31 @@ class LLMError(RuntimeError):
     @property
     def terminal(self):
         return self.kind in ("credit", "key")
+
+
+def _duration(text):
+    """'6m0s', '1.5s', '20ms' -> seconds; None when there is nothing to read."""
+    parts = re.findall(r"([\d.]+)(ms|s|m|h)", text or "")
+    if not parts:
+        return None
+    return sum(float(n) * {"ms": 0.001, "s": 1, "m": 60, "h": 3600}[u] for n, u in parts)
+
+
+def wait_for(response, attempt):
+    """How long to wait before retrying a rate-limited request: the provider's own hint when it gives
+    one, otherwise 1, 2, 4, 8 s - capped either way, so a visitor is never kept waiting long."""
+    headers = response.headers
+    for name, scale in (("retry-after-ms", 0.001), ("retry-after", 1.0)):
+        try:
+            if headers.get(name):
+                return min(config.RATE_WAIT_MAX, max(0.2, float(headers[name]) * scale))
+        except ValueError:
+            pass
+    hinted = [d for d in (_duration(headers.get("x-ratelimit-reset-tokens")),
+                          _duration(headers.get("x-ratelimit-reset-requests"))) if d is not None]
+    if hinted:
+        return min(config.RATE_WAIT_MAX, max(0.2, max(hinted)))
+    return min(config.RATE_WAIT_MAX, float(2 ** attempt))
 
 
 def provider_error(status, text):
@@ -83,14 +110,22 @@ class Client:
         """{content, tool_calls: [{id, name, arguments}], usage, model, finish_reason}."""
         if not self.configured():
             raise LLMError("no API key configured (set OPENAI_API_KEY)")
-        try:
-            r = self._http.post(f"{self.base_url}/chat/completions", headers=self._headers(),
-                                json=self._body(messages, model, tools, temperature))
-        except httpx.HTTPError as e:
-            raise LLMError("Dewey couldn't reach its AI provider just now. Please try again in a moment.",
-                           "down", str(e)) from e
-        if r.status_code >= 400:
-            raise provider_error(r.status_code, r.text[:600])
+        body = self._body(messages, model, tools, temperature)
+        for attempt in range(config.RATE_RETRIES + 1):
+            try:
+                r = self._http.post(f"{self.base_url}/chat/completions", headers=self._headers(),
+                                    json=body)
+            except httpx.HTTPError as e:
+                raise LLMError("Dewey couldn't reach its AI provider just now. Please try again in a "
+                               "moment.", "down", str(e)) from e
+            if r.status_code < 400:
+                break
+            err = provider_error(r.status_code, r.text[:600])
+            if err.kind != "busy" or attempt == config.RATE_RETRIES:
+                raise err
+            wait = wait_for(r, attempt)
+            log.info("rate-limited; retrying in %.1fs (attempt %d)", wait, attempt + 1)
+            time.sleep(wait)
         payload = r.json()
         choice = (payload.get("choices") or [{}])[0]
         message = choice.get("message") or {}
@@ -111,31 +146,41 @@ class Client:
         if not self.configured():
             raise LLMError("no API key configured (set OPENAI_API_KEY)")
         body = self._body(messages, model, tools=None, temperature=temperature, stream=True)
-        try:
-            with self._http.stream("POST", f"{self.base_url}/chat/completions", headers=self._headers(),
-                                   json=body) as r:
-                if r.status_code >= 400:
-                    raise provider_error(r.status_code, r.read()[:600].decode("utf-8", "replace"))
-                usage = {"input_tokens": 0, "output_tokens": 0}
-                for line in r.iter_lines():
-                    if not line or not line.startswith("data:"):
-                        continue
-                    data = line[5:].strip()
-                    if data == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(data)
-                    except json.JSONDecodeError:
-                        continue
-                    if chunk.get("usage"):
-                        usage = _usage(chunk)
-                    for choice in chunk.get("choices") or []:
-                        piece = (choice.get("delta") or {}).get("content")
-                        if piece:
-                            yield "token", piece
-                yield "usage", usage
-        except httpx.HTTPError as e:
-            raise LLMError(f"the model provider dropped the connection: {e}") from e
+        for attempt in range(config.RATE_RETRIES + 1):
+            wait = None
+            try:
+                with self._http.stream("POST", f"{self.base_url}/chat/completions",
+                                       headers=self._headers(), json=body) as r:
+                    if r.status_code >= 400:
+                        err = provider_error(r.status_code, r.read()[:600].decode("utf-8", "replace"))
+                        if err.kind != "busy" or attempt == config.RATE_RETRIES:
+                            raise err
+                        wait = wait_for(r, attempt)
+                    else:
+                        usage = {"input_tokens": 0, "output_tokens": 0}
+                        for line in r.iter_lines():
+                            if not line or not line.startswith("data:"):
+                                continue
+                            data = line[5:].strip()
+                            if data == "[DONE]":
+                                break
+                            try:
+                                chunk = json.loads(data)
+                            except json.JSONDecodeError:
+                                continue
+                            if chunk.get("usage"):
+                                usage = _usage(chunk)
+                            for choice in chunk.get("choices") or []:
+                                piece = (choice.get("delta") or {}).get("content")
+                                if piece:
+                                    yield "token", piece
+                        yield "usage", usage
+                        return
+            except httpx.HTTPError as e:
+                raise LLMError("Dewey lost its connection to the AI provider mid-answer. Please try "
+                               "again.", "down", str(e)) from e
+            log.info("rate-limited; retrying the answer in %.1fs (attempt %d)", wait, attempt + 1)
+            time.sleep(wait)
 
     def close(self):
         self._http.close()

@@ -39,6 +39,9 @@ SQL_TIMEOUT = float(os.environ.get("CHAT_SQL_TIMEOUT", "5"))
 SQL_ROW_CAP = int(os.environ.get("CHAT_SQL_ROW_CAP", "200"))
 ROWS_TO_MODEL = int(os.environ.get("CHAT_ROWS_TO_MODEL", "25"))    # a tool shows the model this many rows
 LLM_TIMEOUT = float(os.environ.get("CHAT_LLM_TIMEOUT", "40"))
+# a rate limit means "wait", not "no": retried, honouring the provider's own reset hint
+RATE_RETRIES = int(os.environ.get("CHAT_RATE_RETRIES", "4"))
+RATE_WAIT_MAX = float(os.environ.get("CHAT_RATE_WAIT_MAX", "15"))
 
 # ---- access -----------------------------------------------------------------
 # A shared token, because every question spends money. Unset (the default in dev) means open.

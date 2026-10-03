@@ -1045,12 +1045,11 @@ def _fn(name, description, properties, required=(), heavy=False, remote=False):
 
 
 YEAR = {"type": "integer", "description": "year, inclusive"}
-AUTHOR_KEY = {"type": "string", "description": "the author page key a tool returned (resolve_author), or "
-              "the page's exact name when the user gave one, such as 'Wei Wang 0003'. Keys are opaque - "
-              "homepages/165/0820-2 - and can never be built from a name."}
-VENUE_ID = {"type": "string", "description": "the venue series id resolve_venue returned, such as conf/cvpr "
-            "or journals/tkde, or the venue's exact name. Never build one: an id that does not exist is "
-            "refused."}
+# sent with every request, so kept short: their length is paid on every question
+AUTHOR_KEY = {"type": "string", "description": "a key a tool returned, or the exact page name the user "
+              "gave ('Wei Wang 0003'); never build one"}
+VENUE_ID = {"type": "string", "description": "an id resolve_venue returned (conf/cvpr), or the venue's "
+            "exact name; never build one"}
 KIND = {"type": "string", "enum": ["journal", "conference", "preprint"]}
 
 SPECS = [
