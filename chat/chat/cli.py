@@ -8,6 +8,7 @@ Command line, for the VM.
   python -m chat.cli qa [--only X]              check the tools against the dashboard (no model calls)
   python -m chat.cli questions [--days N]      what people asked, and what the catalogue is missing
   python -m chat.cli search-eval [--papers N]  can search find a paper from a description of it?
+  python -m chat.cli scenarios [--suite S]     one person's questions about themselves, answers in full
 
 `ask` is the same code path the web endpoint uses, so a question that works here works there.
 """
@@ -81,6 +82,17 @@ def cmd_evaluate(args):
     path = E.save(payload, ctx.meta.get("fingerprint", "unknown"))
     print(json.dumps(payload["summary"], indent=2))
     print(f"\nwritten to {path}")
+
+
+def cmd_scenarios(args):
+    from . import scenarios as SC
+    ctx = _ready()
+    client = Client()
+    if not client.configured():
+        sys.exit("No OPENAI_API_KEY set.")
+    payload = SC.run(ctx, client, suite=args.suite, limit=args.limit)
+    path = SC.save(payload, ctx.meta.get("fingerprint", "unknown"))
+    print(f"written to {path}")
 
 
 def cmd_qa(args):
@@ -169,6 +181,11 @@ def main():
     ql = sub.add_parser("questions", help="what people asked, and what the catalogue is missing")
     ql.add_argument("--days", type=int, default=30)
     ql.set_defaults(fn=cmd_questions)
+    sc = sub.add_parser("scenarios", help="one person's questions about themselves, answers in full")
+    sc.add_argument("--suite", default="instructor")
+    sc.add_argument("--limit", type=int, default=None)
+    sc.set_defaults(fn=cmd_scenarios)
+
     q = sub.add_parser("qa", help="check the tools against the dashboard, without a model")
     q.add_argument("--only", default=None, help="a check name fragment, or a group: "
                                                 "dashboard, invariant, behaviour")
