@@ -361,9 +361,11 @@ def _bad_input(ctx):
     for name, args in must_refuse:
         out = T.call(ctx, name, args)
         assert out.get("refused"), f"{name}({args}) was not refused: {out.get('summary')}"
+    # an unknown key is refused, and the refusal says how to get the right one - an empty result here
+    # once read as "no data", and the model guessed another key instead of resolving the name again
     missing = T.call(ctx, "author_profile", {"key": "homepages/does/not/exist"})
-    assert missing["rows"] == [] and "resolve_author" in missing.get("note", "")
-    return f"{len(must_refuse)} bad calls refused, a missing key explained"
+    assert missing.get("refused") and "resolve_author" in missing.get("instead", ""), missing
+    return f"{len(must_refuse)} bad calls refused, a missing key refused with the way to fix it"
 
 
 @check("the SQL guard holds", "behaviour")
