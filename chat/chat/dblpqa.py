@@ -40,6 +40,9 @@ COLUMNS = ["id", "question", "answer", "dblp_key", "semantic_scholar_id"]
 SEED = 7
 
 ANSWER_SYSTEM = "You answer questions about computer-science research. Answer in one to three sentences."
+CONTEXT_SYSTEM = ("You answer questions about computer-science research using the abstract you are given. "
+                  "Answer in one to three sentences.")
+CONDITIONS = ("closed-book", "oracle")
 
 # Generation settings. "paper" is Table 1 of the paper (Mistral-7B and TinyLlama rows): what a
 # reproduction of their models has to use. "ours" is deterministic, for the hosted models.
@@ -111,6 +114,89 @@ def parse(text):
     if not rows or list(rows[0].keys()) != COLUMNS:
         raise ValueError(f"unexpected DBLP-QA columns: {list(rows[0].keys()) if rows else 'empty file'}")
     return [{k: (v or "").strip() for k, v in row.items()} for row in rows]
+
+
+# --------------------------------------------------------------------------- abstracts
+
+S2_BATCH = "https://api.semanticscholar.org/graph/v1/paper/batch"
+S2_FIELDS = "title,abstract,externalIds"
+
+
+def _get(http, url, **kw):
+    """GET or POST with patience: these are free public APIs with shared, unannounced rate limits."""
+    method = kw.pop("method", "GET")
+    for attempt in range(6):
+        r = http.request(method, url, timeout=60, **kw)
+        if r.status_code == 429 or r.status_code >= 500:
+            time.sleep(min(30, 2 ** attempt))
+            continue
+        return r
+    return r
+
+
+def _arxiv(http, arxiv_id):
+    r = _get(http, "https://export.arxiv.org/api/query", params={"id_list": arxiv_id})
+    found = re.search(r"<entry>.*?<summary>(.*?)</summary>", r.text, re.S) if r.status_code == 200 else None
+    return " ".join(found.group(1).split()) if found else None
+
+
+def _openalex(http, doi):
+    r = _get(http, f"https://api.openalex.org/works/https://doi.org/{doi}")
+    if r.status_code != 200:
+        return None
+    index = (r.json() or {}).get("abstract_inverted_index") or {}
+    if not index:
+        return None
+    words = sorted((pos, word) for word, positions in index.items() for pos in positions)
+    return " ".join(word for _, word in words)
+
+
+def _crossref(http, doi):
+    r = _get(http, f"https://api.crossref.org/works/{doi}")
+    if r.status_code != 200:
+        return None
+    raw = ((r.json() or {}).get("message") or {}).get("abstract") or ""
+    text = " ".join(re.sub(r"<[^>]+>", " ", raw).split())
+    return re.sub(r"^Abstract\s+", "", text) or None
+
+
+def fetch_abstracts(rows, cache_dir=None, http=None, out=print):
+    """{question id: {"abstract", "source", "title"}} for every question, cached. Semantic Scholar first,
+    then arXiv, OpenAlex and Crossref for any it withholds."""
+    cache = Path(cache_dir or config.MODELS_DIR / "dblpqa") / "abstracts.json"
+    have = json.loads(cache.read_text(encoding="utf-8")) if cache.exists() else {}
+    todo = [r for r in rows if r["id"] not in have]
+    if todo:
+        http = http or httpx.Client(follow_redirects=True, headers={"User-Agent": "dblp-explorer-research"})
+        r = _get(http, S2_BATCH, method="POST", params={"fields": S2_FIELDS},
+                 json={"ids": [f"CorpusId:{row['semantic_scholar_id']}" for row in todo]})
+        papers = r.json() if r.status_code == 200 else [None] * len(todo)
+        for row, paper in zip(todo, papers):
+            paper = paper or {}
+            ids = paper.get("externalIds") or {}
+            entry = {"title": paper.get("title"), "abstract": paper.get("abstract"),
+                     "source": "semantic-scholar" if paper.get("abstract") else None,
+                     "doi": ids.get("DOI"), "arxiv": ids.get("ArXiv")}
+            for source, fetch, key in (("arxiv", _arxiv, entry["arxiv"]),
+                                       ("openalex", _openalex, entry["doi"]),
+                                       ("crossref", _crossref, entry["doi"])):
+                if entry["abstract"] or not key:
+                    continue
+                try:
+                    text = fetch(http, key)
+                except (httpx.HTTPError, ValueError):
+                    text = None
+                if text and len(text.split()) >= 20:
+                    entry.update(abstract=text, source=source)
+            have[row["id"]] = entry
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(have, indent=2, ensure_ascii=False), encoding="utf-8")
+    sources = {}
+    for row in rows:
+        src = have.get(row["id"], {}).get("source") or "none"
+        sources[src] = sources.get(src, 0) + 1
+    out("abstracts: " + ", ".join(f"{k} {v}" for k, v in sorted(sources.items())))
+    return have
 
 
 # --------------------------------------------------------------------------- metrics
@@ -193,15 +279,25 @@ class Meter:
         return round(total, 4)
 
 
+def messages_for(condition, question, abstract=None):
+    if condition == "oracle":
+        return [{"role": "system", "content": CONTEXT_SYSTEM},
+                {"role": "user", "content": f"Abstract:\n{abstract}\n\nQuestion: {question}"}]
+    return [{"role": "system", "content": ANSWER_SYSTEM}, {"role": "user", "content": question}]
+
+
 def answer_closed_book(client, meter, model, question, sampling="ours"):
+    return answer(client, meter, model, messages_for("closed-book", question), sampling)
+
+
+def answer(client, meter, model, messages, sampling="ours"):
     settings = SAMPLING[sampling]
     target, name = client_for(model, client)
     # a local server on a busy CPU fails the odd request mid-generation (a 500 after ~15 good answers
     # stopped the first calibration run); one failure must not throw away half an hour of answers
     for attempt in range(LOCAL_RETRIES + 1):
         try:
-            step = target.complete([{"role": "system", "content": ANSWER_SYSTEM},
-                                    {"role": "user", "content": question}], model=name,
+            step = target.complete(messages, model=name,
                                    temperature=settings["temperature"], extra=settings["extra"])
             break
         except Exception as e:
@@ -272,23 +368,60 @@ def reusable_controls(judge_model, sha, runs_dir=None):
     return None
 
 
+def paired_delta(model, sampling, records, runs_dir, against="closed-book"):
+    """This run's scores against the same model's scores in the latest `against` run with the same
+    sampling, question by question: the mean difference with a paired bootstrap interval, and how many
+    questions got better, worse or stayed the same."""
+    mine = {r["id"]: r["score"] for r in records if r["model"] == model}
+    for summary in sorted(Path(runs_dir).glob(f"*-{against}/summary.json"), reverse=True):
+        try:
+            got = json.loads(summary.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if model not in (got.get("models") or []) or sampling not in (got.get("sampling") or {}):
+            continue
+        theirs = {}
+        for line in (summary.parent / "answers.jsonl").read_text(encoding="utf-8").splitlines():
+            rec = json.loads(line) if line.strip() else None
+            if rec and rec["model"] == model:
+                theirs[rec["id"]] = rec["score"]
+        shared = sorted(set(mine) & set(theirs))
+        diffs = [mine[q] - theirs[q] for q in shared]
+        return {"against_run": summary.parent.name, "questions": len(shared),
+                "delta": bootstrap_ci(diffs),
+                "better": sum(d > 0 for d in diffs), "worse": sum(d < 0 for d in diffs),
+                "same": sum(d == 0 for d in diffs)}
+    return None
+
+
 def run_closed_book(client, models, judge_model, rows, sha, out_dir=None, out=print, force=False,
                     sampling="ours", reuse_controls=True):
+    return run_condition(client, models, judge_model, rows, sha, "closed-book", out_dir=out_dir, out=out,
+                         force=force, sampling=sampling, reuse_controls=reuse_controls)
+
+
+def run_condition(client, models, judge_model, rows, sha, condition, contexts=None, out_dir=None,
+                  out=print, force=False, sampling="ours", reuse_controls=True):
     started = time.time()
     meter = Meter()
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    out_dir = Path(out_dir or config.MODELS_DIR / "dblpqa" / "runs" / f"{stamp}-closed-book")
+    all_rows = rows
+    if condition == "oracle":
+        # a question with no abstract from any source cannot be given one; counted, not hidden
+        rows = [r for r in rows if (contexts or {}).get(r["id"], {}).get("abstract")]
+        out(f"oracle: {len(rows)} of {len(all_rows)} questions have an abstract")
+    out_dir = Path(out_dir or config.MODELS_DIR / "dblpqa" / "runs" / f"{stamp}-{condition}")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     controls = reusable_controls(judge_model, sha, out_dir.parent) if reuse_controls else None
     if controls:
         out(f"judge controls: passed on this dataset in run {controls['reused_from']} - reused")
     else:
-        controls = judge_controls(client, meter, judge_model, rows, out)
+        controls = judge_controls(client, meter, judge_model, all_rows, out)
     if not controls["passed"] and not force:
         # no point paying for answers that a judge which fails its own controls would score
         (out_dir / "summary.json").write_text(json.dumps(
-            {"condition": "closed-book", "run_at": stamp, "judge": judge_model, "stopped":
+            {"condition": condition, "run_at": stamp, "judge": judge_model, "stopped":
              "the judge failed its controls", "judge_controls": controls, "usage": meter.usage,
              "cost_usd": meter.cost()}, indent=2), encoding="utf-8")
         out(f"stopped: the judge failed its controls (see {out_dir / 'summary.json'}); --force to run anyway")
@@ -298,29 +431,43 @@ def run_closed_book(client, models, judge_model, rows, sha, out_dir=None, out=pr
         scores, rouges = [], []
         model_started = time.time()
         for i, row in enumerate(rows, 1):
-            answer = answer_closed_book(client, meter, model, row["question"], sampling)
+            abstract = (contexts or {}).get(row["id"], {}).get("abstract")
+            got = answer(client, meter, model, messages_for(condition, row["question"], abstract), sampling)
             if i % 10 == 0 or i == len(rows):
                 # a CPU-bound model takes half an hour for fifty answers; say where it is
                 out(f"  {model}: {i}/{len(rows)} answered, {time.time() - model_started:.0f}s")
-            verdict = judge(client, meter, judge_model, row["question"], row["answer"], answer)
-            rl = rouge_l(answer, row["answer"])
+            verdict = judge(client, meter, judge_model, row["question"], row["answer"], got)
+            rl = rouge_l(got, row["answer"])
             scores.append(verdict["score"])
             rouges.append(rl)
-            records.append({"condition": "closed-book", "model": model, "id": row["id"],
-                            "question": row["question"], "gold": row["answer"], "answer": answer,
+            records.append({"condition": condition, "model": model, "id": row["id"],
+                            "context_source": (contexts or {}).get(row["id"], {}).get("source")
+                            if condition == "oracle" else None,
+                            "question": row["question"], "gold": row["answer"], "answer": got,
                             "score": verdict["score"], "reason": verdict["reason"], "rouge_l": round(rl, 4)})
         summary[model] = {"judge_score": bootstrap_ci(scores),
                           "distribution": {s: scores.count(s) for s in (2, 1, 0)},
                           "rouge_l": round(sum(rouges) / len(rouges), 4)}
         ci = summary[model]["judge_score"]
-        out(f"{model:14s} closed-book: {ci['mean']:.2f} / 2  (95% CI {ci['low']:.2f}-{ci['high']:.2f})  "
+        if condition != "closed-book":
+            summary[model]["vs_closed_book"] = paired_delta(model, sampling, records, out_dir.parent)
+        out(f"{model:14s} {condition}: {ci['mean']:.2f} / 2  (95% CI {ci['low']:.2f}-{ci['high']:.2f})  "
             f"2s: {scores.count(2)}  1s: {scores.count(1)}  0s: {scores.count(0)}  "
             f"ROUGE-L {summary[model]['rouge_l']:.3f}")
+        paired = summary[model].get("vs_closed_book")
+        if paired:
+            d = paired["delta"]
+            out(f"{'':14s} vs closed-book on the same {paired['questions']} questions: "
+                f"{d['mean']:+.2f} (95% CI {d['low']:+.2f} to {d['high']:+.2f}); better on "
+                f"{paired['better']}, worse on {paired['worse']}, same on {paired['same']}")
+        elif condition != "closed-book":
+            out(f"{'':14s} (no closed-book run with this model and sampling to compare with)")
 
     payload = {
-        "condition": "closed-book", "run_at": stamp, "dataset_sha256": sha, "questions": len(rows),
+        "condition": condition, "run_at": stamp, "dataset_sha256": sha, "questions": len(rows),
+        "questions_in_dataset": len(all_rows),
         "models": models, "judge": judge_model, "sampling": {sampling: SAMPLING[sampling]},
-        "answer_prompt": ANSWER_SYSTEM,
+        "answer_prompt": CONTEXT_SYSTEM if condition == "oracle" else ANSWER_SYSTEM,
         "rouge_l": "LCS F1 over lower-cased alphanumeric tokens, no stemming",
         "judge_controls": controls, "results": summary,
         "paper_reference": {"note": "the paper's no-context baseline, manual 0-2 score",

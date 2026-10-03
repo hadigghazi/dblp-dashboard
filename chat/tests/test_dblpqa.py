@@ -170,3 +170,47 @@ def test_a_hosted_model_failure_is_not_retried_here(monkeypatch):
     with pytest.raises(RuntimeError, match="gpt-x failed"):
         DQ.answer_closed_book(Broken(), DQ.Meter(), "gpt-x", "q", "ours")
 
+
+def test_the_oracle_prompt_carries_the_abstract_and_closed_book_does_not():
+    with_it = DQ.messages_for("oracle", "What is A?", "A is a thing studied here.")
+    assert "A is a thing studied here." in with_it[-1]["content"] and "What is A?" in with_it[-1]["content"]
+    without = DQ.messages_for("closed-book", "What is A?")
+    assert without[-1]["content"] == "What is A?"
+
+
+def test_abstracts_fall_back_when_semantic_scholar_withholds_one(tmp_path):
+    """The paper notes Semantic Scholar now withholds some abstracts; arXiv fills the gap here."""
+    import httpx as H
+    long_text = " ".join(["word"] * 30)
+
+    def handler(request):
+        if "semanticscholar" in request.url.host:
+            return H.Response(200, json=[
+                {"title": "A", "abstract": long_text, "externalIds": {}},
+                {"title": "B", "abstract": None, "externalIds": {"ArXiv": "2401.00001"}},
+                {"title": "C", "abstract": None, "externalIds": {}}])
+        if "arxiv" in request.url.host:
+            return H.Response(200, text=f"<feed><entry><summary> {long_text} </summary></entry></feed>")
+        return H.Response(404)
+
+    http = H.Client(transport=H.MockTransport(handler))
+    got = DQ.fetch_abstracts(DQ.parse(CSV), cache_dir=tmp_path, http=http, out=lambda *_: None)
+    assert got["qa1"]["source"] == "semantic-scholar"
+    assert got["qa2"]["source"] == "arxiv"
+    assert got["qa3"]["abstract"] is None, "nothing anywhere: left empty, not invented"
+    again = DQ.fetch_abstracts(DQ.parse(CSV), cache_dir=tmp_path, http=None, out=lambda *_: None)
+    assert again == got, "cached: the second call makes no requests"
+
+
+def test_an_oracle_run_leaves_out_questions_with_no_abstract_and_pairs_with_closed_book(tmp_path):
+    rows = DQ.parse(CSV)
+    runs = tmp_path / "runs"
+    DQ.run_condition(Scripted(), ["m1"], "judge", rows, "sha", "closed-book",
+                     out_dir=runs / "20260101T000000Z-closed-book", out=lambda *_: None, reuse_controls=False)
+    contexts = {"qa1": {"abstract": "A is the first thing.", "source": "x"},
+                "qa2": {"abstract": "B is the second thing.", "source": "x"}, "qa3": {"abstract": None}}
+    got = DQ.run_condition(Scripted(), ["m1"], "judge", rows, "sha", "oracle", contexts=contexts,
+                           out_dir=runs / "20260102T000000Z-oracle", out=lambda *_: None, reuse_controls=False)
+    assert got["questions"] == 2 and got["questions_in_dataset"] == 3
+    paired = got["results"]["m1"]["vs_closed_book"]
+    assert paired["questions"] == 2 and paired["against_run"].endswith("closed-book")

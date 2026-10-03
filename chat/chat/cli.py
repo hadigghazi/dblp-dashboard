@@ -104,8 +104,10 @@ def cmd_dblpqa(args):
     print(f"DBLP-QA: {len(rows)} questions (sha256 {sha[:12]}), judge {args.judge}, "
           f"sampling {args.sampling}")
     models = [m.strip() for m in args.models.split(",") if m.strip()]
-    DQ.run_closed_book(client, models, args.judge, rows, sha, force=args.force, sampling=args.sampling,
-                       reuse_controls=not args.recheck_judge and not args.limit)
+    contexts = DQ.fetch_abstracts(rows) if args.condition == "oracle" else None
+    DQ.run_condition(client, models, args.judge, rows, sha, args.condition, contexts=contexts,
+                     force=args.force, sampling=args.sampling,
+                     reuse_controls=not args.recheck_judge and not args.limit)
 
 
 def cmd_scenarios(args):
@@ -206,7 +208,8 @@ def main():
     ql.add_argument("--days", type=int, default=30)
     ql.set_defaults(fn=cmd_questions)
     dq = sub.add_parser("dblpqa", help="experiments on the DBLP-QA benchmark")
-    dq.add_argument("condition", choices=["closed-book", "report"])
+    dq.add_argument("condition", choices=["closed-book", "oracle", "report"],
+                    help="oracle = each question with the abstract it was written from")
     dq.add_argument("--run", default=None, help="for report: a run directory (default: the latest)")
     dq.add_argument("--sampling", choices=["ours", "paper"], default="ours",
                     help="'paper' = the paper's Table 1 settings, for reproducing its models")
