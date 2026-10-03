@@ -229,8 +229,8 @@ def author_profile(ctx, key):
     person = one_of(cur, """
         SELECT person_id, key, name, page_kind, names, notes FROM s.persons WHERE key = ?""", [key])
     if not person:
-        return result(f"No author page with key {key!r}.", rows=[],
-                      note="Call resolve_author first to turn a name into a key.")
+        return refusal(f"there is no author page with the key {key!r}",
+                       "call resolve_author with the person's name to get the right key - never guess one")
     pid = person["person_id"]
     stats = one_of(cur, """
         SELECT count(*) AS papers, min(year) AS first_year, max(year) AS last_year,
@@ -280,7 +280,8 @@ def author_papers(ctx, key, frm=None, to=None, kind=None, sid=None, limit=20):
     cur = ctx.cursor()
     pid = one_of(cur, "SELECT person_id FROM s.persons WHERE key = ?", [key])
     if not pid:
-        return result(f"No author page with key {key!r}.", rows=[], note="Call resolve_author first.")
+        return refusal(f"there is no author page with the key {key!r}",
+                           "call resolve_author with the person's name to get the right key")
     where, params = ["TRUE"], []
     if frm is not None:
         where.append("b.year >= ?")
@@ -354,7 +355,8 @@ def coauthors(ctx, key, sid=None, min_papers=1, limit=15):
     cur = ctx.cursor()
     pid = one_of(cur, "SELECT person_id, name FROM s.persons WHERE key = ?", [key])
     if not pid:
-        return result(f"No author page with key {key!r}.", rows=[], note="Call resolve_author first.")
+        return refusal(f"there is no author page with the key {key!r}",
+                           "call resolve_author with the person's name to get the right key")
     # parameters are appended in the order the placeholders appear in the statement
     params = [pid["person_id"], pid["person_id"]]
     extra = ""
@@ -502,7 +504,8 @@ def venue_profile(ctx, sid):
                round(100 * doi_share, 1) AS pct_doi, round(100 * oa_share, 1) AS pct_oa
         FROM s.series WHERE sid = ?""", [sid])
     if not head:
-        return result(f"No venue series {sid!r}.", rows=[], note="Call resolve_venue first.")
+        return refusal(f"there is no venue series {sid!r}",
+                       "call resolve_venue with the venue's name to get the right id")
     _, yearly = rows_of(cur, f"""
         SELECT year, count(*) AS papers, round(avg(n_authors), 2) AS mean_authors,
                round(100 * avg(has_oa::INT), 1) AS pct_oa,
@@ -635,7 +638,8 @@ def count_papers(ctx, frm=None, to=None, kind=None, sid=None, author_key=None, m
     if author_key:
         pid = one_of(cur, "SELECT person_id FROM s.persons WHERE key = ?", [author_key])
         if not pid:
-            return result(f"No author page with key {author_key!r}.", rows=[], note="Call resolve_author first.")
+            return refusal(f"there is no author page with the key {author_key!r}",
+                           "call resolve_author with the person's name to get the right key")
         join = "JOIN (SELECT DISTINCT pid FROM s.slots WHERE person_id = ?) mine USING (pid)"
         params = [pid["person_id"]] + params
     cols, rows = rows_of(cur, f"""

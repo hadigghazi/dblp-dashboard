@@ -61,8 +61,8 @@ def test_author_profile_and_papers(ctx):
 
 def test_author_papers_needs_a_key_not_a_name(ctx):
     out = call(ctx, "author_papers", key="Ada Alpha")
-    assert out["rows"] == []
-    assert "resolve_author" in out["note"]
+    assert out.get("refused"), "a name passed as a key is refused, not answered with an empty list"
+    assert "resolve_author" in out["instead"]
 
 
 def test_top_authors_global_and_scoped(ctx):
@@ -343,3 +343,36 @@ def test_a_misspelled_venue_still_resolves(ctx):
     assert out["rows"] and out["rows"][0]["sid"] == "conf/aaa"
     assert out["meta"]["matched"] == "close"
     assert call(ctx, "resolve_venue", name="AAA Conference")["meta"]["matched"] == "contains"
+
+
+def test_an_answer_remembers_the_pages_its_tools_found():
+    """A follow-up such as "the second one" needs the second page's key, and the conversation only
+    carries text. The memory is that text."""
+    from chat.agent import with_memory
+    payloads = [{"name": "resolve_author", "arguments": {"name": "Sam Same"},
+                 "result": {"rows": [
+                     {"key": "homepages/s/1", "name": "Sam Same 0001", "papers": 37, "affiliation": "Google"},
+                     {"key": "homepages/s/2", "name": "Sam Same 0002", "papers": 25, "affiliation": "AOU"}]}}]
+    text = with_memory("Two people share that name.", payloads)
+    assert text.startswith("Two people share that name.")
+    first, second = text.index("homepages/s/1"), text.index("homepages/s/2")
+    assert first < second, "in the order the tool returned them, so 'the second one' means something"
+    assert "AOU" in text, "the detail a user might pick by is kept"
+
+
+def test_a_refused_tool_adds_nothing_to_the_memory():
+    from chat.agent import remembered
+    assert remembered([{"name": "author_profile", "arguments": {},
+                        "result": {"refused": True, "rows": [{"key": "x", "name": "y"}]}}]) == ""
+
+
+def test_the_memory_stays_small():
+    from chat.agent import MEMORY_CHARS, remembered
+    rows = [{"key": f"homepages/x/{i}", "name": "N" * 80} for i in range(100)]
+    assert len(remembered([{"name": "top_authors", "arguments": {}, "result": {"rows": rows}}])) <= MEMORY_CHARS
+
+
+def test_an_unknown_key_is_a_refusal_that_says_what_to_do(ctx):
+    got = T.call(ctx, "author_profile", {"key": "homepages/z/guessed"})
+    assert got.get("refused")
+    assert "resolve_author" in got.get("instead", "")

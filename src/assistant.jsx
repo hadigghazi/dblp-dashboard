@@ -153,7 +153,8 @@ function slim(turn) {
     answer: turn.answer,
     error: turn.error || null,
     done: turn.done ? { seconds: turn.done.seconds, tools: turn.done.tools, cached: turn.done.cached,
-                        cost_usd: turn.done.cost_usd, model: turn.done.model, usage: turn.done.usage } : null,
+                        cost_usd: turn.done.cost_usd, model: turn.done.model, usage: turn.done.usage,
+                        memory: turn.done.memory } : null,
     tools: (turn.tools || []).map((t) => ({ type: "tool", name: t.name, arguments: t.arguments,
                                             ms: t.ms, summary: t.summary, note: t.note, link: t.link,
                                             refused: t.refused, sql: t.sql })),
@@ -455,8 +456,11 @@ export function DeweyPanel({ open, onClose, go, onBusy }) {
     const chatId = activeId || `c${Date.now().toString(36)}`;
     if (!activeId) setActiveId(chatId);
     const index = turns.length;
+    // the server's memory of each answer - the answer plus the pages behind it - so a follow-up like
+    // "the second one" can be resolved; older saved chats only have the answer
     const history = turns.flatMap((t) => (t.answer
-      ? [{ role: "user", content: t.question }, { role: "assistant", content: t.answer }] : []));
+      ? [{ role: "user", content: t.question },
+         { role: "assistant", content: t.done?.memory || t.answer }] : []));
     setTurns((all) => [...all, { question: q, tools: [], answer: "", status: "thinking", done: null, error: null }]);
     const patch = (fn) => setTurns((all) => {
       const next = all.map((t, i) => (i === index ? fn(t) : t));

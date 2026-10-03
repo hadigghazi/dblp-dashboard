@@ -11,6 +11,9 @@ refusal accuracy.
 steps are listed explicitly, because "papers of this person" is only correct if a name was turned
 into a key first.
 
+`succeed` lists tools that must have returned a result, not a refusal - called is not the same as
+worked, and a guessed key calls the right tool and gets nothing back.
+
 `args` pins arguments as well: {tool: {parameter: value or [values]}}. It exists because the right
 tool with the wrong argument - "most connected" answered with betweenness - is a wrong answer that a
 tool-choice check passes.
@@ -110,6 +113,14 @@ CASES = [
          any_of=["author_papers", "count_papers"]),
     dict(turns=["Which venues are the biggest?", "Who publishes most in the first one?"],
          any_of=["top_authors"]),
+    # a follow-up that picks one of several pages the previous answer found. It needs that page's key,
+    # which used to be lost between turns: the model guessed one and asked the user to identify the
+    # page instead. Two different people have dblp pages under this name.
+    dict(turns=["How many papers does Hussein Hazimeh have?",
+                "The second one - give me some details about him"],
+         all_of=["author_profile"], succeed=["author_profile"]),
+    dict(turns=["Tell me about Yoshua Bengio", "Who are his most frequent co-authors?"],
+         any_of=["coauthors", "author_profile"], succeed=["coauthors"]),
 
     # ---- the co-authorship network. "Central" and "prolific" are different questions with
     # different answers - on this dump only 58 of the 100 most-between authors are also among the 100

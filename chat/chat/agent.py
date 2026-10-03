@@ -50,9 +50,13 @@ HOW TO WORK
    that IS answerable and answer that if it is obvious.
 7. For accuracy claims about the ML models or search, call model_cards and quote the measured
    numbers with their baseline. Never estimate them.
-8. A follow-up ("and his co-authors?", "what about 2014?", "only the journal ones") is about the
-   subject of the previous turn. Name that subject in your answer so it cannot be misread, and go
-   straight to the tool you need - you already know which person or venue it is.
+8. A follow-up ("and his co-authors?", "what about 2014?", "the second one") is about the subject of
+   the previous turn. Each earlier answer ends with a bracketed list of the pages its tools found,
+   with their keys, in the order they were returned: take the key from there ("the second one" is the
+   second page in that list, or the one matching the detail the user gave). If the key you need is not
+   in that list, call resolve_author or resolve_venue again with the name. Never guess a key, and never
+   ask the user for one - nobody knows dblp keys. Name the subject in your answer so it cannot be
+   misread.
 
 STYLE
 - Two to four sentences. Lead with the answer.
@@ -147,16 +151,70 @@ def run_tools(ctx, calls, emit, budget_left, collect=None):
     return messages
 
 
+MEMORY_ITEMS = 12
+MEMORY_CHARS = 1200
+
+
+def remembered(payloads):
+    """The pages and records an answer's tools returned, with their keys, in the order they came back.
+
+    The conversation goes back to the model as text, and the tool results do not go with it - so
+    without this, a follow-up like "the second one" has the person's name but not their key, and the
+    model guesses one. This is the part of the tool results a follow-up can need, small enough to send
+    back every turn."""
+    seen, lines = set(), []
+    for p in payloads:
+        out = p.get("result") or {}
+        if out.get("refused"):
+            continue
+        for row in out.get("rows") or []:
+            if not isinstance(row, dict):
+                continue
+            key = row.get("key") or row.get("sid")
+            label = row.get("name") or row.get("title")
+            if not key or not label or key in seen:
+                continue
+            seen.add(key)
+            extra = [str(row[k]) for k in ("papers", "records", "affiliation", "year", "kind")
+                     if row.get(k) not in (None, "")]
+            lines.append(f"{len(lines) + 1}. {label} - {key}" + (f" ({', '.join(extra)})" if extra else ""))
+            if len(lines) >= MEMORY_ITEMS:
+                break
+        # the subject of a profile is in the call, not in its rows
+        args = p.get("arguments") or {}
+        for arg in ("key", "author_key", "sid"):
+            key = args.get(arg)
+            if key and key not in seen:
+                seen.add(key)
+                lines.append(f"{len(lines) + 1}. (looked up) {key}")
+        if len(lines) >= MEMORY_ITEMS:
+            break
+    text = "\n".join(lines)
+    return text[:MEMORY_CHARS]
+
+
+def with_memory(answer_text, payloads):
+    """What a turn is remembered as: the answer, then the pages behind it. Built only here - the panel
+    and the evaluation both send it back exactly as it was given."""
+    memory = remembered(payloads)
+    if not memory:
+        return answer_text
+    return (f"{answer_text}\n\n[Pages and records this answer used, in the order the tools returned "
+            f"them; use these keys for follow-ups:\n{memory}]")
+
+
 def answer(ctx, client, question, history=None, emit=None, ledger=None, collect=None,
            channel="web"):
     """Run one question. `emit` receives events; returns a summary of the run."""
     emit = emit or (lambda _e: None)
+    # every tool result is kept for this answer's memory, whether or not the caller collects them
+    collect = collect if collect is not None else []
     started = time.time()
     budget_left = lambda: config.TIME_BUDGET_SECONDS - (time.time() - started)
     messages = [{"role": "system", "content": system_prompt(ctx)}]
     for turn in (history or [])[-config.MAX_HISTORY_TURNS:]:
         role = "assistant" if turn.get("role") == "assistant" else "user"
-        content = (turn.get("content") or "")[:2000]
+        content = (turn.get("content") or "")[:3000]   # room for the answer and its memory
         if content:
             messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": question})
@@ -229,6 +287,7 @@ def answer(ctx, client, question, history=None, emit=None, ledger=None, collect=
     done = {"type": "done", "answer": text, "rounds": rounds, "tools": used_tools,
             "usage": usage_total, "cost_usd": round(cost_total, 5),
             "seconds": round(time.time() - started, 2), "model": model,
+            "memory": with_memory(text, collect),
             "dump": {"fingerprint": ctx.meta.get("fingerprint"),
                      "latest_mdate": ctx.meta.get("latest_mdate")}}
     emit(done)

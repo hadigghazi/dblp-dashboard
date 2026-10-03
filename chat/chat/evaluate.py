@@ -48,11 +48,14 @@ def arguments_ok(case, calls):
 
 def run_case(ctx, client, case):
     tools_called, calls, payloads, t0 = [], [], [], time.time()
+    succeeded = set()
 
     def emit(event):
         if event.get("type") == "tool":
             tools_called.append(event["name"])
             calls.append((event["name"], event.get("arguments") or {}))
+            if not event.get("refused"):
+                succeeded.add(event["name"])
 
     # A case may be a conversation. Only the last turn is measured; the ones before it exist to give
     # the last one something to refer to ("and his co-authors?"), which is where a chatbot that looks
@@ -61,8 +64,9 @@ def run_case(ctx, client, case):
     history = []
     for earlier in turns[:-1]:
         prior = agent.answer(ctx, client, earlier, history=history, ledger=budget.ledger, channel="cli")
+        # exactly what the panel sends back: the answer with the pages behind it
         history += [{"role": "user", "content": earlier},
-                    {"role": "assistant", "content": prior.get("answer", "")}]
+                    {"role": "assistant", "content": prior.get("memory") or prior.get("answer", "")}]
     out = agent.answer(ctx, client, turns[-1], history=history, emit=emit, ledger=budget.ledger,
                        collect=payloads, channel="cli")
     answer_text = out.get("answer", "")
@@ -75,11 +79,15 @@ def run_case(ctx, client, case):
         reason = "" if passed else "answered instead of refusing"
     else:
         ok_args, wrong_args = arguments_ok(case, calls)
-        passed = ok_tools and ok_args
+        # called is not the same as worked: a guessed key calls the right tool and gets nothing back
+        failed = sorted(set(case.get("succeed", [])) - succeeded)
+        passed = ok_tools and ok_args and not failed
         if not ok_tools:
             reason = f"missing tools: all_of={sorted(want_all - called)} any_of={sorted(want_any)}"
         elif not ok_args:
             reason = "right tool, wrong arguments: " + "; ".join(wrong_args)
+        elif failed:
+            reason = f"called but never succeeded: {failed}"
         else:
             reason = ""
     lint = grounding.check(answer_text, payloads, question=" ".join(turns))
