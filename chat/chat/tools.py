@@ -21,6 +21,8 @@ Three design rules, learned from the rest of this project:
 import logging
 import re
 
+import httpx
+
 from . import config, docs, sqlguard, store
 
 log = logging.getLogger("dblp.chat.tools")
@@ -177,17 +179,42 @@ def _fuzzy_authors(cur, q, limit):
     # four-letter prefix; the length guard is what keeps the candidate set small
     likes = [f"%{w[:FUZZY_PREFIX]}%" for w in words[:3]]
     clause = " OR ".join(["name ILIKE ?"] * len(likes))
+    # compared on the base name: a numbered page stores "Hussein Hazimeh 0002", and the number made
+    # the right page too long for the length guard, so a typo of it matched someone else entirely
     return rows_of(cur, f"""
         WITH cand AS (
-            SELECT person_id, name FROM s.person_names
-            WHERE ({clause}) AND abs(length(name) - {len(q)}) <= {FUZZY_LENGTH}),
+            SELECT person_id, regexp_replace(name, ' [0-9]{{4}}$', '') AS base FROM s.person_names
+            WHERE ({clause})
+              AND abs(length(regexp_replace(name, ' [0-9]{{4}}$', '')) - {len(q)}) <= {FUZZY_LENGTH}),
         hits AS (
-            SELECT person_id, max(jaro_winkler_similarity(lower(name), lower(?))) AS sim
+            SELECT person_id, max(jaro_winkler_similarity(lower(base), lower(?))) AS sim
             FROM cand GROUP BY person_id
-            HAVING max(jaro_winkler_similarity(lower(name), lower(?))) >= {FUZZY_MIN}),
+            HAVING max(jaro_winkler_similarity(lower(base), lower(?))) >= {FUZZY_MIN}),
         """ + RESOLVE_SELECT.format(order="(SELECT sim FROM hits h WHERE h.person_id = p.person_id) DESC, "
                                           "papers DESC, p.name"),
                    likes + [q, q, int(limit)])
+
+
+def as_key(cur, value):
+    """A page's exact name, accepted where a key is expected.
+
+    The model passes "Wei Wang 0003" as a key often enough - a numbered name looks like an identifier
+    - and that name is unambiguous: exactly one page carries it. Turning it into the key here saves a
+    round trip and a wrong turn. Anything that is not exactly one real page's name - a bare shared
+    name, a bin, a typo - is returned unchanged, so the usual "no such key" refusal still fires and
+    the model resolves the name properly."""
+    text = (value or "").strip()
+    if not text or "/" in text:
+        return value
+    found = cur.execute("""
+        SELECT key FROM s.persons
+        WHERE lower(name) = lower(?) AND page_kind <> 'disambiguation' LIMIT 2""", [text]).fetchall()
+    return found[0][0] if len(found) == 1 else value
+
+
+def _not_latin(text):
+    """True for a name written wholly in another script - Arabic, Chinese, Cyrillic..."""
+    return bool(re.search(r"[^\W\d_]", text)) and not re.search(r"[A-Za-z]", text)
 
 
 def resolve_author(ctx, name, limit=8):
@@ -195,6 +222,10 @@ def resolve_author(ctx, name, limit=8):
     q = (name or "").strip()
     if len(q) < 2:
         return refusal("an author name needs at least two characters")
+    if _not_latin(q):
+        return refusal("dblp writes every author name in Latin script",
+                       "call again with the name transliterated into Latin letters, trying the usual "
+                       "spellings if the first finds nothing (for example Hussein, Husein or Hussain)")
     cols, rows = rows_of(cur, """
         WITH hits AS (SELECT DISTINCT person_id FROM s.person_names WHERE name ILIKE ?),
         """ + RESOLVE_SELECT.format(order="(lower(p.base_name) = lower(?)) DESC, papers DESC, p.name"),
@@ -226,6 +257,7 @@ def resolve_author(ctx, name, limit=8):
 
 def author_profile(ctx, key):
     cur = ctx.cursor()
+    key = as_key(cur, key)
     person = one_of(cur, """
         SELECT person_id, key, name, page_kind, names, notes FROM s.persons WHERE key = ?""", [key])
     if not person:
@@ -276,8 +308,9 @@ def author_profile(ctx, key):
                   name_variants=person.get("names"), top_venues=venues, top_coauthors=top_co)
 
 
-def author_papers(ctx, key, frm=None, to=None, kind=None, sid=None, limit=20):
+def author_papers(ctx, key, frm=None, to=None, kind=None, sid=None, title_contains=None, limit=20):
     cur = ctx.cursor()
+    key = as_key(cur, key)
     pid = one_of(cur, "SELECT person_id FROM s.persons WHERE key = ?", [key])
     if not pid:
         return refusal(f"there is no author page with the key {key!r}",
@@ -294,6 +327,10 @@ def author_papers(ctx, key, frm=None, to=None, kind=None, sid=None, limit=20):
     if sid:
         where.append("b.sid = ?")
         params.append(sid)
+    for word in (title_contains or "").split():
+        # every word must appear, so "deep learning" also finds "Learning ... deep"
+        where.append("b.title ILIKE ?")
+        params.append(f"%{word}%")
     cols, rows = rows_of(cur, f"""
         WITH mine AS (SELECT pid, position FROM s.slots WHERE person_id = ?)
         SELECT b.title, b.year, b.venue, {kind_expr('b.')} AS kind, b.n_authors, m.position, b.key
@@ -353,6 +390,7 @@ def namesakes(ctx, name, limit=25):
 
 def coauthors(ctx, key, sid=None, min_papers=1, limit=15):
     cur = ctx.cursor()
+    key = as_key(cur, key)
     pid = one_of(cur, "SELECT person_id, name FROM s.persons WHERE key = ?", [key])
     if not pid:
         return refusal(f"there is no author page with the key {key!r}",
@@ -394,6 +432,7 @@ def coauthors(ctx, key, sid=None, min_papers=1, limit=15):
 
 def pair_papers(ctx, key_a, key_b, limit=20):
     cur = ctx.cursor()
+    key_a, key_b = as_key(cur, key_a), as_key(cur, key_b)
     ids = rows_of(cur, "SELECT person_id, key, name FROM s.persons WHERE key IN (?, ?)", [key_a, key_b])[1]
     if len(ids) < 2:
         return result("One of the two author keys does not exist.", rows=[], note="Call resolve_author first.")
@@ -636,6 +675,7 @@ def count_papers(ctx, frm=None, to=None, kind=None, sid=None, author_key=None, m
         params.append(f"%{title_contains}%")
     join = ""
     if author_key:
+        author_key = as_key(cur, author_key)
         pid = one_of(cur, "SELECT person_id FROM s.persons WHERE key = ?", [author_key])
         if not pid:
             return refusal(f"there is no author page with the key {author_key!r}",
@@ -887,13 +927,28 @@ def predict_venue(ctx, title, author_names=None, top=5):
 
 
 def predict_coauthors(ctx, author_key, top=5):
+    cur = ctx.cursor()
+    author_key = as_key(cur, author_key)
+    if not one_of(cur, "SELECT person_id FROM s.persons WHERE key = ?", [author_key]):
+        return refusal(f"there is no author page with the key {author_key!r}",
+                       "call resolve_author with the person's name to get the right key - never guess one")
     try:
         r = ctx.http.get(f"{config.ML_URL}/ml/links", params={"key": author_key, "top": int(top)},
                          timeout=config.UPSTREAM_TIMEOUT)
         r.raise_for_status()
         payload = r.json()
+    except httpx.HTTPStatusError as e:
+        # the model answered; calling that "unreachable" told the user the service was down
+        detail = ""
+        try:
+            detail = e.response.json().get("detail") or ""
+        except Exception:
+            pass
+        return refusal(f"the link model has no prediction for this author "
+                       f"({e.response.status_code}{': ' + str(detail) if detail else ''})",
+                       "say so plainly; it only ranks people with enough co-authors to learn from")
     except Exception as e:
-        return refusal(f"the link model is unreachable ({e})")
+        return refusal(f"the link model is unreachable ({type(e).__name__})")
     rows = [{"name": s.get("name"), "key": s.get("key"), "score": s.get("score"),
              "shared_coauthors": s.get("common_coauthors"),
              "via": ", ".join(w.get("name", "") for w in (s.get("via") or [])[:3])}
@@ -960,10 +1015,14 @@ SPECS = [
     _fn("author_profile", "Everything about one author page: record count, active years, distinct "
         "co-authors, mean team size, top venues, top co-authors, recent papers, affiliations.",
         {"key": {"type": "string", "description": "author page key from resolve_author"}}, ["key"]),
-    _fn("author_papers", "One author's papers, newest first, with optional year, kind and venue filters. "
+    _fn("author_papers", "One author's papers, newest first, with optional year, kind, venue and title-word "
+        "filters. "
         "Returns the matching total as well as the listed rows.",
         {"key": {"type": "string"}, "from": YEAR, "to": YEAR, "kind": KIND,
-         "sid": {"type": "string", "description": "venue series key"}, "limit": {"type": "integer"}}, ["key"]),
+         "sid": {"type": "string", "description": "venue series key"},
+         "title_contains": {"type": "string", "description": "words that must all appear in the title, "
+                                                            "for 'their papers about X'"},
+         "limit": {"type": "integer"}}, ["key"]),
     _fn("namesakes", "How many separate people share a name, and whether an unassigned disambiguation "
         "bin exists for it. Use for 'how many people are called X' and for identity questions. The "
         "counts in the summary are the real totals; the row list is capped, so never count the rows.",

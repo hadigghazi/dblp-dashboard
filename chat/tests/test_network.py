@@ -191,3 +191,22 @@ def test_there_is_no_default_measure(ctx, run):
 def test_the_schema_requires_the_measure():
     params = T.spec("central_authors")["schema"]["function"]["parameters"]
     assert "metric" in params["required"]
+
+
+def test_an_unknown_key_is_not_explained_as_having_no_coauthors(ctx, run):
+    """The old refusal suggested "only single-author papers", and an answer repeated that as fact about
+    a man with 43 co-authors. A wrong key is a wrong key."""
+    got = call(ctx, "author_centrality", key="homepages/z/guessed")
+    assert got.get("refused")
+    assert "single-author" not in (got["summary"] + got.get("instead", ""))
+    assert "resolve_author" in got.get("instead", "")
+
+
+def test_a_real_page_outside_the_graph_says_why(ctx, run):
+    got = call(ctx, "author_centrality", key="homepages/e/Eve")
+    assert got.get("refused") and "no co-authors" in got["summary"]
+
+
+def test_an_exact_name_is_accepted_by_the_network_tool(ctx, run):
+    got = call(ctx, "author_centrality", key="Cleo Gamma")
+    assert not got.get("refused"), got

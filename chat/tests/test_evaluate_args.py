@@ -40,3 +40,12 @@ def test_every_call_to_a_pinned_tool_is_checked():
     ok, wrong = arguments_ok(CASE, [("central_authors", {"metric": "degree"}),
                                     ("central_authors", {"metric": "closeness"})])
     assert not ok and len(wrong) == 1
+
+
+def test_keys_shown_to_the_user_are_caught():
+    from chat.evaluate import shown_keys
+    assert shown_keys("He has 25 papers. [author page: homepages/165/0820-2]", "how many papers?") \
+        == ["homepages/165/0820-2"]
+    assert shown_keys("Published in journals/access in 2025.", "q") == ["journals/access"]
+    assert shown_keys("Here is conf/nips/VaswaniSPUJGKP17.", "Show me conf/nips/VaswaniSPUJGKP17") == []
+    assert shown_keys("He has 25 papers.", "q") == []

@@ -138,6 +138,12 @@ CASES = [
     dict(turns=["Who is the most central author by betweenness?", "And how many papers do they have?"],
          any_of=["central_authors", "resolve_author", "author_profile"]),
 
+    # a name in another script: dblp writes names in Latin, so it has to be transliterated first
+    dict(q="كم عدد الأوراق المنشورة ليوشوا بنجيو؟", all_of=["resolve_author"], succeed=["resolve_author"]),
+    # one author's papers on a topic: the model reached for a title filter that did not exist yet
+    dict(q="What has Jürgen Schmidhuber published about LSTM?", any_of=["author_papers", "search_papers"],
+         succeed=["author_papers"]),
+
     # ---- out of scope: the answer must say the data cannot support it
     dict(q="What is the most cited paper in dblp?", refuses=True),
     dict(q="What is Geoffrey Hinton's h-index?", refuses=True),

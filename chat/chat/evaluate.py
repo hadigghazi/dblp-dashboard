@@ -14,6 +14,7 @@ Results are written next to the models so /chat/status can show them.
 """
 import json
 import logging
+import re
 import time
 from datetime import datetime, timezone
 
@@ -25,6 +26,16 @@ log = logging.getLogger("dblp.chat.evaluate")
 def _refused(text):
     low = (text or "").lower()
     return any(marker in low for marker in goldset.REFUSAL_MARKERS)
+
+
+KEY_PATTERN = re.compile(r"\b(?:homepages|journals|conf)/[\w./-]+")
+
+
+def shown_keys(answer, question):
+    """dblp keys written into an answer the user did not ask for by key. People never need one, and an
+    answer that ends "[author page: homepages/165/0820-2]" reads like a database dump."""
+    asked = set(KEY_PATTERN.findall(question or ""))
+    return sorted({k.rstrip(".,;)]") for k in KEY_PATTERN.findall(answer or "")} - asked)
 
 
 def arguments_ok(case, calls):
@@ -90,6 +101,10 @@ def run_case(ctx, client, case):
             reason = f"called but never succeeded: {failed}"
         else:
             reason = ""
+        keys = shown_keys(answer_text, " ".join(turns))
+        if keys:
+            passed = False
+            reason = "; ".join(x for x in (reason, "shows dblp keys to the user: " + ", ".join(keys)) if x)
     lint = grounding.check(answer_text, payloads, question=" ".join(turns))
     return {
         "question": " -> ".join(turns), "passed": bool(passed), "reason": reason, "grounding": lint,

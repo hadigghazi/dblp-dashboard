@@ -376,3 +376,41 @@ def test_an_unknown_key_is_a_refusal_that_says_what_to_do(ctx):
     got = T.call(ctx, "author_profile", {"key": "homepages/z/guessed"})
     assert got.get("refused")
     assert "resolve_author" in got.get("instead", "")
+
+
+def test_an_exact_page_name_is_accepted_as_a_key(ctx):
+    from chat.tools import as_key
+    cur = ctx.cursor()
+    assert as_key(cur, "Sam Same 0002") == "homepages/s/2"
+    assert as_key(cur, "sam same 0002") == "homepages/s/2", "case does not matter"
+    assert as_key(cur, "Sam Same") == "Sam Same", "the bin is not a person: left for the refusal"
+    assert as_key(cur, "homepages/a/Ada") == "homepages/a/Ada"
+    profile = call(ctx, "author_profile", key="Sam Same 0002")
+    assert not profile.get("refused")
+
+
+def test_a_name_in_another_script_asks_for_a_transliteration(ctx):
+    got = call(ctx, "resolve_author", name="حسين حزيمة")
+    assert got.get("refused") and "Latin" in got["summary"]
+    assert "transliterat" in got.get("instead", "")
+
+
+def test_a_typo_of_a_numbered_name_finds_the_numbered_pages(ctx):
+    """A numbered page stores its name with the number, which used to push the right page out of the
+    fuzzy match's length guard."""
+    got = call(ctx, "resolve_author", name="Sam Sme")
+    assert {r["key"] for r in got["rows"]} & {"homepages/s/1", "homepages/s/2"}
+
+
+def test_one_authors_papers_can_be_filtered_by_title_words(ctx):
+    every = call(ctx, "author_papers", key="homepages/a/Ada", limit=50)
+    word = every["rows"][0]["title"].split()[0]
+    some = call(ctx, "author_papers", key="homepages/a/Ada", title_contains=word, limit=50)
+    assert 0 < some["meta"]["matching"] <= every["meta"]["matching"]
+    assert all(word.lower() in r["title"].lower() for r in some["rows"])
+
+
+def test_an_invented_key_is_refused_before_the_model_is_asked(ctx):
+    got = call(ctx, "predict_coauthors", author_key="homepages/hh2")
+    assert got.get("refused") and "unreachable" not in got["summary"]
+    assert "resolve_author" in got.get("instead", "")

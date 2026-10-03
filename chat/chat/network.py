@@ -30,7 +30,7 @@ import json
 import logging
 
 from . import config
-from .tools import refusal, result, rows_of
+from .tools import as_key, refusal, result, rows_of
 
 log = logging.getLogger("dblp.chat.network")
 
@@ -171,15 +171,24 @@ def author_centrality(ctx, key):
         return _unavailable()
     m = _metrics(directory)
     cur = ctx.cursor()
+    key = as_key(cur, key)
     got = cur.execute(f"""
         SELECT name, key, degree, records, in_largest_component,
                rank_degree, rank_betweenness, rank_closeness, rank_eigenvector,
                betweenness, closeness, eigenvector
         FROM read_parquet('{table.as_posix()}') WHERE key = ?""", [key]).fetchone()
     if not got:
-        return refusal(f"'{key}' has no place in the co-authorship network",
-                       "an author with only single-author papers has no co-authors, so no position "
-                       "in the graph; check the key with resolve_author")
+        # two different situations, and saying the second when it was the first put a false claim -
+        # "he has only single-author papers" - into an answer about a man with 43 co-authors
+        page = cur.execute("SELECT name FROM s.persons WHERE key = ?", [key]).fetchone()
+        if not page:
+            return refusal(f"there is no author page with the key {key!r}",
+                           "call resolve_author with the person's name to get the right key - never "
+                           "guess one, and do not guess why the lookup failed")
+        return refusal(f"{page[0]} has no co-authors in the network",
+                       "every paper on their page is single-author, on a paper with more than 50 "
+                       "authors, or shared only with unidentified names - so they have no position in "
+                       "the co-authorship graph")
     total = int(m["nodes"])
     ranked = int(m.get("largest_component_nodes", total))
     rows = []

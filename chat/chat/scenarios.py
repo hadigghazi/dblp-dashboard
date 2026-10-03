@@ -159,7 +159,13 @@ def run(ctx, client, suite="instructor", limit=None, out=print):
     cases = spec["cases"][:limit] if limit else spec["cases"]
     results, started = [], time.time()
     for i, case in enumerate(cases, 1):
-        r = E.run_case(ctx, client, case)
+        try:
+            r = E.run_case(ctx, client, case)
+        except Exception as e:                    # one broken scenario must not lose the rest
+            question = " -> ".join(case.get("turns") or [case.get("q", "")])
+            r = {"question": question, "passed": False, "reason": f"crashed: {type(e).__name__}: {e}",
+                 "calls": [], "answer": "", "seconds": 0, "cost_usd": 0,
+                 "grounding": {"ok": True, "ungrounded": []}}
         if case.get("subject") and not case.get("refuses"):
             ok, why = right_person(r.get("calls", []), r.get("answer"), subject,
                                    [p["key"] for p in others])
@@ -169,7 +175,7 @@ def run(ctx, client, suite="instructor", limit=None, out=print):
         if not r["grounding"]["ok"]:
             r["passed"] = False
             r["reason"] = "; ".join(x for x in (r["reason"], "a number in the answer has no source: "
-                                                + ", ".join(r["grounding"]["ungrounded"])) if x)
+                                                + ", ".join(map(str, r["grounding"]["ungrounded"]))) if x)
         r["note"] = case.get("note")
         results.append(r)
         _print(out, i, r)
