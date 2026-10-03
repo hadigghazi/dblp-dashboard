@@ -59,10 +59,15 @@ def test_author_profile_and_papers(ctx):
     assert {r["venue"] for r in journals["rows"]} == {"BBB Journal"}
 
 
-def test_author_papers_needs_a_key_not_a_name(ctx):
-    out = call(ctx, "author_papers", key="Ada Alpha")
-    assert out.get("refused"), "a name passed as a key is refused, not answered with an empty list"
-    assert "resolve_author" in out["instead"]
+def test_author_papers_takes_a_key_or_one_pages_exact_name_and_nothing_vaguer(ctx):
+    """An exact name that only one page carries is as good as its key. A name that does not pick out
+    one person - a bin shared by several, a partial name - is still refused, with the way to fix it."""
+    exact = call(ctx, "author_papers", key="Ada Alpha")
+    assert not exact.get("refused") and exact["meta"]["matching"] > 0
+    for vague in ("Sam Same", "Ada"):
+        out = call(ctx, "author_papers", key=vague)
+        assert out.get("refused"), f"{vague!r} does not identify one person"
+        assert "resolve_author" in out["instead"]
 
 
 def test_top_authors_global_and_scoped(ctx):
