@@ -9,6 +9,7 @@ Command line, for the VM.
   python -m chat.cli questions [--days N]      what people asked, and what the catalogue is missing
   python -m chat.cli search-eval [--papers N]  can search find a paper from a description of it?
   python -m chat.cli scenarios [--suite S]     one person's questions about themselves, answers in full
+  python -m chat.cli dblpqa closed-book         DBLP-QA with no retrieval, judged automatically
 
 `ask` is the same code path the web endpoint uses, so a question that works here works there.
 """
@@ -87,6 +88,19 @@ def cmd_evaluate(args):
     path = E.save(payload, ctx.meta.get("fingerprint", "unknown"))
     print(json.dumps(payload["summary"], indent=2))
     print(f"\nwritten to {path}")
+
+
+def cmd_dblpqa(args):
+    from . import dblpqa as DQ
+    client = Client()
+    if not client.configured():
+        sys.exit("No OPENAI_API_KEY set.")
+    rows, sha = DQ.load_dataset()
+    if args.limit:
+        rows = rows[:args.limit]
+    print(f"DBLP-QA: {len(rows)} questions (sha256 {sha[:12]}), judge {args.judge}")
+    models = [m.strip() for m in args.models.split(",") if m.strip()]
+    DQ.run_closed_book(client, models, args.judge, rows, sha, force=args.force)
 
 
 def cmd_scenarios(args):
@@ -186,6 +200,14 @@ def main():
     ql = sub.add_parser("questions", help="what people asked, and what the catalogue is missing")
     ql.add_argument("--days", type=int, default=30)
     ql.set_defaults(fn=cmd_questions)
+    dq = sub.add_parser("dblpqa", help="experiments on the DBLP-QA benchmark")
+    dq.add_argument("condition", choices=["closed-book"])
+    dq.add_argument("--models", default="gpt-4.1-mini,gpt-4.1")
+    dq.add_argument("--judge", default="gpt-4.1")
+    dq.add_argument("--limit", type=int, default=None, help="first N questions only, for a dry run")
+    dq.add_argument("--force", action="store_true", help="run even if the judge fails its controls")
+    dq.set_defaults(fn=cmd_dblpqa)
+
     sc = sub.add_parser("scenarios", help="one person's questions about themselves, answers in full")
     sc.add_argument("--suite", default="instructor")
     sc.add_argument("--limit", type=int, default=None)
