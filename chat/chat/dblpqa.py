@@ -37,6 +37,23 @@ from .llm import LLMError
 log = logging.getLogger("dblp.chat.dblpqa")
 
 DATASET_URL = "https://seafile.rlp.net/f/6581519cdd1d4782bccc/?dl=1"
+# Which question set the harness works on: the original 50, or DBLP-QA-Fresh (dblpqa_fresh), questions
+# from papers too recent for the models to have seen. Each has its own folder, so runs, caches and the
+# pairings between runs never mix.
+DATASETS = {"dblpqa": {"dir": "dblpqa", "file": "dblp-qa.csv", "url": DATASET_URL},
+            "fresh": {"dir": "dblpqa-fresh", "file": "fresh.csv", "url": None}}
+DATASET = "dblpqa"
+
+
+def use_dataset(name):
+    global DATASET
+    if name not in DATASETS:
+        raise ValueError(f"unknown dataset {name!r}")
+    DATASET = name
+
+
+def study_dir():
+    return config.MODELS_DIR / DATASETS[DATASET]["dir"]
 COLUMNS = ["id", "question", "answer", "dblp_key", "semantic_scholar_id"]
 SEED = 7
 
@@ -108,12 +125,17 @@ Reply with JSON only: {"score": 0, 1 or 2, "reason": "<one short sentence>"}"""
 
 # --------------------------------------------------------------------------- the dataset
 
-def load_dataset(cache_dir=None, url=DATASET_URL):
-    """The 50 questions, downloaded once and kept. Returns (rows, sha256 of the file)."""
-    cache = Path(cache_dir or config.MODELS_DIR / "dblpqa")
+def load_dataset(cache_dir=None, url=None):
+    """The current dataset's questions - DBLP-QA is downloaded once and kept, Fresh must have been
+    built. Returns (rows, sha256 of the file)."""
+    spec = DATASETS[DATASET]
+    cache = Path(cache_dir or study_dir())
     cache.mkdir(parents=True, exist_ok=True)
-    path = cache / "dblp-qa.csv"
+    path = cache / spec["file"]
     if not path.exists():
+        url = url or spec["url"]
+        if not url:
+            raise SystemExit(f"no {path.name} in {cache}: build it first with `dblpqa --dataset fresh fresh-build`")
         r = httpx.get(url, follow_redirects=True, timeout=60)
         r.raise_for_status()
         path.write_bytes(r.content)
@@ -176,7 +198,7 @@ def _crossref(http, doi):
 def fetch_abstracts(rows, cache_dir=None, http=None, out=print):
     """{question id: {"abstract", "source", "title"}} for every question, cached. Semantic Scholar first,
     then arXiv, OpenAlex and Crossref for any it withholds."""
-    cache = Path(cache_dir or config.MODELS_DIR / "dblpqa") / "abstracts.json"
+    cache = Path(cache_dir or study_dir()) / "abstracts.json"
     have = json.loads(cache.read_text(encoding="utf-8")) if cache.exists() else {}
     todo = [r for r in rows if r["id"] not in have]
     if todo:
@@ -408,9 +430,10 @@ def judge_controls(client, meter, judge_model, rows, out=print):
     return result
 
 
-def reusable_controls(judge_model, sha, runs_dir=None):
-    """A judge that passed its controls on this exact dataset already has: no need to pay again."""
-    runs = Path(runs_dir or config.MODELS_DIR / "dblpqa" / "runs")
+def reusable_controls(judge_model, sha, runs_dir=None, questions=None):
+    """A judge that passed its controls on this exact dataset - all of it, not a --limit slice - already
+    has: no need to pay again."""
+    runs = Path(runs_dir or study_dir() / "runs")
     for summary in sorted(runs.glob("*/summary.json"), reverse=True):
         try:
             got = json.loads(summary.read_text(encoding="utf-8"))
@@ -418,7 +441,8 @@ def reusable_controls(judge_model, sha, runs_dir=None):
             continue
         controls = got.get("judge_controls") or {}
         if (got.get("judge") == judge_model and got.get("dataset_sha256") == sha
-                and controls.get("passed") and got.get("questions") == 50):
+                and controls.get("passed")
+                and (questions is None or got.get("questions_in_dataset", got.get("questions")) == questions)):
             return dict(controls, reused_from=summary.parent.name)
     return None
 
@@ -472,10 +496,10 @@ def run_condition(client, models, judge_model, rows, sha, condition, contexts=No
         # a question with no abstract from any source cannot be given one; counted, not hidden
         rows = [r for r in rows if (contexts or {}).get(r["id"], {}).get("abstract")]
         out(f"oracle: {len(rows)} of {len(all_rows)} questions have an abstract")
-    out_dir = Path(out_dir or config.MODELS_DIR / "dblpqa" / "runs" / f"{stamp}-{condition}")
+    out_dir = Path(out_dir or study_dir() / "runs" / f"{stamp}-{condition}")
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    controls = reusable_controls(judge_model, sha, out_dir.parent) if reuse_controls else None
+    controls = reusable_controls(judge_model, sha, out_dir.parent, len(all_rows)) if reuse_controls else None
     if judge_model == "none":
         controls = {"passed": True, "skipped": "answers generated without scoring; see dblpqa rescore"}
         out("no judge: answers are generated and saved; score them later with dblpqa rescore")
@@ -640,7 +664,7 @@ def print_summary(summary, condition, out=print):
 def rescore(client, run_dir, judge_model, out=print):
     """Score whatever a run left unscored - generated with --judge none, or cut short when the credit
     ran out - and recompute its summary. Already-scored answers are not paid for again."""
-    runs = config.MODELS_DIR / "dblpqa" / "runs"
+    runs = study_dir() / "runs"
     run_dir = Path(run_dir) if run_dir and Path(run_dir).is_absolute() else runs / (run_dir or "")
     if not (run_dir / "answers.jsonl").exists():
         raise SystemExit(f"no answers in {run_dir}")
@@ -651,7 +675,7 @@ def rescore(client, run_dir, judge_model, out=print):
     todo = [r for r in records if r.get("score") is None]
     if todo:
         rows, sha = load_dataset()
-        controls = reusable_controls(judge_model, sha, runs)
+        controls = reusable_controls(judge_model, sha, runs, len(rows))
         if not controls:
             controls = judge_controls(client, meter, judge_model, rows, out)
             if not controls["passed"]:
@@ -680,7 +704,7 @@ def rescore(client, run_dir, judge_model, out=print):
 def report(run_dir=None, out=print):
     """One line per question with every model's score side by side, then the judge's reasons for
     anything below 2 - the readable form of a run."""
-    runs = config.MODELS_DIR / "dblpqa" / "runs"
+    runs = study_dir() / "runs"
     run_dir = Path(run_dir) if run_dir else max((d for d in runs.iterdir() if d.is_dir()),
                                                 key=lambda d: d.name)
     records = [json.loads(line) for line in

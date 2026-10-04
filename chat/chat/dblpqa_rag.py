@@ -457,12 +457,13 @@ def source_aliases(rows, http):
     """{question id: set of dblp keys that are the source paper}: the benchmark's key plus Semantic
     Scholar's dblp key for the benchmark's paper (its CorpusId), which differ when one is a preprint."""
     aliases = {r["id"]: {r["dblp_key"]} for r in rows}
-    if not rows:
+    known = [r for r in rows if r.get("semantic_scholar_id")]
+    if not known:
         return aliases
     r = DQ._get(http, DQ.S2_BATCH, method="POST", params={"fields": "externalIds"},
-                json={"ids": [f"CorpusId:{row['semantic_scholar_id']}" for row in rows]})
+                json={"ids": [f"CorpusId:{row['semantic_scholar_id']}" for row in known]})
     if r.status_code == 200:
-        for row, paper in zip(rows, r.json()):
+        for row, paper in zip(known, r.json()):
             key = ((paper or {}).get("externalIds") or {}).get("DBLP")
             if key:
                 aliases[row["id"]].add(key)
@@ -492,7 +493,7 @@ def build_pools(rows, oracle, http=None, cache_dir=None, out=print):
     """{question id: {"candidates": {dblp key: {title, abstract, doi, <retriever>_rank}}, "aliases":
     [source keys], "status": {retriever: HTTP status}, "raw": {OpenAlex retriever: works}}}.
     Searches only what is missing, so a re-run finishes a pool a refused search left incomplete."""
-    cache_dir = Path(cache_dir or config.MODELS_DIR / "dblpqa")
+    cache_dir = Path(cache_dir or DQ.study_dir())
     cache_dir.mkdir(parents=True, exist_ok=True)
     pools_path = cache_dir / "pools.json"
     abstracts_path, oa_map_path = cache_dir / "pool-abstracts.json", cache_dir / "openalex-dblp.json"
@@ -681,7 +682,7 @@ def gate_contexts(client, rows, pools, contexts, gate_model=GATE_MODEL, cache_di
     """Keep only the retrieved abstracts the gate says address the question; with none kept the
     context is None and the answer is closed-book. Verdicts are cached by question, retrieved papers
     and gate, so every answer model gets the same filtered context and none is paid for twice."""
-    path = Path(cache_dir or config.MODELS_DIR / "dblpqa") / "gates.json"
+    path = Path(cache_dir or DQ.study_dir()) / "gates.json"
     cache = _load(path)
     meter = DQ.Meter()
     gated = {}
@@ -721,7 +722,7 @@ def gate_contexts(client, rows, pools, contexts, gate_model=GATE_MODEL, cache_di
 def prepare(rows, out=print, cache_dir=None, http=None, embeddings=None, frozen=False, allow_incomplete=False):
     """Pool, abstracts, embeddings and every ranking; returns (pools, rankings, report). `frozen`
     uses the pool as it is - no searching - and refuses one with a missing search."""
-    cache_dir = Path(cache_dir or config.MODELS_DIR / "dblpqa")
+    cache_dir = Path(cache_dir or DQ.study_dir())
     oracle = DQ.fetch_abstracts(rows, cache_dir=cache_dir, http=http, out=out)
     if frozen:
         pools = _load(cache_dir / "pools.json")

@@ -71,7 +71,7 @@ def _paired(first, second, ids):
 
 def run(client, rows, judge_model=DEFAULT_JUDGE, out=print, pool=None, cache_dir=None, modes="plain",
         force=False):
-    cache_dir = Path(cache_dir or config.MODELS_DIR / "dblpqa")
+    cache_dir = Path(cache_dir or DQ.study_dir())
     runs = AU.load_runs(cache_dir / "runs")
     if pool is None:
         pool = next((s.get("pool_sha256") for _, s, _ in reversed(runs) if s.get("pool_sha256")), None)

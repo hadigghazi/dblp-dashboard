@@ -16,6 +16,8 @@ Command line, for the VM.
   python -m chat.cli dblpqa audit               which questions one gold answer can grade, and why points were lost
   python -m chat.cli dblpqa regrade             the missed questions graded fairly: any correct answer counts
   python -m chat.cli dblpqa crossjudge          the main answer sets re-judged by an open model of another family
+  python -m chat.cli dblpqa fresh-build         DBLP-QA-Fresh: questions from papers newer than the models
+  python -m chat.cli dblpqa --dataset fresh ... any of the above on DBLP-QA-Fresh instead
 
 `ask` is the same code path the web endpoint uses, so a question that works here works there.
 """
@@ -101,6 +103,11 @@ def cmd_dblpqa(args):
     client = Client()
     if not client.configured():
         sys.exit("No OPENAI_API_KEY set.")
+    DQ.use_dataset("fresh" if args.condition == "fresh-build" else args.dataset)
+    if args.condition == "fresh-build":
+        from . import dblpqa_fresh as FR
+        FR.build(client, target=args.target, candidates=args.candidates)
+        return
     if args.condition == "report":
         DQ.report(args.run)
         return
@@ -250,7 +257,7 @@ def main():
     ql.set_defaults(fn=cmd_questions)
     dq = sub.add_parser("dblpqa", help="experiments on the DBLP-QA benchmark")
     dq.add_argument("condition", choices=["closed-book", "oracle", "retrieval", "rag", "audit", "regrade", "crossjudge", "report",
-                             "rescore"],
+                             "rescore", "fresh-build"],
                     help="oracle = each question with the abstract it was written from; retrieval = where "
                          "each ranker puts that paper (no answers); rag = answers from the top --k papers "
                          "of --ranker; rescore = score the unscored answers of --run")
@@ -262,6 +269,11 @@ def main():
                     help="for rag: permissive = told the abstracts may be off-topic; gated = a relevance "
                          "check keeps only abstracts that address the question (none kept = closed-book)")
     dq.add_argument("--gate-model", default="gpt-4.1-mini", help="for --mode gated")
+    dq.add_argument("--dataset", choices=["dblpqa", "fresh"], default="dblpqa",
+                    help="the original 50 questions, or DBLP-QA-Fresh (built by fresh-build)")
+    dq.add_argument("--target", type=int, default=100, help="for fresh-build: questions to keep")
+    dq.add_argument("--candidates", type=int, default=None,
+                    help="for fresh-build: papers to sample (default 4x --target)")
     dq.add_argument("--second-judge", default="ollama:qwen2.5:14b",
                     help="for crossjudge: the independent judge, normally an open model on the local Ollama")
     dq.add_argument("--modes", choices=["plain", "all"], default="plain",

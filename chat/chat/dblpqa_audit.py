@@ -178,7 +178,7 @@ def _blocks(cands, keys):
 # --------------------------------------------------------------------------- the audit
 
 def run(client, rows, out=print, pool=None, cache_dir=None, labelers=LABELERS):
-    cache_dir = Path(cache_dir or config.MODELS_DIR / "dblpqa")
+    cache_dir = Path(cache_dir or DQ.study_dir())
     runs = load_runs(cache_dir / "runs")
     if pool is None:
         pool = next((s.get("pool_sha256") for _, s, _ in reversed(runs) if s.get("pool_sha256")), None)
@@ -337,7 +337,7 @@ def regrade(client, rows, out=print, pool=None, cache_dir=None, judge_model="gpt
     """Every answer set on the questions where retrieval missed the source, graded again against the
     reference and the same retrieved abstracts, after controls; paired with the same model's
     closed-book answers graded the same way."""
-    cache_dir = Path(cache_dir or config.MODELS_DIR / "dblpqa")
+    cache_dir = Path(cache_dir or DQ.study_dir())
     runs = load_runs(cache_dir / "runs")
     if pool is None:
         pool = next((s.get("pool_sha256") for _, s, _ in reversed(runs) if s.get("pool_sha256")), None)
