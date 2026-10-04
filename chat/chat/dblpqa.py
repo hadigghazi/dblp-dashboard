@@ -48,6 +48,13 @@ CONTEXT_SYSTEM = ("You answer questions about computer-science research using th
 RAG_SYSTEM = ("You answer questions about computer-science research using the paper abstracts you are "
               "given. Answer in one to three sentences.")
 RAG_PREFIX = "rag-"
+# selective retrieval (dblpqa_rag): "permissive" says the abstracts may be off-topic; "gated" filters
+# them first, and a question left with none is asked closed-book
+PERMISSIVE_SYSTEM = ("You answer questions about computer-science research. You are given abstracts of "
+                     "papers a search returned for the question; they may or may not be relevant. Use them "
+                     "where they address the question; if none does, ignore them and answer from your own "
+                     "knowledge. Answer in one to three sentences.")
+RAG_MODES = ("permissive", "gated")
 CONDITIONS = ("closed-book", "oracle")      # plus rag-<ranker>, see dblpqa_rag
 
 # Generation settings. "paper" is Table 1 of the paper (Mistral-7B and TinyLlama rows): what a
@@ -289,15 +296,27 @@ def messages_for(condition, question, abstract=None):
     if condition == "oracle":
         return [{"role": "system", "content": CONTEXT_SYSTEM},
                 {"role": "user", "content": f"Abstract:\n{abstract}\n\nQuestion: {question}"}]
-    if condition.startswith(RAG_PREFIX):
-        return [{"role": "system", "content": RAG_SYSTEM},
+    if condition.startswith(RAG_PREFIX) and abstract is not None:
+        return [{"role": "system", "content": system_prompt(condition)},
                 {"role": "user", "content": f"Abstracts:\n{abstract}\n\nQuestion: {question}"}]
+    # closed-book - and a gated question whose gate kept no abstract, asked exactly as closed-book
     return [{"role": "system", "content": ANSWER_SYSTEM}, {"role": "user", "content": question}]
 
 
+def rag_parts(condition):
+    """("rag-bm25", "gated") from "rag-bm25-gated"; the mode is "plain" when there is no suffix."""
+    for mode in RAG_MODES:
+        if condition.endswith(f"-{mode}"):
+            return condition[:-len(mode) - 1], mode
+    return condition, "plain"
+
+
 def system_prompt(condition):
-    return (CONTEXT_SYSTEM if condition == "oracle" else RAG_SYSTEM if condition.startswith(RAG_PREFIX)
-            else ANSWER_SYSTEM)
+    if condition == "oracle":
+        return CONTEXT_SYSTEM
+    if condition.startswith(RAG_PREFIX):
+        return PERMISSIVE_SYSTEM if rag_parts(condition)[1] == "permissive" else RAG_SYSTEM
+    return ANSWER_SYSTEM
 
 
 def answer_closed_book(client, meter, model, question, sampling="ours"):
@@ -382,10 +401,11 @@ def reusable_controls(judge_model, sha, runs_dir=None):
     return None
 
 
-def paired_delta(model, sampling, records, runs_dir, against="closed-book"):
+def paired_delta(model, sampling, records, runs_dir, against="closed-book", pool=None):
     """This run's scores against the same model's scores in the latest `against` run with the same
     sampling, question by question: the mean difference with a paired bootstrap interval, and how many
-    questions got better, worse or stayed the same."""
+    questions got better, worse or stayed the same. With `pool`, only a run that was given the same
+    retrieval pool counts."""
     mine = {r["id"]: r["score"] for r in records if r["model"] == model}
     for summary in sorted(Path(runs_dir).glob(f"*-{against}/summary.json"), reverse=True):
         try:
@@ -393,6 +413,8 @@ def paired_delta(model, sampling, records, runs_dir, against="closed-book"):
         except (OSError, ValueError):
             continue
         if model not in (got.get("models") or []) or sampling not in (got.get("sampling") or {"ours": None}):
+            continue
+        if pool is not None and got.get("pool_sha256") != pool:
             continue
         theirs = {}
         for line in (summary.parent / "answers.jsonl").read_text(encoding="utf-8").splitlines():
@@ -417,7 +439,9 @@ def run_closed_book(client, models, judge_model, rows, sha, out_dir=None, out=pr
 
 
 def run_condition(client, models, judge_model, rows, sha, condition, contexts=None, out_dir=None,
-                  out=print, force=False, sampling="ours", reuse_controls=True):
+                  out=print, force=False, sampling="ours", reuse_controls=True, notes=None):
+    """One condition for every model, judged. `notes` (the retrieval pool's fingerprint, the ranker,
+    the gate) is saved with the run."""
     started = time.time()
     meter = Meter()
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -478,11 +502,13 @@ def run_condition(client, models, judge_model, rows, sha, condition, contexts=No
                 if condition.startswith(RAG_PREFIX):
                     rec.update(retrieved=ctx.get("retrieved"), source_rank=ctx.get("source_rank"),
                                source_in_context=ctx.get("source_in_context"))
+                    if "kept" in ctx:
+                        rec.update(kept=ctx["kept"], gate_kept_source=ctx["gate_kept_source"])
                 records.append(rec)
                 fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
                 fh.flush()
 
-    summary = summarize(records, condition, sampling, out_dir.parent)
+    summary = summarize(records, condition, sampling, out_dir.parent, pool=(notes or {}).get("pool_sha256"))
     print_summary(summary, condition, out)
     payload = {
         "condition": condition, "run_at": stamp, "dataset_sha256": sha, "questions": len(rows),
@@ -498,14 +524,17 @@ def run_condition(client, models, judge_model, rows, sha, condition, contexts=No
         "usage": meter.usage, "cost_usd": meter.cost(), "seconds": round(time.time() - started, 1),
         "stopped": stopped,
     }
+    payload.update(notes or {})
     (out_dir / "summary.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
     out(f"\n${payload['cost_usd']} · {payload['seconds']}s · written to {out_dir}")
     return payload
 
 
-def summarize(records, condition, sampling, runs_dir):
+def summarize(records, condition, sampling, runs_dir, pool=None):
     """Per model: answered and judged counts, the mean with its interval over the judged answers, and -
-    for any condition but closed-book - the paired difference from the same model's closed-book run."""
+    for any condition but closed-book - the paired difference from the same model's closed-book run.
+    A rag run is also paired with the oracle and split by whether retrieval found the source paper; a
+    selective one is paired with plain RAG on the same pool."""
     summary = {}
     for model in dict.fromkeys(r["model"] for r in records):
         mine = [r for r in records if r["model"] == model]
@@ -518,16 +547,25 @@ def summarize(records, condition, sampling, runs_dir):
         if condition != "closed-book" and judged:
             entry["vs_closed_book"] = paired_delta(model, sampling, judged, runs_dir)
         if condition.startswith(RAG_PREFIX) and judged:
+            base, mode = rag_parts(condition)
             entry["vs_oracle"] = paired_delta(model, sampling, judged, runs_dir, against="oracle")
+            if mode != "plain":
+                entry["vs_plain"] = paired_delta(model, sampling, judged, runs_dir, against=base, pool=pool)
             # the question the oracle could not ask: when retrieval brings the wrong papers, does a
             # model do worse than if it had been given nothing at all?
             entry["by_retrieval"] = {}
             for label, hit in (("source retrieved", True), ("source missed", False)):
                 part = [r for r in judged if bool(r.get("source_in_context")) == hit]
-                if part:
-                    entry["by_retrieval"][label] = {
-                        "questions": len(part), "judge_score": bootstrap_ci([r["score"] for r in part]),
-                        "vs_closed_book": paired_delta(model, sampling, part, runs_dir)}
+                if not part:
+                    continue
+                split = {"questions": len(part), "judge_score": bootstrap_ci([r["score"] for r in part]),
+                         "vs_closed_book": paired_delta(model, sampling, part, runs_dir)}
+                if mode != "plain":
+                    split["vs_plain"] = paired_delta(model, sampling, part, runs_dir, against=base, pool=pool)
+                if any("kept" in r for r in part):
+                    split["gate_kept_source"] = sum(bool(r.get("gate_kept_source")) for r in part)
+                    split["gate_passed_nothing"] = sum(not r.get("kept") for r in part)
+                entry["by_retrieval"][label] = split
         summary[model] = entry
     return summary
 
@@ -555,12 +593,25 @@ def print_summary(summary, condition, out=print):
             d = oracle["delta"]
             out(f"{'':14s} vs oracle on the same {oracle['questions']} questions: {d['mean']:+.2f} "
                 f"(95% CI {d['low']:+.2f} to {d['high']:+.2f})")
+        plain = entry.get("vs_plain")
+        if plain:
+            d = plain["delta"]
+            out(f"{'':14s} vs plain RAG on the same pool and {plain['questions']} questions: {d['mean']:+.2f} "
+                f"(95% CI {d['low']:+.2f} to {d['high']:+.2f}); better on {plain['better']}, worse on "
+                f"{plain['worse']}")
+        elif condition.startswith(RAG_PREFIX) and rag_parts(condition)[1] != "plain":
+            out(f"{'':14s} (no plain RAG run on this pool with this model and sampling to compare with)")
         for label, part in (entry.get("by_retrieval") or {}).items():
             ci, paired = part["judge_score"], part.get("vs_closed_book")
             line = f"{'':14s} {label}: {part['questions']} questions, {ci['mean']:.2f}"
             if paired:
                 line += (f", vs closed-book {paired['delta']['mean']:+.2f}; better on {paired['better']}, "
                          f"worse on {paired['worse']}")
+            if part.get("vs_plain"):
+                line += f"; vs plain RAG {part['vs_plain']['delta']['mean']:+.2f}"
+            if "gate_kept_source" in part:
+                line += (f"; gate kept the source on {part['gate_kept_source']}" if label == "source retrieved"
+                         else f"; gate passed nothing on {part['gate_passed_nothing']}")
             out(line)
 
 
@@ -593,7 +644,8 @@ def rescore(client, run_dir, judge_model, out=print):
         for rec in records:
             fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
     sampling = next(iter(payload.get("sampling") or {"ours": None}))
-    payload["results"] = summarize(records, payload["condition"], sampling, run_dir.parent)
+    payload["results"] = summarize(records, payload["condition"], sampling, run_dir.parent,
+                                   pool=payload.get("pool_sha256"))
     payload["judge"] = judge_model
     payload["stopped"] = None
     payload["cost_usd"] = round((payload.get("cost_usd") or 0) + meter.cost(), 4)

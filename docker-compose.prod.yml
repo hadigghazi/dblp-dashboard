@@ -144,6 +144,8 @@ services:
       DUCKDB_MEMORY: ${CHAT_DUCKDB_MEMORY:-4GB}
       DUCKDB_THREADS: ${CHAT_DUCKDB_THREADS:-4}
       CHAT_TMP_DIR: /tmp/duckdb
+      # optional, free: lifts OpenAlex's keyless budget (~100 searches a day) for `dblpqa retrieval`
+      OPENALEX_API_KEY: ${OPENALEX_API_KEY:-}
       # the defaults (searchapi:8003, mlapi:8001) resolve on this compose network, so a question
       # asked from the terminal reaches the same services the web endpoint uses
     volumes:

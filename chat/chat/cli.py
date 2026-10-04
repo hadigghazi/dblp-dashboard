@@ -11,7 +11,8 @@ Command line, for the VM.
   python -m chat.cli scenarios [--suite S]     one person's questions about themselves, answers in full
   python -m chat.cli dblpqa closed-book         DBLP-QA with no retrieval, judged automatically
   python -m chat.cli dblpqa retrieval           DBLP-QA: does retrieval find each question's paper?
-  python -m chat.cli dblpqa rag --ranker hybrid DBLP-QA answered from the top-5 retrieved abstracts
+  python -m chat.cli dblpqa rag --ranker bm25   DBLP-QA answered from the top-5 retrieved abstracts
+  python -m chat.cli dblpqa rag --mode gated    ... keeping only the abstracts a relevance check passes
 
 `ask` is the same code path the web endpoint uses, so a question that works here works there.
 """
@@ -109,15 +110,21 @@ def cmd_dblpqa(args):
     if args.limit:
         rows = rows[:args.limit]
     condition, contexts = args.condition, None
+    notes = None
     if condition in ("retrieval", "rag"):
         from . import dblpqa_rag as RAG
-        pools, rankings, report = RAG.prepare(rows)
+        # retrieval builds (and finishes) the pool; rag only reads it, so every rag run sees the same one
+        pools, rankings, report = RAG.prepare(rows, frozen=condition == "rag",
+                                              allow_incomplete=args.allow_incomplete_pool)
         RAG.print_retrieval(report)
-        print(f"embeddings ${report['embedding_cost_usd']}")
         if condition == "retrieval":
             return
-        condition = f"{DQ.RAG_PREFIX}{args.ranker}"
         contexts = RAG.rag_contexts(rows, pools, rankings, args.ranker, k=args.k)
+        notes = {"pool_sha256": report["pool"]["sha256"],
+                 "retrieval": {"ranker": args.ranker, "k": args.k, "mode": args.mode}}
+        if args.mode == "gated":
+            contexts, notes["gate"] = RAG.gate_contexts(client, rows, pools, contexts, args.gate_model)
+        condition = RAG.condition_name(args.ranker, args.mode)
     elif condition == "oracle":
         contexts = DQ.fetch_abstracts(rows)
     print(f"DBLP-QA: {len(rows)} questions (sha256 {sha[:12]}), {condition}, judge {args.judge}, "
@@ -125,7 +132,7 @@ def cmd_dblpqa(args):
     models = [m.strip() for m in args.models.split(",") if m.strip()]
     DQ.run_condition(client, models, args.judge, rows, sha, condition, contexts=contexts,
                      force=args.force, sampling=args.sampling,
-                     reuse_controls=not args.recheck_judge and not args.limit)
+                     reuse_controls=not args.recheck_judge and not args.limit, notes=notes)
 
 
 def cmd_scenarios(args):
@@ -230,9 +237,16 @@ def main():
                     help="oracle = each question with the abstract it was written from; retrieval = where "
                          "each ranker puts that paper (no answers); rag = answers from the top --k papers "
                          "of --ranker; rescore = score the unscored answers of --run")
-    dq.add_argument("--ranker", default="hybrid",
-                    choices=["bm25", "dense", "hybrid", "dblp-search", "s2-search"],
+    dq.add_argument("--ranker", default="bm25",
+                    choices=["bm25", "dense", "hybrid", "dblp-search", "s2-search", "openalex-search",
+                             "openalex-semantic"],
                     help="for rag: bm25 is RAGScholar's method, hybrid = bm25 + embeddings fused")
+    dq.add_argument("--mode", default="plain", choices=["plain", "permissive", "gated"],
+                    help="for rag: permissive = told the abstracts may be off-topic; gated = a relevance "
+                         "check keeps only abstracts that address the question (none kept = closed-book)")
+    dq.add_argument("--gate-model", default="gpt-4.1-mini", help="for --mode gated")
+    dq.add_argument("--allow-incomplete-pool", action="store_true",
+                    help="for rag: run even if some first-stage search never succeeded")
     dq.add_argument("--k", type=int, default=5, help="for rag: papers in the context (the paper's best: 5)")
     dq.add_argument("--run", default=None, help="for report: a run directory (default: the latest)")
     dq.add_argument("--sampling", choices=["ours", "paper"], default="ours",
