@@ -1,0 +1,26 @@
+name: Paper
+
+# Builds the DBLP-QA study's paper (CEUR-ART) into a PDF on every change to it, so nobody needs a
+# local TeX installation; the PDF is attached to the run as an artifact.
+on:
+  push:
+    branches: [main]
+    paths: ["research/dblpqa-paper/**", ".github/workflows/paper.yml"]
+  workflow_dispatch:
+
+jobs:
+  pdf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build with latexmk (pdflatex + bibtex)
+        uses: xu-cheng/latex-action@v3
+        with:
+          root_file: main.tex
+          working_directory: research/dblpqa-paper
+          args: -pdf -file-line-error -halt-on-error -interaction=nonstopmode
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dblpqa-paper
+          path: research/dblpqa-paper/main.pdf
+          if-no-files-found: error
