@@ -136,17 +136,18 @@ its Semantic Scholar corpus id. We fetch source abstracts from Semantic Scholar~
 falling back to arXiv, OpenAlex~\cite{priem2022openalex} and Crossref; 46 of the 50 abstracts are
 available (21 from Semantic Scholar, 25 from OpenAlex). We compare five conditions:
 
-\begin{description}
-\item[Closed-book:] the question alone.
-\item[Oracle:] the question with its source abstract (46 questions).
-\item[RAG:] the question with the top five retrieved abstracts, titled and concatenated: the best
-  strategy of the original study (Top-5-CD).
-\item[RAG, permissive:] as RAG, but the prompt says the abstracts may not be relevant and to answer from
-  the model's own knowledge if none addresses the question.
-\item[RAG, gated:] a separate call to gpt-4.1-mini keeps only the retrieved abstracts that address the
-  question; with none kept, the question is asked closed-book. Verdicts are cached, so every answering
-  model receives the same filtered context.
-\end{description}
+%% itemize, not description: IEEEtran's description labels have a fixed width and overlap long ones
+\begin{itemize}
+\item \textbf{Closed-book:} the question alone.
+\item \textbf{Oracle:} the question with its source abstract (46 questions).
+\item \textbf{RAG:} the question with the top five retrieved abstracts, titled and concatenated: the
+  best strategy of the original study (Top-5-CD).
+\item \textbf{RAG, permissive:} as RAG, but the prompt says the abstracts may not be relevant and to
+  answer from the model's own knowledge if none addresses the question.
+\item \textbf{RAG, gated:} a separate call to gpt-4.1-mini keeps only the retrieved abstracts that
+  address the question; with none kept, the question is asked closed-book. Verdicts are cached, so every
+  answering model receives the same filtered context.
+\end{itemize}
 
 All prompts ask for an answer of one to three sentences (Appendix~\ref{app:prompts}).
 
