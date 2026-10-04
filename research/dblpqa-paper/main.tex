@@ -27,11 +27,12 @@
 \newcommand{\pending}[1]{\textcolor{red}{[pending: #1]}}
 \newcommand{\ci}[2]{{\scriptsize[#1,\,#2]}}
 \newcommand{\dq}{DBLP-QA}
+\newcommand{\fresh}{DBLP-QA-Fresh}
 
 \begin{document}
 
-\title{What Does DBLP-QA Measure? Memorisation, Open-World Retrieval and Single-Reference Grading in
-Retrieval-Augmented Scholarly QA}
+\title{What Does DBLP-QA Measure? General Knowledge, Open-World Retrieval and Single-Reference Grading
+in Retrieval-Augmented Scholarly QA}
 
 \author{\IEEEauthorblockN{Hadi Ghazi}
 \IEEEauthorblockA{\textit{Lebanese University}\\
@@ -43,19 +44,21 @@ hadigghazi@gmail.com}}
 \begin{abstract}
 DBLP-QA is a recent benchmark of 50 questions written from computer-science abstracts, introduced with
 RAGScholar, a system that answers them with BM25 retrieval and small language models, rated by hand. We
-re-evaluate it end to end with a fully automatic and reproducible protocol: an LLM judge applying the
-benchmark's own 0--2 rubric, checked by controls on every run, with bootstrap confidence intervals and
-paired comparisons. Four findings stand out. First, current models answer much of the benchmark from
-memory: GPT-4.1 scores 1.46/2 with no retrieval, and an automatic audit classifies 58\% of the questions
-as general knowledge. Given the source abstract, every model we test, including a 7B one, scores at least
-1.98, so the benchmark now measures retrieval. Second, the original Lucene index cannot be rebuilt, so we
-reconstruct retrieval in the open world from four public search services; the source paper reaches the
-top five for 58\% of questions, BM25 re-ranking comes within two points of the pool's ceiling, and the
-hybrid retrieval proposed as future work does not help. Third, the gain from retrieval tracks how often
-the source is retrieved: about zero for strong models at 36\%, $+0.30$ at 58\%. Fourth, the apparent harm
-of retrieving the wrong papers is mostly an artefact of grading against one reference answer: answers are
-rarely misled, and a symmetric multi-reference re-grade finds no detectable harm. A relevance gate does
-not improve accuracy but halves a CPU-bound 7B model's inference time.
+re-evaluate it with a fully automatic, reproducible protocol (an LLM judge on the benchmark's own 0--2
+rubric, checked by controls on every run, a second judge from another model family, bootstrap intervals
+and paired comparisons), and we build \fresh{}, 100 questions of the same kind about papers published
+after the models' training data. Given the source abstract, every model we test, a 7B one included,
+scores at least 1.98 on both sets. Without retrieval GPT-4.1 scores 1.46/2 on DBLP-QA, where an audit
+labels 58\% of the questions general knowledge; on paper-specific questions it scores the same on old
+and new papers (1.00 vs 1.02), so the models draw on knowledge of the field, not memory of the papers.
+The original index cannot be rebuilt, so we reconstruct retrieval in the open world from four public
+search services: the source reaches the top five for 58\% of DBLP-QA questions and 89\% of Fresh
+questions, BM25 comes within two points of the pool's ceiling, and hybrid retrieval does not help. The
+share of the oracle's gain that retrieval recovers tracks that rate. When the source is retrieved, every
+model gains under both judges. When it is missed, the cost of the wrong papers depends on grading:
+against the single reference they cost up to 0.3 points, under a symmetric multi-reference re-grade
+nothing detectable, and the second judge grades them more strictly, which cancels the net gain for the
+GPT models on DBLP-QA.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -75,34 +78,37 @@ Answers were rated by hand on a 0--2 scale; the best configuration, Mistral-7B w
 abstracts concatenated, scored 1.74, against 0.80 without retrieval.
 
 Several questions remain open. The models evaluated are small, so it is unclear how much of the
-benchmark a current model answers without retrieval at all. Retrieval was evaluated in a closed world:
-the questions were sampled from the very collection that was indexed, and the abstract set behind that
-index is no longer fully available, so the setting cannot be rebuilt. Each question has a single
-reference answer taken from one abstract, which may penalise correct answers drawn from other papers.
-And the ratings, made by hand, cannot be re-run when the system changes.
+benchmark a current model answers without retrieval, and whether it does so from general knowledge or
+from having read the papers. Retrieval was evaluated in a closed world: the questions were sampled from
+the very collection that was indexed, and the abstract set behind that index is no longer fully
+available, so the setting cannot be rebuilt. Each question has a single reference answer taken from one
+abstract, which may penalise correct answers drawn from other papers. And the ratings, made by hand,
+cannot be re-run when the system changes.
 
 We address these questions with an evaluation that needs no manual rating and can be re-run at will.
 Our research questions are:
 
 \begin{description}
-\item[RQ1] How much of \dq{} do current models answer without retrieval, and what do they score when
-  given the source abstract?
+\item[RQ1] How much do current models answer without retrieval, what do they score given the source
+  abstract, and does their prior knowledge come from memory of the papers?
 \item[RQ2] How often can the source paper be retrieved in an open-world setting today, and do dense or
   hybrid rankers help?
 \item[RQ3] How does the benefit of retrieval depend on retrieving the source, and do the wrong papers'
   abstracts hurt?
 \item[RQ4] Can selective retrieval keep the gains without the losses?
-\item[RQ5] How robust are the conclusions to the grading protocol?
+\item[RQ5] How robust are the conclusions to the grading protocol and the judge?
 \end{description}
 
 Our contributions are: (i)~an automatic evaluation harness for \dq{}, with an LLM judge on the
-benchmark's own rubric gated by controls, bootstrap intervals, paired comparisons and per-question
-audits; (ii)~an open-world reconstruction of retrieval from public services, with a frozen candidate
-pool so that compared runs see identical candidates; (iii)~evidence that retrieval success, not
-generation, now decides performance; (iv)~a demonstration that the benchmark's single-reference grading
-turns valid alternative answers into apparent retrieval harm; and (v)~an evaluation of two selective
-retrieval strategies. The harness is part of an open dblp exploration system and runs on a single CPU
-machine; all runs together cost under US\$5 in API fees.
+benchmark's own rubric gated by controls, a second judge from another model family, bootstrap intervals,
+paired comparisons and per-question audits; (ii)~\fresh{}, an automatically built companion set of 100
+questions about 2025--2026 papers; (iii)~an open-world reconstruction of retrieval from public services,
+with a frozen candidate pool so that compared runs see identical candidates; (iv)~evidence that
+retrieval success, not generation, now decides performance, and that the models' prior knowledge is
+knowledge of the field rather than memory of the papers; (v)~a demonstration that single-reference
+grading decides how much retrieving the wrong papers appears to cost; and (vi)~an evaluation of two
+selective retrieval strategies. The harness is part of an open dblp exploration system and runs on a
+single CPU machine; all runs together cost under US\$8 in API fees.
 
 %% ===================================================================================================
 \section{Related Work}
@@ -124,7 +130,8 @@ preference for their own generations~\cite{zheng2023judge,panickssery2024selfpre
 single-reference evaluation underestimates open-domain QA systems whose correct answers are phrased
 differently or differ in content~\cite{kamalloo2023evaluating}; we find the same effect in a RAG
 setting. Benchmarks built from public text may also be contaminated by pre-training
-data~\cite{sainz2023contamination}.
+data~\cite{sainz2023contamination}; a set built from papers newer than the models avoids this by
+construction.
 
 %% ===================================================================================================
 \section{Method}
@@ -151,6 +158,21 @@ available (21 from Semantic Scholar, 25 from OpenAlex). We compare five conditio
 
 All prompts ask for an answer of one to three sentences (Appendix~\ref{app:prompts}).
 
+\subsection{\fresh{}}
+\label{sec:fresh}
+
+To separate knowledge of a field from memory of particular papers, we build a companion set the way
+\dq{}'s authors built theirs, but automatically. We sample, with a fixed seed, journal and conference
+papers in dblp published in 2025 or later, after GPT-4.1's June 2024 training cutoff and Mistral-7B
+v0.1's 2023 release, excluding preprints, and fetch their abstracts by DOI. gpt-4.1 writes one question
+per abstract with a 1--3 sentence answer taken from it, using four \dq{} pairs as style examples and
+required to stand on its own (no ``this paper''). A question is kept only if gpt-4.1-mini, given the
+abstract, answers it fully (judge score 2). Of 145 papers read, 100 questions were kept; 38 papers had no
+abstract, 5 a short abstract or an unusable question, and for 2 the abstract did not answer the
+generated question. The build cost US\$0.36. No question is filtered on closed-book answers, which would
+make the models fail by construction; instead \fresh{} goes through the same audit as \dq{}, and the two
+are compared within audit labels.
+
 \subsection{Models}
 
 We answer with gpt-4.1-mini and gpt-4.1 at temperature~0, and with Mistral-7B-Instruct
@@ -162,13 +184,15 @@ v0.1~\cite{jiang2023mistral}, the best model of the original study, using its pu
 
 A gpt-4.1 judge grades every answer against the reference on the benchmark's scale (2 correct and
 complete, 1 correct but incomplete, 0 incorrect or irrelevant), anchored with the original paper's own
-worked example. A judge is used only if it passes two controls on the 50 questions, re-checked whenever
-the judge or dataset changes: each reference answer must score 2, and another question's reference
-answer (a derangement) must score 0, both in at least 95\% of cases. gpt-4.1 passed both 50/50. Means
-are reported with 95\% percentile bootstrap intervals (10{,}000 resamples, fixed
-seed)~\cite{efron1993bootstrap}; comparisons between conditions are paired by question, with the mean
-difference, its bootstrap interval and the numbers of questions that improved and worsened.
-ROUGE-L~\cite{lin2004rouge} is recorded but not used for conclusions.
+worked example. A judge is used only if it passes two controls on the whole question set, re-checked
+whenever the judge or dataset changes: each reference answer must score 2, and another question's
+reference answer (a derangement) must score 0, both in at least 95\% of cases. gpt-4.1 passed both 50/50
+on \dq{} and 100/100 and 98/100 on \fresh{}. Means are reported with 95\% percentile bootstrap intervals
+(10{,}000 resamples, fixed seed)~\cite{efron1993bootstrap}; comparisons between conditions are paired by
+question, with the mean difference, its bootstrap interval and the numbers of questions that improved and
+worsened. A second judge from another family, Qwen2.5-14B-Instruct~\cite{qwen2024qwen25}, re-grades the
+main answer sets (Section~\ref{sec:rq5}). ROUGE-L~\cite{lin2004rouge} is recorded but not used for
+conclusions.
 
 \textbf{No direct comparison with the original scores.} To calibrate, we re-ran the original study's
 closed-book condition with its own models and settings. Our judge gave Mistral-7B 1.04 (the original
@@ -190,9 +214,9 @@ hybrid title search over the full dblp dump (top 50); (b)~Semantic Scholar relev
 (c)~OpenAlex keyword search over titles, abstracts and full text, with the question's content words
 OR-ed (OpenAlex otherwise requires every word to match), top 50; and (d)~OpenAlex semantic search,
 which embeds titles and abstracts of all works with GTE-large~\cite{li2023gte}, top 50. OpenAlex works
-are mapped to dblp records by DOI, arXiv identifier or exact normalised title; 1{,}151 of the 4{,}830
-works returned are in dblp. Abstracts for the pool come with the OpenAlex results or are fetched by DOI.
-The pool averages 73.7 candidates per question, 76\% of them with an abstract.
+are mapped to dblp records by DOI, arXiv identifier or exact normalised title (1{,}151 of 4{,}830 works
+for \dq{}, 2{,}868 of 9{,}409 for \fresh{}). Abstracts for the pool come with the OpenAlex results or are
+fetched by DOI. Pools average 73 candidates per question, 76\% of them with an abstract.
 
 Three rankers order the same pool: BM25 (Lucene's formula, $k_1=1.2$, $b=0.75$, pool-level
 idf)~\cite{robertson2009bm25} over title and abstract; dense cosine similarity of
@@ -202,9 +226,10 @@ paper if it has the benchmark's dblp key, Semantic Scholar's dblp key for the be
 same normalised title (a preprint and its published version are different dblp records). When the
 source is retrieved, it is shown with the same abstract as in the oracle condition.
 
-The pool is built once and frozen; every RAG run records its fingerprint, and runs are compared only on
-the same pool. Semantic Scholar's unauthenticated search was saturated during construction and refused
-one question's search through all retries; that question's pool lacks those candidates.
+Each pool is built once and frozen; every RAG run records its fingerprint, and runs are compared only on
+the same pool. Semantic Scholar's unauthenticated search was saturated: it refused one \dq{} question's
+search through all retries and 96 of 100 for \fresh{}, so those pools lack its candidates, which on \dq{}
+contained the source for only 8\% of questions.
 
 \subsection{Implementation}
 
@@ -218,9 +243,9 @@ repeating paid calls. The test suite runs every component against simulated serv
 \section{Results}
 
 \begin{table*}[t]
-\caption{Mean judge score (0--2) per condition, with 95\% bootstrap intervals, and the paired difference
-from closed-book (questions better/worse). RAG conditions use BM25 over the frozen pool, top five
-abstracts; the oracle uses the 46 questions with an available abstract.}
+\caption{\dq{}: mean judge score (0--2) per condition, with 95\% bootstrap intervals, and the paired
+difference from closed-book (questions better/worse), graded by gpt-4.1. RAG conditions use BM25 over
+the frozen pool, top five abstracts; the oracle uses the 46 questions with an available abstract.}
 \label{tab:main}
 \centering\small
 \begin{tabular}{lccccc}
@@ -237,37 +262,71 @@ Mistral-7B & 1.04 \ci{0.86}{1.22} & 1.60 \ci{1.42}{1.76} & 1.60 \ci{1.42}{1.76} 
 \end{tabular}
 \end{table*}
 
-\subsection{RQ1: Memory and the Generation Ceiling}
+\subsection{RQ1: Prior Knowledge and the Generation Ceiling}
 
-Without retrieval, gpt-4.1-mini and gpt-4.1 score 1.40 and 1.46 (Table~\ref{tab:main}); only five of
-50 answers from each are graded incorrect. Given the source abstract, all three models score 1.98 or
-more, Mistral-7B included, and no answer is worse than its closed-book counterpart. Generation is
-therefore solved on this benchmark: what varies between systems is whether they retrieve the right
-abstract, and how much the model already knows.
+Without retrieval, gpt-4.1-mini and gpt-4.1 score 1.40 and 1.46 on \dq{} (Table~\ref{tab:main}); only
+five of 50 answers from each are graded incorrect. Given the source abstract, all three models score
+1.98 or more, and no answer is worse than its closed-book counterpart. Generation is therefore solved on
+this benchmark: what varies between systems is whether they retrieve the right abstract, and how much
+the model already knows.
 
-An automatic audit explains the second part. Two labellers, gpt-4.1 and gpt-4.1-mini, independently
-classify every question, seeing the question, reference and source abstract, as \emph{general}
-(standard knowledge an expert would give without the paper), \emph{identifiable} (paper-specific and
-detailed enough to locate the paper) or \emph{underspecified} (paper-specific but answerable by many
-papers in different ways). They agree on 42 of 50 questions (Cohen's
+An automatic audit shows where that knowledge lies. Two labellers, gpt-4.1 and gpt-4.1-mini,
+independently classify every question, seeing the question, reference and source abstract, as
+\emph{general} (standard knowledge an expert would give without the paper), \emph{identifiable}
+(paper-specific and detailed enough to locate the paper) or \emph{underspecified} (paper-specific but
+answerable by many papers in different ways). On \dq{} they agree on 42 of 50 questions (Cohen's
 $\kappa=0.70$~\cite{cohen1960kappa}). By gpt-4.1's labels, 29 questions (58\%) are general, 20
 identifiable and one underspecified (Table~\ref{tab:audit}). Closed-book, the GPT models score about 1.8
-on general questions and about 1.0 on identifiable ones; retrieval adds 0.14 on the former and about 0.5
-on the latter.
+on general questions and about 1.0 on identifiable ones; Mistral-7B scores 1.34 and 0.65.
 
 \begin{table}[t]
-\caption{Questions by audit label (gpt-4.1), how many had their source among the top five retrieved
-(Ret.), and mean closed-book $\rightarrow$ plain RAG scores per model.}
+\caption{Questions by audit label (gpt-4.1) in \dq{} and \fresh{}: number, how many had their source among
+the top five retrieved (Ret.), and mean closed-book $\rightarrow$ plain RAG scores.}
 \label{tab:audit}
 \centering\footnotesize
 \setlength{\tabcolsep}{3pt}
-\begin{tabular}{lrrccc}
+\begin{tabular}{llrrcc}
 \toprule
-Label & $n$ & Ret. & gpt-4.1 & gpt-4.1-mini & Mistral-7B \\
+Set & Label & $n$ & Ret. & gpt-4.1 & gpt-4.1-mini \\
 \midrule
-General & 29 & 15 & 1.79$\rightarrow$1.93 & 1.76$\rightarrow$1.90 & 1.34$\rightarrow$1.62 \\
-Identifiable & 20 & 13 & 1.00$\rightarrow$1.50 & 0.90$\rightarrow$1.45 & 0.65$\rightarrow$1.55 \\
-Underspecified & 1 & 1 & 1.00$\rightarrow$2.00 & 1.00$\rightarrow$2.00 & 0.00$\rightarrow$2.00 \\
+\dq{} & General & 29 & 15 & 1.79$\rightarrow$1.93 & 1.76$\rightarrow$1.90 \\
+ & Identifiable & 20 & 13 & \textbf{1.00}$\rightarrow$1.50 & \textbf{0.90}$\rightarrow$1.45 \\
+ & Underspecified & 1 & 1 & 1.00$\rightarrow$2.00 & 1.00$\rightarrow$2.00 \\
+\midrule
+Fresh & General & 7 & 6 & 1.29$\rightarrow$1.86 & 1.29$\rightarrow$1.86 \\
+ & Identifiable & 84 & 77 & \textbf{1.02}$\rightarrow$1.85 & \textbf{0.94}$\rightarrow$1.86 \\
+ & Underspecified & 9 & 6 & 1.00$\rightarrow$1.56 & 0.89$\rightarrow$1.44 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Knowledge, not memory of the papers.} On \fresh{}, without retrieval, gpt-4.1 scores 1.04
+(0.95--1.13) and gpt-4.1-mini 0.96 (0.88--1.04); with the source abstract both score 1.99
+(Table~\ref{tab:fresh}). Most closed-book answers are correct but incomplete (78 and 84 of 100 score 1):
+the models know the field but not the paper's specific contribution. The drop from \dq{} is not, however,
+evidence that the models remember \dq{}'s papers. The audit labels 84 of the Fresh questions identifiable
+and only 7 general, and within the identifiable label closed-book scores are the same for old and new
+papers: 1.00 against 1.02 for gpt-4.1, and 0.90 against 0.94 for gpt-4.1-mini (Table~\ref{tab:audit}).
+\dq{}'s high closed-book scores reflect its share of general-knowledge questions, not memory of its
+papers.\footnote{gpt-4.1-mini labelled every Fresh question identifiable, so the two labellers' raw
+agreement (84\%) carries no chance-corrected information on \fresh{} ($\kappa=0$); the Fresh labels rest
+on gpt-4.1.}
+
+\begin{table}[t]
+\caption{\fresh{} (100 questions): mean score with 95\% interval, and the paired difference from
+closed-book (questions better/worse), graded by gpt-4.1. RAG: BM25 over the frozen pool, top five.}
+\label{tab:fresh}
+\centering\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lccc}
+\toprule
+ & Closed-book & RAG & Oracle \\
+\midrule
+gpt-4.1-mini & 0.96 \ci{0.88}{1.04} & 1.82 \ci{1.71}{1.91} & 1.99 \ci{1.97}{2.00} \\
+\quad $\Delta$ & & $+$0.86 (83/4) & $+$1.03 (93/0) \\
+gpt-4.1 & 1.04 \ci{0.95}{1.13} & 1.82 \ci{1.72}{1.91} & 1.99 \ci{1.97}{2.00} \\
+\quad $\Delta$ & & $+$0.78 (75/3) & $+$0.95 (86/0) \\
+Mistral-7B & \multicolumn{3}{c}{\pending{Mistral-7B on \fresh{}}} \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -275,41 +334,48 @@ Underspecified & 1 & 1 & 1.00$\rightarrow$2.00 & 1.00$\rightarrow$2.00 & 0.00$\r
 \subsection{RQ2: Open-World Retrieval}
 
 \begin{table}[t]
-\caption{Retrieval of the source paper on the frozen pool: recall at $k$, MRR@10, and the share of
-questions whose source appears anywhere in the ranker's list (Found). First-stage retrievers are scored
-on their own result lists; the three rankers re-order the whole pool.}
+\caption{Retrieval of the source paper on the frozen pools: recall at $k$ and the share of questions
+whose source appears anywhere in the ranker's list (Found). First-stage retrievers are scored on their
+own result lists; the three rankers re-order the whole pool.}
 \label{tab:retrieval}
 \centering\footnotesize
-\setlength{\tabcolsep}{3.5pt}
+\setlength{\tabcolsep}{3.2pt}
 \begin{tabular}{lcccccc}
 \toprule
-Ranker & R@1 & R@3 & R@5 & R@10 & MRR & Found \\
+ & \multicolumn{3}{c}{\dq{}} & \multicolumn{3}{c}{\fresh{}} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}
+Ranker & R@1 & R@5 & Found & R@1 & R@5 & Found \\
 \midrule
-BM25 (pool) & \textbf{.42} & \textbf{.54} & \textbf{.58} & \textbf{.60} & \textbf{.486} & .60 \\
-Dense (pool) & .36 & .44 & .48 & .52 & .406 & .60 \\
-Hybrid RRF (pool) & .40 & .52 & .56 & .58 & .463 & .60 \\
+BM25 (pool) & \textbf{.42} & \textbf{.58} & .60 & \textbf{.82} & \textbf{.89} & .91 \\
+Dense (pool) & .36 & .48 & .60 & .70 & .86 & .91 \\
+Hybrid RRF (pool) & .40 & .56 & .60 & .81 & \textbf{.89} & .91 \\
 \midrule
-OpenAlex semantic & .24 & .32 & .32 & .42 & .288 & .44 \\
-dblp-search (titles) & .16 & .24 & .24 & .28 & .201 & .32 \\
-OpenAlex keyword & .10 & .16 & .18 & .28 & .148 & .28 \\
-Semantic Scholar & .04 & .04 & .04 & .04 & .040 & .08 \\
+OpenAlex semantic & .24 & .32 & .44 & .26 & .62 & .88 \\
+dblp-search (titles) & .16 & .24 & .32 & .43 & .56 & .73 \\
+OpenAlex keyword & .10 & .18 & .28 & .20 & .34 & .40 \\
+Semantic Scholar & .04 & .04 & .08 & -- & -- & -- \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-The source paper is in the pool for 60\% of questions (Table~\ref{tab:retrieval}). BM25 over title and
-abstract ranks it in the top five for 58\%, two points short of that ceiling, and first for 42\%. Dense
-retrieval is weaker, and fusing it with BM25 does not improve on BM25 alone: the questions were written
-from their abstracts and share their wording, which favours lexical matching once the source is a
-candidate. No single public service comes close; OpenAlex's semantic search finds the source within its
-top 50 for 44\% of questions. For 40\% of questions none of the four services returns the source at
-all. An earlier pool without the OpenAlex retrievers held the source for at most 38\% of questions, and
-BM25 placed it in the top five for 36--38\%.
+On \dq{} the source paper is in the pool for 60\% of questions (Table~\ref{tab:retrieval}). BM25 over
+title and abstract ranks it in the top five for 58\%, two points short of that ceiling, and first for
+42\%. Dense retrieval is weaker, and fusing it with BM25 does not improve on BM25 alone: the questions
+were written from their abstracts and share their wording, which favours lexical matching once the
+source is a candidate. No single public service comes close; OpenAlex's semantic search finds the source
+within its top 50 for 44\% of questions, and for 40\% none of the four services returns it at all. An
+earlier pool without the OpenAlex retrievers held the source for at most 38\% of questions, and BM25
+placed it in the top five for 36--38\%.
+
+\fresh{} is much easier to retrieve: the source is in the pool for 91\% of questions and BM25 places it
+first for 82\% and in the top five for 89\%. Its questions are paper-specific and were written by a
+model from the abstract, and recent papers are well covered by OpenAlex's semantic search (88\% found).
+The ranking of methods is the same: BM25 equals the hybrid and beats dense retrieval.
 
 These numbers are not comparable with the original study's, whose BM25 placed the source first for 32
 of 50 questions: there, every question was written from a paper inside the indexed collection, a closed
-world that guarantees the source is a candidate. Our open-world figure is what a system built today from
-public services achieves.
+world that guarantees the source is a candidate. Our open-world figures are what a system built today
+from public services achieves.
 
 \subsection{RQ3: Retrieval Success Decides the Gain}
 
@@ -317,77 +383,81 @@ public services achieves.
 \centering
 \begin{tikzpicture}
 \begin{axis}[
-  width=\columnwidth, height=5.4cm,
-  xmin=-4, xmax=104, ymin=0.95, ymax=2.07,
-  xtick={0,36,58,100},
-  xticklabels={{closed-\\book}, {earlier\\pool}, {frozen\\pool}, {oracle}},
-  xticklabel style={align=center, font=\scriptsize, text=inkmuted},
-  ytick={1.0,1.25,1.5,1.75,2.0},
-  yticklabel style={font=\scriptsize, text=inkmuted, /pgf/number format/fixed, /pgf/number format/precision=2},
-  xlabel={questions whose source abstract is in the context (\%)},
-  ylabel={mean score (0--2)},
+  width=\columnwidth, height=5.6cm,
+  xmin=0, xmax=100, ymin=0, ymax=1,
+  xtick={0,20,40,60,80,100}, ytick={0,0.2,0.4,0.6,0.8,1},
+  xticklabel style={font=\scriptsize, text=inkmuted},
+  yticklabel style={font=\scriptsize, text=inkmuted, /pgf/number format/fixed, /pgf/number format/precision=1},
+  xlabel={questions whose source is among the top five retrieved (\%)},
+  ylabel={share of the oracle's gain recovered},
   label style={font=\scriptsize, text=inkmuted},
   axis line style={draw=inkmuted, line width=0.4pt},
   tick style={draw=inkmuted, line width=0.4pt},
   major grid style={draw=gridline, line width=0.4pt},
-  ymajorgrids,
+  ymajorgrids, xmajorgrids,
   axis x line*=bottom, axis y line*=left,
-  legend style={at={(0.98,0.04)}, anchor=south east, font=\scriptsize, draw=gridline, fill=white,
+  legend style={at={(0.98,0.03)}, anchor=south east, font=\scriptsize, draw=gridline, fill=white,
                 text=black, row sep=0pt},
   legend cell align=left,
   every axis plot/.append style={line width=0.9pt},
 ]
-\addplot[color=seriesA, mark=*, mark size=1.8pt] coordinates {(0,1.46) (36,1.54) (58,1.76) (100,1.98)};
+\addplot[color=inkmuted, dashed, line width=0.6pt] coordinates {(0,0) (100,1)};
+\addlegendentry{equal shares}
+\addplot[color=seriesA, mark=*, mark size=1.8pt] coordinates {(36,0.154) (58,0.577) (89,0.821)};
 \addlegendentry{gpt-4.1}
-\addplot[color=seriesB, mark=square*, mark size=1.7pt] coordinates {(0,1.40) (36,1.48) (58,1.72) (100,2.00)};
+\addplot[color=seriesB, mark=square*, mark size=1.7pt] coordinates {(36,0.136) (58,0.542) (89,0.835)};
 \addlegendentry{gpt-4.1-mini}
-\addplot[color=seriesC, mark=triangle*, mark size=2.2pt] coordinates {(0,1.04) (38,1.42) (58,1.60) (100,1.98)};
+\addplot[color=seriesC, mark=triangle*, mark size=2.2pt] coordinates {(38,0.396) (58,0.583)};
 \addlegendentry{Mistral-7B}
-%% direct labels at the left ends, where the three lines are furthest apart
-\node[font=\tiny, text=black, anchor=west] at (axis cs:2,1.04) {Mistral-7B};
-\node[font=\tiny, text=black, anchor=south west] at (axis cs:0,1.50) {gpt-4.1};
-\node[font=\tiny, text=black, anchor=north west] at (axis cs:0,1.37) {gpt-4.1-mini};
+%% direct labels left of the first points, where the series are furthest apart
+\node[font=\tiny, text=black, anchor=south east] at (axis cs:35,0.165) {gpt-4.1};
+\node[font=\tiny, text=black, anchor=north east] at (axis cs:35,0.125) {gpt-4.1-mini};
+\node[font=\tiny, text=black, anchor=south east] at (axis cs:37,0.42) {Mistral-7B};
 \end{axis}
 \end{tikzpicture}
-\caption{Mean score against the share of questions whose source abstract reaches the context:
-closed-book (0\%), plain RAG on an earlier pool (36--38\%) and on the frozen pool (58\%, BM25, top
-five), and the oracle (100\%, 46 questions). The earlier-pool points were measured before the pool was
-frozen, while its Semantic Scholar searches were still being retried, so they are indicative.}
+\caption{The share of the oracle's gain over closed-book that plain RAG recovers, against the share of
+questions whose source reaches the context (gpt-4.1 judge): \dq{} on an earlier pool (36--38\%) and on
+the frozen pool (58\%), and \fresh{} (89\%). The earlier-pool points were measured before the pool was
+frozen and are indicative; the \dq{} oracle gain is over its 46 questions with an abstract.}
 \label{fig:recall}
 \end{figure}
 
-Retrieval helps every model significantly on the frozen pool: $+0.30$ to $+0.32$ for the GPT models and
-$+0.56$ for Mistral-7B, with intervals well above zero (Table~\ref{tab:main}). On the earlier pool,
-where the source reached the context for 36\% of questions, the same method gained only $+0.08$ for both
-GPT models (intervals $-0.12$ to $+0.30$ and $-0.12$ to $+0.28$) and $+0.38$ for Mistral-7B.
-Figure~\ref{fig:recall} shows the pattern: the score rises with the share of questions whose source is
-retrieved, towards the oracle's ceiling.
+Under the primary judge, retrieval helps every model significantly on the frozen \dq{} pool: $+0.30$ to
+$+0.32$ for the GPT models and $+0.56$ for Mistral-7B (Table~\ref{tab:main}). On the earlier pool, where
+the source reached the context for 36\% of questions, the same method gained only $+0.08$ for both GPT
+models (intervals $-0.12$ to $+0.30$ and $-0.12$ to $+0.28$) and $+0.38$ for Mistral-7B. On \fresh{},
+where it reaches the context for 89\%, plain RAG raises both GPT models to 1.82, gains of $+0.78$ and
+$+0.86$ (Table~\ref{tab:fresh}). Because the two sets start from different closed-book levels,
+Figure~\ref{fig:recall} expresses each gain as a share of the oracle's: at 58\% retrieval RAG recovers
+54--58\% of the oracle's gain, and at 89\% it recovers 82--84\%.
 
-The split by retrieval outcome explains why. On the 29 questions whose source was among the top five,
-the GPT models score 1.97 with plain RAG ($+0.55$ and $+0.66$ over closed-book) and Mistral-7B 1.83;
+The split by retrieval outcome explains why. On the 29 \dq{} questions whose source was among the top
+five, the GPT models score 1.97 with plain RAG ($+0.55$ and $+0.66$ over closed-book) and Mistral-7B 1.83;
 across the nine RAG runs on this pool, only one answer is worse than its closed-book counterpart. On the
-21 questions whose source was missed, graded against the reference, the GPT models fall slightly below
-their closed-book scores (gpt-4.1-mini $-0.14$, gpt-4.1 $-0.05$; Table~\ref{tab:missed}), while
-Mistral-7B gains ($+0.14$). On the earlier pool this apparent harm was larger ($-0.28$ and $-0.19$ for
-the GPT models on 32 missed questions).
+89 such Fresh questions the GPT models score 1.97 and 1.99, with no answer worse than closed-book. On the
+21 \dq{} questions whose source was missed, graded against the reference, the GPT models fall slightly
+below their closed-book scores (gpt-4.1-mini $-0.14$, gpt-4.1 $-0.05$; Table~\ref{tab:missed}), while
+Mistral-7B gains ($+0.14$); on the earlier pool this apparent harm was larger ($-0.28$ and $-0.19$ on 32
+missed questions), and on the 11 missed Fresh questions it is $-0.27$ and $-0.09$.
 
-\textbf{Is the harm real?} We audit every answer that lost points on a missed question (98 answers over
-the nine runs; same two labellers, $\kappa=0.78$, 89 of 98 agreeing). gpt-4.1 labels 75 of them
+\textbf{Is the harm real?} We audit every answer that lost points on a missed \dq{} question (98 answers
+over the nine runs; same two labellers, $\kappa=0.78$, 89 of 98 agreeing). gpt-4.1 labels 75 of them
 \emph{valid other paper}, a correct answer to the question as worded, supported by a retrieved abstract
-from a different paper; 6 \emph{misled}, all from Mistral-7B; and 17 \emph{own knowledge}. None of the
-57 GPT answers that lost points was misled. Because only RAG answers were audited, and the labellers had
-no controls, we then re-grade all twelve answer sets (three models $\times$ closed-book and three RAG
-modes) on the 21 missed questions with a symmetric multi-reference judge: the same gpt-4.1, shown the
-reference and the same five retrieved abstracts for every answer, credits any answer that is correct
-for the question as worded, whether supported by an abstract or established knowledge. It must first
-pass three controls on these questions: the reference scores 2 (21/21), another question's reference
-scores 0 (20/21), and another question's RAG answer scores 0 (21/21); the last control catches a judge
-that rewards any fluent, on-topic text.
+from a different paper; 6 \emph{misled}, all from Mistral-7B; and 17 \emph{own knowledge}. These labels
+are generous: on \fresh{} the same labeller called all 21 answers that lost points valid, although those
+questions are paper-specific. We therefore rely on a controlled re-grade. All twelve answer sets (three
+models $\times$ closed-book and three RAG modes) on the 21 missed \dq{} questions are graded again by a
+symmetric multi-reference judge: the same gpt-4.1, shown the reference and the same five retrieved
+abstracts for every answer, credits any answer that is correct for the question as worded, whether
+supported by an abstract or established knowledge. It must first pass three controls on these
+questions: the reference scores 2 (21/21), another question's reference scores 0 (20/21), and another
+question's RAG answer scores 0 (21/21); the last control catches a judge that rewards any fluent,
+on-topic text.
 
 \begin{table*}[t]
-\caption{The 21 questions whose source was missed: mean score graded against the single reference, and
-re-graded by the multi-reference judge, with the paired difference from the same model's closed-book
-answers graded the same way (95\% interval; questions better/worse).}
+\caption{The 21 \dq{} questions whose source was missed: mean score graded against the single reference,
+and re-graded by the multi-reference judge (gpt-4.1), with the paired difference from the same model's
+closed-book answers graded the same way (95\% interval; questions better/worse).}
 \label{tab:missed}
 \centering\small
 \begin{tabular}{llcccc}
@@ -418,9 +488,9 @@ Re-grading credits closed-book answers too (gpt-4.1: $1.52\rightarrow1.81$), so 
 have overstated retrieval. Under the symmetric grade, no condition differs detectably from closed-book
 on the missed questions: every difference for the GPT models lies within $\pm0.10$ with an interval
 spanning zero, and Mistral-7B's differences are positive ($+0.10$ to $+0.24$) with intervals that touch
-zero (Table~\ref{tab:missed}). The harm measured against the single reference was therefore mostly a
-grading artefact: abstracts from the wrong papers led the models to different correct answers, not to
-wrong ones.
+zero (Table~\ref{tab:missed}). Under gpt-4.1, the harm measured against the single reference is
+therefore a grading artefact: abstracts from the wrong papers led the models to different correct
+answers, not to wrong ones. Section~\ref{sec:rq5} examines whether a second judge agrees.
 
 \subsection{RQ4: Selective Retrieval}
 
@@ -435,65 +505,111 @@ is cost: Mistral-7B, reading 1.74 abstracts instead of five, answered the 50 que
 instead of 60 on the same CPU, at an identical mean score. Gating all 50 questions cost US\$0.02.
 
 \subsection{RQ5: Robustness to the Judge}
+\label{sec:rq5}
 
-The multi-reference re-grade (Table~\ref{tab:missed}) is one robustness check. The other concerns the
-judge itself: gpt-4.1 grades answers from its own model family, and LLM judges can prefer their own
+gpt-4.1 grades answers from its own model family, and LLM judges can prefer their own
 generations~\cite{panickssery2024selfpref}. We therefore re-judge the closed-book, plain RAG and oracle
-answer sets of all three models with Qwen2.5-14B-Instruct~\cite{qwen2024qwen25}, an open model from
-another family served on the same CPU machine, after the same controls. We report agreement with
-gpt-4.1 (exact, Cohen's $\kappa$ and quadratic-weighted $\kappa$~\cite{cohen1968weighted}), every
-contrast of Table~\ref{tab:main} under both judges, and the gap between the judges per answering model,
-which would be larger for GPT answers than for Mistral-7B's if gpt-4.1 favoured its own family.
-\pending{cross-family judge results}
+answer sets of all three models on \dq{} with Qwen2.5-14B-Instruct, an open model from another family
+served on the same CPU machine, with the same rubric and after the same controls, which it passed 50/50
+and 50/50.
+
+The judges agree on 359 of 438 answers (82\%; Cohen's $\kappa=0.49$, quadratic-weighted
+$\kappa=0.76$~\cite{cohen1968weighted}), and 70 of the 79 disagreements are between 1 and 2; only one
+answer received 2 from one judge and 0 from the other. They differ in level: Qwen is more lenient with
+closed-book answers (gpt-4.1: 1.46 by gpt-4.1, 1.66 by Qwen) and stricter with answers built on retrieved
+or oracle abstracts (Mistral-7B with RAG: 1.60 and 1.32). There is no sign of self-preference: the gap
+between the two judges is $-0.05$ for gpt-4.1's answers and $+0.02$ for gpt-4.1-mini's, but $+0.14$
+($+0.06$ to $+0.21$) for Mistral-7B's, so gpt-4.1 is, if anything, more generous to the other family.
+
+\begin{table}[t]
+\caption{Paired differences from closed-book on \dq{} under the primary judge (gpt-4.1) and the second
+judge (Qwen2.5-14B). Bold: the 95\% interval excludes zero.}
+\label{tab:judges}
+\centering\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{llcc}
+\toprule
+Model & Contrast (questions) & gpt-4.1 & Qwen2.5-14B \\
+\midrule
+gpt-4.1 & RAG, all (50) & \textbf{$+$0.30} & $+$0.06 \\
+ & RAG, source retrieved (29) & \textbf{$+$0.55} & \textbf{$+$0.31} \\
+ & RAG, source missed (21) & $-$0.05 & $-$0.29 \\
+ & Oracle (46) & \textbf{$+$0.52} & \textbf{$+$0.33} \\
+\midrule
+gpt-4.1-mini & RAG, all (50) & \textbf{$+$0.32} & $-$0.02 \\
+ & RAG, source retrieved (29) & \textbf{$+$0.66} & \textbf{$+$0.24} \\
+ & RAG, source missed (21) & $-$0.14 & \textbf{$-$0.38} \\
+ & Oracle (46) & \textbf{$+$0.59} & \textbf{$+$0.26} \\
+\midrule
+Mistral-7B & RAG, all (50) & \textbf{$+$0.56} & $+$0.24 \\
+ & RAG, source retrieved (29) & \textbf{$+$0.86} & \textbf{$+$0.66} \\
+ & RAG, source missed (21) & $+$0.14 & $-$0.33 \\
+ & Oracle (46) & \textbf{$+$0.96} & \textbf{$+$0.74} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:judges} separates what holds from what does not. Under both judges, the oracle and RAG
+with the source retrieved improve significantly on closed-book for every model. On the missed questions
+the judges diverge: graded against the single reference, Qwen penalises answers built on the wrong
+papers more heavily ($-0.29$ to $-0.38$, significant for gpt-4.1-mini), which cancels the net gain of
+plain RAG for the GPT models ($+0.06$ and $-0.02$, intervals spanning zero). The net benefit of RAG on
+\dq{} at 58\% retrieval is therefore a property of how the grader treats correct answers that differ
+from the reference, not only of the system. \pending{multi-reference re-grade by Qwen2.5-14B}
 
 %% ===================================================================================================
 \section{Discussion}
 
-\textbf{What \dq{} measures.} With current models, \dq{} measures two things: whether the source
-abstract is retrieved, and how much the model knows already. Generation given the right abstract is
-saturated, and more than half the questions are general knowledge. A system's score therefore depends on
-its retriever and its model's memory more than on how it uses context, the aspect the original context
-strategies were designed to compare.
+\textbf{What \dq{} measures.} With current models, \dq{} measures three things: whether the source
+abstract is retrieved; how much the model knows about the field, which on a set where 58\% of questions
+are general knowledge is a great deal; and how the grader treats correct answers that are not the
+reference answer. Generation given the right abstract is saturated on both sets, and the models'
+knowledge is of the field, not of the papers: on paper-specific questions they know no more about \dq{}'s
+papers than about papers published after their training data. A system's score therefore depends on its
+retriever, its model's general knowledge and the grading protocol more than on how it uses context, the
+aspect the original context strategies were designed to compare.
 
 \textbf{Recommendations for scholarly RAG benchmarks.} Report closed-book and oracle conditions next to
-retrieval, so that memory and the generation ceiling are visible. Evaluate retrieval in an open world,
-by the rate at which the source reaches the context, since a closed-world index guarantees the source is
-a candidate. Grade against multiple references, or with a judge that may credit other correct answers
-under controls, because single-reference grading turns valid alternatives into apparent errors. And
-prefer questions that identify their paper, or questions written from papers published after the
-evaluated models' training data, so that retrieval is necessary.
+retrieval, so that prior knowledge and the generation ceiling are visible. Evaluate retrieval in an open
+world, by the rate at which the source reaches the context, since a closed-world index guarantees the
+source is a candidate. Grade against multiple references, or with a judge that may credit other correct
+answers under controls, and report results under at least two judges from different families, because
+the cost of retrieving the wrong papers depends on both. And prefer questions that identify their paper:
+on \fresh{}, where 84\% do, retrieval adds 0.8 points instead of 0.3.
 
 \textbf{Limitations.} Fifty questions give wide intervals, and subgroup analyses (29 and 21 questions)
 wider still. Mistral-7B was sampled once per question at temperature~0.7, and quantised. Every grade
-comes from an LLM judge; controls, inter-labeller agreement, the symmetric re-grade and the cross-family
-judge bound but do not remove that dependence, and no human ratings were collected. The training data
-of the GPT models is unknown, so we cannot say which questions they saw. Our open-world pool depends on
-public services, one of which refused a search; BM25 uses pool-level statistics. The audit labels are
-themselves model judgements.
+comes from an LLM judge; controls, inter-labeller agreement, the symmetric re-grade and the second judge
+bound but do not remove that dependence, the two judges differ in level, and no human ratings were
+collected. \fresh{}'s questions were written by a model, which may make them easier to retrieve than
+human-written ones, and a 2025 paper may have had an earlier preprint. The audit labels are themselves
+model judgements, and the answer audit proved generous. Our open-world pools depend on public services,
+one of which refused most searches; BM25 uses pool-level statistics.
 
-\textbf{Future work.} A fresh companion set, generated automatically from papers published after the
-models' training cutoff and filtered to be answerable from its abstract, would test the memorisation
-finding directly.
+\textbf{Future work.} Human ratings of a sample of the answers on which the two judges disagree would
+settle which grading of the wrong-paper answers is right; multiple reference answers per \dq{} question
+would remove the need for it.
 
 %% ===================================================================================================
 \section{Conclusion}
 
 Re-evaluated with current models and an automatic, controlled protocol, \dq{} no longer distinguishes
 how systems use retrieved context: given the source abstract every model is near perfect, and without
-any context strong models already score about 1.4--1.5 of 2. What separates systems is whether
-retrieval finds the source, which in an open world succeeds for 58\% of questions at best; the gain from
-retrieval follows that rate. The harm that retrieving the wrong papers appears to cause disappears when
-correct alternative answers are credited. For scholarly RAG evaluation, we recommend reporting
-closed-book and oracle bounds, open-world source recall, and multi-reference grading.
+any context strong models already score about 1.4--1.5 of 2, from knowledge of the field rather than
+memory of the papers. What separates systems is whether retrieval finds the source, which in an open
+world succeeds for 58\% of \dq{} questions and 89\% of our fresh, paper-specific ones; the share of the
+oracle's gain that retrieval recovers follows that rate. What retrieving the wrong papers costs depends
+on the grader. For scholarly RAG evaluation, we recommend reporting closed-book and oracle bounds,
+open-world source recall, multi-reference grading and a second judge.
 
 \section*{Acknowledgment}
 
 The author thanks the creators of RAGScholar and DBLP-QA for releasing their dataset, and the dblp,
 OpenAlex and Semantic Scholar teams for their open data and services. Language models are the object of
-this study: they answer the questions, grade the answers, label the questions and gate the retrieved
-abstracts, as described in Section~III. In addition, an AI assistant (Claude, Anthropic) was used to
-implement the evaluation harness and to draft the text; the author reviewed and edited the content and
-takes full responsibility for it.
+this study: they answer the questions, write the \fresh{} questions, grade the answers, label the
+questions and gate the retrieved abstracts, as described in Section~III. In addition, an AI assistant
+(Claude, Anthropic) was used to implement the evaluation harness and to draft the text; the author
+reviewed and edited the content and takes full responsibility for it.
 
 \bibliographystyle{IEEEtran}
 \bibliography{references}
@@ -520,6 +636,12 @@ to three sentences.''
 the question and numbered paper abstracts. Say which abstracts contain information that answers the
 question; an abstract on the same broad topic that does not address what is asked does not count.'' It
 replies with the numbers of the abstracts to keep.
+
+\textbf{Question writer (\fresh{}).} ``You write questions for a benchmark about computer-science
+research, the way its authors did. You are given one paper's abstract. Write one question that the
+abstract answers, about the paper's main idea, method, finding or motivation, and its answer: one to
+three sentences taken from the abstract. The question must make sense on its own.'' Four \dq{} pairs
+follow as examples.
 
 \textbf{Judge.} The benchmark's 0--2 scale with the original paper's worked example (its Table~2); it
 grades only against the reference, does not penalise extra correct detail, and does not reward fluency.
