@@ -48,7 +48,7 @@ re-evaluate it with a fully automatic, reproducible protocol (an LLM judge on th
 rubric, checked by controls on every run, a second judge from another model family, bootstrap intervals
 and paired comparisons), and we build \fresh{}, 100 questions of the same kind about papers published
 after the models' training data. Given the source abstract, every model we test, a 7B one included,
-scores at least 1.98 on both sets. Without retrieval GPT-4.1 scores 1.46/2 on DBLP-QA, where an audit
+scores at least 1.96 on both sets. Without retrieval GPT-4.1 scores 1.46/2 on DBLP-QA, where an audit
 labels 58\% of the questions general knowledge; on paper-specific questions it scores the same on old
 and new papers (1.00 vs 1.02), so the models draw on knowledge of the field, not memory of the papers.
 The original index cannot be rebuilt, so we reconstruct retrieval in the open world from four public
@@ -283,30 +283,31 @@ on general questions and about 1.0 on identifiable ones; Mistral-7B scores 1.34 
 \caption{Questions by audit label (gpt-4.1) in \dq{} and \fresh{}: number, how many had their source among
 the top five retrieved (Ret.), and mean closed-book $\rightarrow$ plain RAG scores.}
 \label{tab:audit}
-\centering\footnotesize
-\setlength{\tabcolsep}{3pt}
-\begin{tabular}{llrrcc}
+\centering\scriptsize
+\setlength{\tabcolsep}{2.2pt}
+\begin{tabular}{llrrccc}
 \toprule
-Set & Label & $n$ & Ret. & gpt-4.1 & gpt-4.1-mini \\
+Set & Label & $n$ & Ret. & gpt-4.1 & gpt-4.1-mini & Mistral-7B \\
 \midrule
-\dq{} & General & 29 & 15 & 1.79$\rightarrow$1.93 & 1.76$\rightarrow$1.90 \\
- & Identifiable & 20 & 13 & \textbf{1.00}$\rightarrow$1.50 & \textbf{0.90}$\rightarrow$1.45 \\
- & Underspecified & 1 & 1 & 1.00$\rightarrow$2.00 & 1.00$\rightarrow$2.00 \\
+\dq{} & General & 29 & 15 & 1.79$\rightarrow$1.93 & 1.76$\rightarrow$1.90 & 1.34$\rightarrow$1.62 \\
+ & Identifiable & 20 & 13 & \textbf{1.00}$\rightarrow$1.50 & \textbf{0.90}$\rightarrow$1.45 & \textbf{0.65}$\rightarrow$1.55 \\
+ & Underspec. & 1 & 1 & 1.00$\rightarrow$2.00 & 1.00$\rightarrow$2.00 & 0.00$\rightarrow$2.00 \\
 \midrule
-Fresh & General & 7 & 6 & 1.29$\rightarrow$1.86 & 1.29$\rightarrow$1.86 \\
- & Identifiable & 84 & 77 & \textbf{1.02}$\rightarrow$1.85 & \textbf{0.94}$\rightarrow$1.86 \\
- & Underspecified & 9 & 6 & 1.00$\rightarrow$1.56 & 0.89$\rightarrow$1.44 \\
+Fresh & General & 7 & 6 & 1.29$\rightarrow$1.86 & 1.29$\rightarrow$1.86 & 1.00$\rightarrow$1.71 \\
+ & Identifiable & 84 & 77 & \textbf{1.02}$\rightarrow$1.85 & \textbf{0.94}$\rightarrow$1.86 & \textbf{0.77}$\rightarrow$1.79 \\
+ & Underspec. & 9 & 6 & 1.00$\rightarrow$1.56 & 0.89$\rightarrow$1.44 & 0.67$\rightarrow$1.22 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \textbf{Knowledge, not memory of the papers.} On \fresh{}, without retrieval, gpt-4.1 scores 1.04
-(0.95--1.13) and gpt-4.1-mini 0.96 (0.88--1.04); with the source abstract both score 1.99
-(Table~\ref{tab:fresh}). Most closed-book answers are correct but incomplete (78 and 84 of 100 score 1):
-the models know the field but not the paper's specific contribution. The drop from \dq{} is not, however,
-evidence that the models remember \dq{}'s papers. The audit labels 84 of the Fresh questions identifiable
-and only 7 general, and within the identifiable label closed-book scores are the same for old and new
-papers: 1.00 against 1.02 for gpt-4.1, and 0.90 against 0.94 for gpt-4.1-mini (Table~\ref{tab:audit}).
+(0.95--1.13), gpt-4.1-mini 0.96 (0.88--1.04) and Mistral-7B 0.78 (0.68--0.87); with the source abstract
+they score 1.99, 1.99 and 1.96 (Table~\ref{tab:fresh}). Most closed-book answers are correct but
+incomplete (78, 84 and 72 of 100 score 1): the models know the field but not the paper's specific
+contribution. The drop from \dq{} is not, however, evidence that the models remember \dq{}'s papers. The
+audit labels 84 of the Fresh questions identifiable and only 7 general, and within the identifiable label
+closed-book scores are no lower for papers the models cannot have seen: 1.00 against 1.02 for gpt-4.1,
+0.90 against 0.94 for gpt-4.1-mini, and 0.65 against 0.77 for Mistral-7B (Table~\ref{tab:audit}).
 \dq{}'s high closed-book scores reflect its share of general-knowledge questions, not memory of its
 papers.\footnote{gpt-4.1-mini labelled every Fresh question identifiable, so the two labellers' raw
 agreement (84\%) carries no chance-corrected information on \fresh{} ($\kappa=0$); the Fresh labels rest
@@ -326,7 +327,8 @@ gpt-4.1-mini & 0.96 \ci{0.88}{1.04} & 1.82 \ci{1.71}{1.91} & 1.99 \ci{1.97}{2.00
 \quad $\Delta$ & & $+$0.86 (83/4) & $+$1.03 (93/0) \\
 gpt-4.1 & 1.04 \ci{0.95}{1.13} & 1.82 \ci{1.72}{1.91} & 1.99 \ci{1.97}{2.00} \\
 \quad $\Delta$ & & $+$0.78 (75/3) & $+$0.95 (86/0) \\
-Mistral-7B & \multicolumn{3}{c}{\pending{Mistral-7B on \fresh{}}} \\
+Mistral-7B & 0.78 \ci{0.68}{0.87} & 1.73 \ci{1.62}{1.83} & 1.96 \ci{1.92}{1.99} \\
+\quad $\Delta$ & & $+$0.95 (80/2) & $+$1.18 (94/0) \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -407,7 +409,7 @@ from public services achieves.
 \addlegendentry{gpt-4.1}
 \addplot[color=seriesB, mark=square*, mark size=1.7pt] coordinates {(36,0.136) (58,0.542) (89,0.835)};
 \addlegendentry{gpt-4.1-mini}
-\addplot[color=seriesC, mark=triangle*, mark size=2.2pt] coordinates {(38,0.396) (58,0.583)};
+\addplot[color=seriesC, mark=triangle*, mark size=2.2pt] coordinates {(38,0.396) (58,0.583) (89,0.805)};
 \addlegendentry{Mistral-7B}
 %% direct labels left of the first points, where the series are furthest apart
 \node[font=\tiny, text=black, anchor=south east] at (axis cs:35,0.165) {gpt-4.1};
@@ -417,7 +419,7 @@ from public services achieves.
 \end{tikzpicture}
 \caption{The share of the oracle's gain over closed-book that plain RAG recovers, against the share of
 questions whose source reaches the context (gpt-4.1 judge): \dq{} on an earlier pool (36--38\%) and on
-the frozen pool (58\%), and \fresh{} (89\%). The earlier-pool points were measured before the pool was
+the frozen pool (58\%), and \fresh{} (89\%; the three models' points nearly coincide). The earlier-pool points were measured before the pool was
 frozen and are indicative; the \dq{} oracle gain is over its 46 questions with an abstract.}
 \label{fig:recall}
 \end{figure}
@@ -426,26 +428,27 @@ Under the primary judge, retrieval helps every model significantly on the frozen
 $+0.32$ for the GPT models and $+0.56$ for Mistral-7B (Table~\ref{tab:main}). On the earlier pool, where
 the source reached the context for 36\% of questions, the same method gained only $+0.08$ for both GPT
 models (intervals $-0.12$ to $+0.30$ and $-0.12$ to $+0.28$) and $+0.38$ for Mistral-7B. On \fresh{},
-where it reaches the context for 89\%, plain RAG raises both GPT models to 1.82, gains of $+0.78$ and
-$+0.86$ (Table~\ref{tab:fresh}). Because the two sets start from different closed-book levels,
-Figure~\ref{fig:recall} expresses each gain as a share of the oracle's: at 58\% retrieval RAG recovers
-54--58\% of the oracle's gain, and at 89\% it recovers 82--84\%.
+where it reaches the context for 89\%, plain RAG raises both GPT models to 1.82 and Mistral-7B to 1.73,
+gains of $+0.78$, $+0.86$ and $+0.95$ (Table~\ref{tab:fresh}). Because the two sets start from different
+closed-book levels, Figure~\ref{fig:recall} expresses each gain as a share of the oracle's: at 58\%
+retrieval RAG recovers 54--58\% of the oracle's gain, and at 89\% it recovers 80--84\%, for every model.
 
 The split by retrieval outcome explains why. On the 29 \dq{} questions whose source was among the top
 five, the GPT models score 1.97 with plain RAG ($+0.55$ and $+0.66$ over closed-book) and Mistral-7B 1.83;
 across the nine RAG runs on this pool, only one answer is worse than its closed-book counterpart. On the
-89 such Fresh questions the GPT models score 1.97 and 1.99, with no answer worse than closed-book. On the
-21 \dq{} questions whose source was missed, graded against the reference, the GPT models fall slightly
-below their closed-book scores (gpt-4.1-mini $-0.14$, gpt-4.1 $-0.05$; Table~\ref{tab:missed}), while
-Mistral-7B gains ($+0.14$); on the earlier pool this apparent harm was larger ($-0.28$ and $-0.19$ on 32
-missed questions), and on the 11 missed Fresh questions it is $-0.27$ and $-0.09$.
+89 such Fresh questions the GPT models score 1.97 and 1.99 and Mistral-7B 1.86, and one answer in the
+three runs is worse than closed-book. On the 21 \dq{} questions whose source was missed, graded against
+the reference, the GPT models fall slightly below their closed-book scores (gpt-4.1-mini $-0.14$,
+gpt-4.1 $-0.05$; Table~\ref{tab:missed}), while Mistral-7B gains ($+0.14$); on the earlier pool this
+apparent harm was larger ($-0.28$ and $-0.19$ on 32 missed questions), and on the 11 missed Fresh
+questions it is $-0.27$ and $-0.09$ for the GPT models and $+0.18$ for Mistral-7B.
 
 \textbf{Is the harm real?} We audit every answer that lost points on a missed \dq{} question (98 answers
 over the nine runs; same two labellers, $\kappa=0.78$, 89 of 98 agreeing). gpt-4.1 labels 75 of them
 \emph{valid other paper}, a correct answer to the question as worded, supported by a retrieved abstract
 from a different paper; 6 \emph{misled}, all from Mistral-7B; and 17 \emph{own knowledge}. These labels
-are generous: on \fresh{} the same labeller called all 21 answers that lost points valid, although those
-questions are paper-specific. We therefore rely on a controlled re-grade. All twelve answer sets (three
+are generous: on \fresh{} the same labeller called 30 of the 32 answers that lost points valid, although
+those questions are paper-specific. We therefore rely on a controlled re-grade. All twelve answer sets (three
 models $\times$ closed-book and three RAG modes) on the 21 missed \dq{} questions are graded again by a
 symmetric multi-reference judge: the same gpt-4.1, shown the reference and the same five retrieved
 abstracts for every answer, credits any answer that is correct for the question as worded, whether
