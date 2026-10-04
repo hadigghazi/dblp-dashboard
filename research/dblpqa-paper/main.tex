@@ -339,9 +339,10 @@ public services achieves.
 \addlegendentry{gpt-4.1-mini}
 \addplot[color=seriesC, mark=triangle*, mark size=2.6pt] coordinates {(0,1.04) (38,1.42) (58,1.60) (100,1.98)};
 \addlegendentry{Mistral-7B}
+%% direct labels at the left ends, where the three lines are furthest apart
 \node[font=\scriptsize, text=black, anchor=west] at (axis cs:2,1.04) {Mistral-7B};
-\node[font=\scriptsize, text=black, anchor=south] at (axis cs:58,1.78) {gpt-4.1};
-\node[font=\scriptsize, text=black, anchor=north west] at (axis cs:59,1.71) {gpt-4.1-mini};
+\node[font=\scriptsize, text=black, anchor=south west] at (axis cs:1,1.50) {gpt-4.1};
+\node[font=\scriptsize, text=black, anchor=north west] at (axis cs:1,1.37) {gpt-4.1-mini};
 \end{axis}
 \end{tikzpicture}
 \caption{Mean score against the share of questions whose source abstract reaches the context: closed-book,
