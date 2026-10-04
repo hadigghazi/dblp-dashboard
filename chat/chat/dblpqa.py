@@ -345,11 +345,33 @@ def answer(client, meter, model, messages, sampling="ours"):
     return (step.get("content") or "").strip()
 
 
+LOCAL_JUDGE_TOKENS = 200      # a local judge that rambles costs minutes per verdict on a CPU
+
+
+def judge_call(client, meter, model, messages):
+    """One deterministic judging call: hosted, or on the local server for an "ollama:<tag>" judge -
+    retried there, since a busy CPU fails the odd request - and billed only when hosted."""
+    target, name = client_for(model, client)
+    local = model.startswith(OLLAMA_PREFIX)
+    for attempt in range(LOCAL_RETRIES + 1):
+        try:
+            step = target.complete(messages, model=name, temperature=0,
+                                   extra={"max_tokens": LOCAL_JUDGE_TOKENS} if local else None)
+            break
+        except Exception as e:
+            if not local or attempt == LOCAL_RETRIES:
+                raise
+            log.warning("%s failed (%s), retrying", model, (getattr(e, "raw", "") or str(e))[:200])
+            time.sleep(3 * (attempt + 1))
+    if not local:
+        meter.add(model, step.get("usage", {}))
+    return step
+
+
 def judge(client, meter, model, question, gold, candidate):
     prompt = f"Question: {question}\nGround truth: {gold}\nAnswer to grade: {candidate}"
-    step = client.complete([{"role": "system", "content": JUDGE_SYSTEM},
-                            {"role": "user", "content": prompt}], model=model, temperature=0)
-    meter.add(model, step.get("usage", {}))
+    step = judge_call(client, meter, model, [{"role": "system", "content": JUDGE_SYSTEM},
+                                             {"role": "user", "content": prompt}])
     return parse_judgement(step.get("content"))
 
 

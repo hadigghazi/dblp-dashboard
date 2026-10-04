@@ -369,9 +369,8 @@ def regrade(client, rows, out=print, pool=None, cache_dir=None, judge_model="gpt
             prompt = (f"Question: {by_id[qid]['question']}\n"
                       f"Reference answer (from the paper the question was written from): {by_id[qid]['answer']}\n"
                       f"Answer to grade: {answer}\n\nAbstracts of other papers on the topic:\n{evidence[qid]}")
-            step = client.complete([{"role": "system", "content": MULTI_SYSTEM},
-                                    {"role": "user", "content": prompt}], model=judge_model, temperature=0)
-            meter.add(judge_model, step.get("usage", {}))
+            step = DQ.judge_call(client, meter, judge_model, [{"role": "system", "content": MULTI_SYSTEM},
+                                                              {"role": "user", "content": prompt}])
             cache[key] = DQ.parse_judgement(step.get("content"))
         return cache[key]
 

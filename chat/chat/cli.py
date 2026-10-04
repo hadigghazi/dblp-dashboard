@@ -15,6 +15,7 @@ Command line, for the VM.
   python -m chat.cli dblpqa rag --mode gated    ... keeping only the abstracts a relevance check passes
   python -m chat.cli dblpqa audit               which questions one gold answer can grade, and why points were lost
   python -m chat.cli dblpqa regrade             the missed questions graded fairly: any correct answer counts
+  python -m chat.cli dblpqa crossjudge          the main answer sets re-judged by an open model of another family
 
 `ask` is the same code path the web endpoint uses, so a question that works here works there.
 """
@@ -111,6 +112,10 @@ def cmd_dblpqa(args):
     rows, sha = DQ.load_dataset()
     if args.limit:
         rows = rows[:args.limit]
+    if args.condition == "crossjudge":
+        from . import dblpqa_crossjudge as CJ
+        CJ.run(client, rows, judge_model=args.second_judge, pool=args.pool, modes=args.modes, force=args.force)
+        return
     if args.condition in ("audit", "regrade"):
         from . import dblpqa_audit as AU
         if args.condition == "audit":
@@ -244,7 +249,8 @@ def main():
     ql.add_argument("--days", type=int, default=30)
     ql.set_defaults(fn=cmd_questions)
     dq = sub.add_parser("dblpqa", help="experiments on the DBLP-QA benchmark")
-    dq.add_argument("condition", choices=["closed-book", "oracle", "retrieval", "rag", "audit", "regrade", "report", "rescore"],
+    dq.add_argument("condition", choices=["closed-book", "oracle", "retrieval", "rag", "audit", "regrade", "crossjudge", "report",
+                             "rescore"],
                     help="oracle = each question with the abstract it was written from; retrieval = where "
                          "each ranker puts that paper (no answers); rag = answers from the top --k papers "
                          "of --ranker; rescore = score the unscored answers of --run")
@@ -256,6 +262,10 @@ def main():
                     help="for rag: permissive = told the abstracts may be off-topic; gated = a relevance "
                          "check keeps only abstracts that address the question (none kept = closed-book)")
     dq.add_argument("--gate-model", default="gpt-4.1-mini", help="for --mode gated")
+    dq.add_argument("--second-judge", default="ollama:qwen2.5:14b",
+                    help="for crossjudge: the independent judge, normally an open model on the local Ollama")
+    dq.add_argument("--modes", choices=["plain", "all"], default="plain",
+                    help="for crossjudge: plain RAG only, or the permissive and gated runs too")
     dq.add_argument("--pool", default=None,
                     help="for audit/regrade: the retrieval pool's fingerprint (default: the latest rag run's)")
     dq.add_argument("--allow-incomplete-pool", action="store_true",
