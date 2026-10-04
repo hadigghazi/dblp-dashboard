@@ -401,3 +401,12 @@ def test_a_gated_run_is_paired_with_plain_rag_on_the_same_pool_only(tmp_path):
     lines = []
     DQ.print_summary(other["results"], "rag-bm25-gated", out=lines.append)
     assert any("no plain RAG run on this pool" in line for line in lines)
+
+
+def test_a_saturated_semantic_scholar_is_given_up_on_instead_of_waited_for(web, monkeypatch):
+    monkeypatch.setattr(RAG, "S2_GIVE_UP", 2)
+    web["refuses"].update({"What is alpha sensing?", "What is beta learning?", "What is gamma search?"})
+    _, _, report = web["prepare"]()
+    s2_calls = [u for u in web["log"] if u.path.endswith("/paper/search")]
+    assert len(s2_calls) == 2 * RAG.S2_ATTEMPTS, "the third question's search is not even tried"
+    assert report["pool"]["failed"]["s2-search"] == 3 and report["pool"]["failed"]["openalex-semantic"] == 0

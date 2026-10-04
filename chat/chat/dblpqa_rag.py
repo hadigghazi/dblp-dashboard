@@ -88,6 +88,7 @@ MODES = ("plain", "permissive", "gated")
 TOP_K = 5
 S2_SEARCH = "https://api.semanticscholar.org/graph/v1/paper/search"
 S2_ATTEMPTS = 8
+S2_GIVE_UP = 3                # refused searches in a row before Semantic Scholar is left for a later run
 OPENALEX_WORKS = "https://api.openalex.org/works"
 OPENALEX_KEY = os.environ.get("OPENALEX_API_KEY", "")
 OPENALEX_GAP = 1.1            # semantic search allows one request a second
@@ -504,6 +505,9 @@ def build_pools(rows, oracle, http=None, cache_dir=None, out=print):
     todo = [r for r in rows if r["id"] in missing]
     aliases = source_aliases([r for r in todo if r["id"] not in pools], http)
     openalex_open = True
+    # each refused Semantic Scholar search waits minutes before giving up; when its keyless pool is
+    # saturated, every search is refused, so after a few in a row the rest is left for a later run
+    s2_refusals = 0
     for i, row in enumerate(todo, 1):
         pool = pools.setdefault(row["id"], {"candidates": {}, "aliases": [row["dblp_key"]]})
         status = pool["status"] = status_of(pool)
@@ -516,8 +520,12 @@ def build_pools(rows, oracle, http=None, cache_dir=None, out=print):
             for rank, hit in enumerate(_search_dblp(http, row), 1):
                 cands.setdefault(hit["key"], {"title": hit["title"]})["dblp_rank"] = rank
             status["dblp-search"] = 200
-        if status.get("s2-search") != 200:
+        if status.get("s2-search") != 200 and s2_refusals < S2_GIVE_UP:
             status["s2-search"], hits = _search_s2(http, row)
+            s2_refusals = 0 if status["s2-search"] == 200 else s2_refusals + 1
+            if s2_refusals == S2_GIVE_UP:
+                out(f"  Semantic Scholar refused {S2_GIVE_UP} searches in a row - not asked again in this run "
+                    f"(re-run `dblpqa retrieval` later to fill them in)")
             for rank, hit in enumerate(hits, 1):
                 entry = cands.setdefault(hit["key"], {"title": hit["title"]})
                 entry["s2_rank"] = rank
