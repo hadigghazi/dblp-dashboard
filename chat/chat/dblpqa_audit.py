@@ -1,0 +1,304 @@
+"""
+An automatic audit of DBLP-QA: which questions a single gold answer can fairly grade, and why answers
+lost points when retrieval missed the source paper.
+
+With realistic retrieval the strong models scored below their own closed-book answers on questions
+whose source paper was not retrieved, and a relevance gate did not help: it judged the wrong papers'
+abstracts relevant. The likely reason is the benchmark, not the retrieval. Each question was written
+from one abstract and graded against that abstract's answer, yet many are worded generically ("Why is
+a new design for SLO auditing needed?"), so an answer drawn from another, equally relevant paper is
+graded as wrong. This module measures how much of the loss that explains, without anyone labelling by
+hand:
+
+  * every question is labelled general (textbook knowledge), identifiable (specific enough to find
+    the paper) or underspecified (many papers could answer it, differently);
+  * every answer that lost points on a question whose source was not retrieved is labelled
+    valid_other_paper (a correct answer to the question as worded, supported by a retrieved abstract
+    from another paper), misled (it used the abstracts but does not answer the question as worded) or
+    own_knowledge (not based on the abstracts).
+
+Two labellers, gpt-4.1 and gpt-4.1-mini, label everything independently; their agreement (Cohen's
+kappa) is reported and gpt-4.1's labels are used. Labels are cached, so a re-run pays for nothing
+already labelled.
+"""
+import hashlib
+import json
+import re
+from pathlib import Path
+
+from . import config, dblpqa as DQ
+
+VERSION = 1
+LABELERS = ("gpt-4.1", "gpt-4.1-mini")
+QUESTION_LABELS = ("general", "identifiable", "underspecified")
+ANSWER_LABELS = ("valid_other_paper", "misled", "own_knowledge")
+
+QUESTION_SYSTEM = (
+    "You audit a question-answering benchmark about computer-science research. Each question was written "
+    "from one paper's abstract, and its ground-truth answer was taken from that abstract. Put the question "
+    "in exactly one category:\n"
+    "- general: the ground truth is standard knowledge in the field; an expert would give essentially this "
+    "answer without knowing the paper.\n"
+    "- identifiable: the ground truth is specific to this paper, and the question has enough specific "
+    "detail (a named system or method, an unusual combination of topics) to tell which paper it asks about.\n"
+    "- underspecified: the ground truth is specific to this paper, but the question as worded does not "
+    "identify the paper - many papers could answer it, with different correct answers.\n"
+    'Reply with JSON only: {"label": "general" | "identifiable" | "underspecified", "reason": "<one sentence>"}')
+
+ANSWER_SYSTEM = (
+    "You audit answers from a question-answering benchmark about computer-science research. Each question "
+    "was written from one paper's abstract, and its ground truth comes from that paper. For this question "
+    "the search did NOT find that paper: the system answered from other papers' abstracts, and its answer "
+    "was graded below full marks against the ground truth. Put the answer in exactly one category:\n"
+    "- valid_other_paper: the answer is a correct, reasonable answer to the question as it is worded, and "
+    "it is supported by one of the given abstracts; it describes a different paper's work than the ground "
+    "truth, so it lost marks only because the question does not say which paper it means.\n"
+    "- misled: the answer relies on the given abstracts but does not correctly answer the question as "
+    "worded (it answers a different question, misreads an abstract, or applies a claim where it does not "
+    "fit).\n"
+    "- own_knowledge: the answer is not based on the given abstracts, and it falls short of the ground truth.\n"
+    'Reply with JSON only: {"label": "valid_other_paper" | "misled" | "own_knowledge", "reason": "<one sentence>"}')
+
+
+def _load(path):
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
+def parse_label(text, allowed):
+    """{"label", "reason"} from a labeller's reply; ValueError if there is no allowed label in it."""
+    match = re.search(r"\{.*\}", text or "", re.S)
+    try:
+        got = json.loads(match.group(0)) if match else {}
+    except ValueError:
+        got = {}
+    label = str(got.get("label") or "").strip().lower()
+    if label not in allowed:
+        found = [a for a in allowed if a in (text or "").lower()]
+        if len(found) != 1:
+            raise ValueError(f"no single label in {(text or '')[:200]!r}")
+        label = found[0]
+    return {"label": label, "reason": str(got.get("reason", ""))[:300]}
+
+
+def cohen_kappa(a, b):
+    """Agreement between two labellers beyond chance; 1 is perfect, 0 is chance."""
+    pairs = [(x, y) for x, y in zip(a, b) if x and y]
+    n = len(pairs)
+    if not n:
+        return None
+    observed = sum(x == y for x, y in pairs) / n
+    cats = {x for p in pairs for x in p}
+    expected = sum(sum(x == c for x, _ in pairs) / n * sum(y == c for _, y in pairs) / n for c in cats)
+    return 1.0 if expected == 1 else round((observed - expected) / (1 - expected), 3)
+
+
+def _label(client, meter, labeler, system, prompt, allowed):
+    for attempt in range(2):
+        step = client.complete([{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+                               model=labeler, temperature=0)
+        meter.add(labeler, step.get("usage", {}))
+        try:
+            return parse_label(step.get("content"), allowed)
+        except ValueError as e:
+            error = str(e)
+    return {"label": None, "reason": f"unreadable: {error}"}
+
+
+# --------------------------------------------------------------------------- the runs
+
+def load_runs(runs_dir):
+    """[(name, summary, records)] for every run with answers, oldest first."""
+    found = []
+    for path in sorted(Path(runs_dir).glob("*/summary.json")):
+        answers = path.parent / "answers.jsonl"
+        try:
+            summary = json.loads(path.read_text(encoding="utf-8"))
+            records = [json.loads(x) for x in answers.read_text(encoding="utf-8").splitlines() if x.strip()]
+        except (OSError, ValueError):
+            continue
+        found.append((path.parent.name, summary, records))
+    return found
+
+
+def sampling_of(summary):
+    return next(iter(summary.get("sampling") or {"ours": None}))
+
+
+def latest(runs, condition, model, sampling, pool=None):
+    """(run name, {question id: scored record}) of the latest `condition` run with this model."""
+    for name, summary, records in reversed(runs):
+        if summary.get("condition") != condition or model not in (summary.get("models") or []):
+            continue
+        if sampling_of(summary) != sampling or (pool is not None and summary.get("pool_sha256") != pool):
+            continue
+        mine = {r["id"]: r for r in records if r["model"] == model and r.get("score") is not None}
+        if mine:
+            return name, mine
+    return None, {}
+
+
+def rag_runs(runs, pool):
+    """The latest run per (rag condition, model, sampling) on this pool: [(condition, model, sampling,
+    run name, {id: record})]."""
+    seen, chosen = set(), []
+    for name, summary, records in reversed(runs):
+        condition = summary.get("condition") or ""
+        if not condition.startswith(DQ.RAG_PREFIX) or summary.get("pool_sha256") != pool:
+            continue
+        for model in summary.get("models") or []:
+            key = (condition, model, sampling_of(summary))
+            if key in seen:
+                continue
+            mine = {r["id"]: r for r in records if r["model"] == model and r.get("score") is not None}
+            if mine:
+                seen.add(key)
+                chosen.append((condition, model, sampling_of(summary), name, mine))
+    return sorted(chosen, key=lambda c: (c[2] != "ours", c[1], c[0]))
+
+
+def _mean(values):
+    values = list(values)
+    return round(sum(values) / len(values), 2) if values else None
+
+
+def _blocks(cands, keys):
+    return "\n\n".join(f"[{i}] {cands.get(k, {}).get('title') or ''}\n{cands.get(k, {}).get('abstract') or '(no abstract)'}"
+                       for i, k in enumerate(keys, 1))
+
+
+# --------------------------------------------------------------------------- the audit
+
+def run(client, rows, out=print, pool=None, cache_dir=None, labelers=LABELERS):
+    cache_dir = Path(cache_dir or config.MODELS_DIR / "dblpqa")
+    runs = load_runs(cache_dir / "runs")
+    if pool is None:
+        pool = next((s.get("pool_sha256") for _, s, _ in reversed(runs) if s.get("pool_sha256")), None)
+    chosen = rag_runs(runs, pool)
+    if not chosen:
+        raise SystemExit(f"no rag runs on pool {pool}")
+    pools = _load(cache_dir / "pools.json")
+    oracle = DQ.fetch_abstracts(rows, cache_dir=cache_dir, out=lambda *_: None)
+    cache_path = cache_dir / "audit-labels.json"
+    cache = _load(cache_path)
+    meter = DQ.Meter()
+
+    # every question, by both labellers
+    questions = {}
+    for row in rows:
+        src = oracle.get(row["id"]) or {}
+        prompt = (f"Question: {row['question']}\nGround truth: {row['answer']}\n"
+                  f"Source paper: {src.get('title') or '(title unknown)'}\n"
+                  f"Abstract: {src.get('abstract') or '(abstract unavailable)'}")
+        questions[row["id"]] = {}
+        for labeler in labelers:
+            key = f"q|{VERSION}|{labeler}|{row['id']}"
+            if key not in cache:
+                cache[key] = _label(client, meter, labeler, QUESTION_SYSTEM, prompt, QUESTION_LABELS)
+            questions[row["id"]][labeler] = cache[key]
+    out(f"questions labelled (${meter.cost()} so far)")
+
+    # every answer that lost points where retrieval missed the source, by both labellers
+    by_id = {r["id"]: r for r in rows}
+    answers = []
+    for condition, model, sampling, name, recs in chosen:
+        for qid, rec in recs.items():
+            if rec.get("source_in_context") or rec["score"] >= 2:
+                continue
+            keys = rec["kept"] if "kept" in rec else rec.get("retrieved") or []
+            labels = {}
+            for labeler in labelers:
+                if not keys:
+                    labels[labeler] = {"label": "own_knowledge", "reason": "no abstract was given (gate kept none)"}
+                    continue
+                key = "a|" + hashlib.sha1(f"{VERSION}|{labeler}|{name}|{model}|{qid}".encode()).hexdigest()
+                if key not in cache:
+                    prompt = (f"Question: {by_id[qid]['question']}\nGround truth: {by_id[qid]['answer']}\n"
+                              f"Answer: {rec['answer']}\n\nAbstracts the system was given:\n"
+                              f"{_blocks((pools.get(qid) or {}).get('candidates') or {}, keys)}")
+                    cache[key] = _label(client, meter, labeler, ANSWER_SYSTEM, prompt, ANSWER_LABELS)
+                labels[labeler] = cache[key]
+            answers.append({"condition": condition, "model": model, "sampling": sampling, "run": name,
+                            "id": qid, "score": rec["score"], "labels": labels})
+    cache_path.write_text(json.dumps(cache, indent=1), encoding="utf-8")
+
+    report = summarize(rows, runs, chosen, questions, answers, labelers)
+    report.update(pool_sha256=pool, labelers=list(labelers), cost_usd=meter.cost(), version=VERSION)
+    (cache_dir / "audit.json").write_text(json.dumps(dict(report, questions=questions, answers=answers),
+                                                      indent=2), encoding="utf-8")
+    print_report(report, out)
+    return report
+
+
+def summarize(rows, runs, chosen, questions, answers, labelers):
+    main, second = labelers[0], labelers[-1]
+    qlabel = {qid: q[main]["label"] for qid, q in questions.items()}
+    report = {"question_agreement": {
+        "kappa": cohen_kappa([q[main]["label"] for q in questions.values()],
+                             [q[second]["label"] for q in questions.values()]),
+        "same": sum(q[main]["label"] == q[second]["label"] for q in questions.values()),
+        "of": len(questions)},
+        "answer_agreement": {
+            "kappa": cohen_kappa([a["labels"][main]["label"] for a in answers],
+                                 [a["labels"][second]["label"] for a in answers]),
+            "same": sum(a["labels"][main]["label"] == a["labels"][second]["label"] for a in answers),
+            "of": len(answers)}}
+
+    # per question label: how findable, how well known, how much plain RAG helps
+    plain = [c for c in chosen if DQ.rag_parts(c[0])[1] == "plain"]
+    found = {}
+    for _, _, _, _, recs in plain:
+        for qid, rec in recs.items():
+            found.setdefault(qid, bool(rec.get("source_in_context")))
+    by_label = {}
+    for label in QUESTION_LABELS:
+        ids = [r["id"] for r in rows if qlabel.get(r["id"]) == label]
+        entry = {"questions": len(ids), "source_retrieved": sum(found.get(q, False) for q in ids), "models": {}}
+        for _, model, sampling, _, recs in plain:
+            _, closed = latest(runs, "closed-book", model, sampling)
+            shared = [q for q in ids if q in recs and q in closed]
+            entry["models"][model] = {"closed_book": _mean(closed[q]["score"] for q in shared),
+                                      "plain_rag": _mean(recs[q]["score"] for q in shared)}
+        by_label[label] = entry
+    report["by_question_label"] = by_label
+
+    # per rag run: the missed questions as graded, and again crediting answers valid for the question
+    per_run = []
+    for condition, model, sampling, name, recs in chosen:
+        _, closed = latest(runs, "closed-book", model, sampling)
+        missed = [q for q, r in recs.items() if not r.get("source_in_context") and q in closed]
+        mine = {a["id"]: a for a in answers if a["run"] == name and a["model"] == model}
+        counts = {label: sum(1 for a in mine.values() if a["labels"][main]["label"] == label) for label in ANSWER_LABELS}
+        credited = {q: 2 if q in mine and mine[q]["labels"][main]["label"] == "valid_other_paper" else recs[q]["score"]
+                    for q in missed}
+        per_run.append({"condition": condition, "model": model, "sampling": sampling, "run": name,
+                        "missed": len(missed), "lost_points": len([q for q in missed if q in mine]),
+                        "labels": counts, "graded": _mean(recs[q]["score"] for q in missed),
+                        "crediting_valid": _mean(credited.values()),
+                        "closed_book": _mean(closed[q]["score"] for q in missed),
+                        "by_question_label": {label: sum(1 for q in mine if qlabel.get(q) == label)
+                                              for label in QUESTION_LABELS}})
+    report["missed_questions"] = per_run
+    return report
+
+
+def print_report(report, out=print):
+    qa, aa = report["question_agreement"], report["answer_agreement"]
+    out(f"\nquestion labels by {report['labelers'][0]}; agreement with {report['labelers'][-1]}: "
+        f"{qa['same']}/{qa['of']}, kappa {qa['kappa']}")
+    models = list(next(iter(report["by_question_label"].values()))["models"])
+    out(f"{'label':16s} {'n':>3s} {'found':>6s}  " + "  ".join(f"{m[-12:]:>21s}" for m in models))
+    out(f"{'':16s} {'':>3s} {'':>6s}  " + "  ".join(f"{'closed -> plain RAG':>21s}" for _ in models))
+    for label, e in report["by_question_label"].items():
+        cells = [f"{str(e['models'][m]['closed_book']):>9s} -> {str(e['models'][m]['plain_rag']):>8s}" for m in models]
+        out(f"{label:16s} {e['questions']:3d} {e['source_retrieved']:6d}  " + "  ".join(f"{c:>21s}" for c in cells))
+    out(f"\nanswers that lost points where retrieval missed the source; agreement {aa['same']}/{aa['of']}, "
+        f"kappa {aa['kappa']}")
+    out(f"{'run':40s} {'missed':>6s} {'lost':>5s} {'valid':>6s} {'misled':>7s} {'own':>4s}   "
+        f"{'closed':>6s} {'graded':>6s} {'credited':>8s}")
+    for r in report["missed_questions"]:
+        name = f"{r['model'][-19:]} {r['condition']}"
+        lab = r["labels"]
+        out(f"{name:40s} {r['missed']:6d} {r['lost_points']:5d} {lab['valid_other_paper']:6d} {lab['misled']:7d} "
+            f"{lab['own_knowledge']:4d}   {str(r['closed_book']):>6s} {str(r['graded']):>6s} {str(r['crediting_valid']):>8s}")
+    out("(closed = closed-book on the same questions; credited = graded, with valid answers about another "
+        f"paper given full marks)  ${report['cost_usd']}")

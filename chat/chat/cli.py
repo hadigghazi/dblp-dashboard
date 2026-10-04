@@ -13,6 +13,7 @@ Command line, for the VM.
   python -m chat.cli dblpqa retrieval           DBLP-QA: does retrieval find each question's paper?
   python -m chat.cli dblpqa rag --ranker bm25   DBLP-QA answered from the top-5 retrieved abstracts
   python -m chat.cli dblpqa rag --mode gated    ... keeping only the abstracts a relevance check passes
+  python -m chat.cli dblpqa audit               which questions one gold answer can grade, and why points were lost
 
 `ask` is the same code path the web endpoint uses, so a question that works here works there.
 """
@@ -109,6 +110,10 @@ def cmd_dblpqa(args):
     rows, sha = DQ.load_dataset()
     if args.limit:
         rows = rows[:args.limit]
+    if args.condition == "audit":
+        from . import dblpqa_audit as AU
+        AU.run(client, rows, pool=args.pool)
+        return
     condition, contexts = args.condition, None
     notes = None
     if condition in ("retrieval", "rag"):
@@ -233,7 +238,7 @@ def main():
     ql.add_argument("--days", type=int, default=30)
     ql.set_defaults(fn=cmd_questions)
     dq = sub.add_parser("dblpqa", help="experiments on the DBLP-QA benchmark")
-    dq.add_argument("condition", choices=["closed-book", "oracle", "retrieval", "rag", "report", "rescore"],
+    dq.add_argument("condition", choices=["closed-book", "oracle", "retrieval", "rag", "audit", "report", "rescore"],
                     help="oracle = each question with the abstract it was written from; retrieval = where "
                          "each ranker puts that paper (no answers); rag = answers from the top --k papers "
                          "of --ranker; rescore = score the unscored answers of --run")
@@ -245,6 +250,8 @@ def main():
                     help="for rag: permissive = told the abstracts may be off-topic; gated = a relevance "
                          "check keeps only abstracts that address the question (none kept = closed-book)")
     dq.add_argument("--gate-model", default="gpt-4.1-mini", help="for --mode gated")
+    dq.add_argument("--pool", default=None,
+                    help="for audit: the retrieval pool's fingerprint (default: the latest rag run's)")
     dq.add_argument("--allow-incomplete-pool", action="store_true",
                     help="for rag: run even if some first-stage search never succeeded")
     dq.add_argument("--k", type=int, default=5, help="for rag: papers in the context (the paper's best: 5)")
