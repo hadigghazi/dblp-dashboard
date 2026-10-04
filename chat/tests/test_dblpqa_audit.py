@@ -65,7 +65,7 @@ def study(tmp_path):
     runs = tmp_path / "runs"
     ours = {"ours": {"temperature": 0}}
     write_run(runs, "20260101T000000Z-closed-book", {"condition": "closed-book", "models": ["m1"], "sampling": ours},
-              [rec("qa1", 2), rec("qa2", 1), rec("qa3", 2)])
+              [rec("qa1", 2, "cb one"), rec("qa2", 1, "cb two"), rec("qa3", 2, "cb three")])
     # an older pool, which the audit must not read
     write_run(runs, "20260101T120000Z-rag-bm25", {"condition": "rag-bm25", "models": ["m1"], "sampling": ours,
                                                    "pool_sha256": "P0"},
@@ -118,3 +118,54 @@ def test_the_audit_explains_lost_points_on_the_latest_pool(study):
 def test_an_unknown_pool_is_refused(study):
     with pytest.raises(SystemExit, match="no rag runs"):
         AU.run(Labeller(), DQ.parse(CSV), out=lambda *_: None, cache_dir=study, pool="nope")
+
+
+class Grader:
+    """A multi-reference judge: the reference and a few other answers are correct; `lenient` passes
+    everything, which the controls must catch."""
+    VALID = {("What is B?", "cb two"), ("What is C?", "Nine says so.")}
+
+    def __init__(self, lenient=False):
+        self.calls, self.lenient = 0, lenient
+
+    def complete(self, messages, model, tools=None, temperature=None, extra=None):
+        self.calls += 1
+        assert messages[0]["content"] == AU.MULTI_SYSTEM
+        user = messages[1]["content"]
+        assert "[1] Nine\nNine abstract." in user, "every answer is graded with the same retrieved abstracts"
+        question = user.split("Question: ")[1].split("\n")[0]
+        reference = user.split("written from): ")[1].split("\n")[0]
+        answer = user.split("Answer to grade: ")[1].split("\n")[0]
+        score = 2 if self.lenient or answer == reference or (question, answer) in self.VALID else 0
+        return {"content": json.dumps({"score": score, "reason": "r"}),
+                "usage": {"input_tokens": 400, "output_tokens": 10}}
+
+
+def test_the_regrade_grades_every_answer_set_alike_after_its_controls(study):
+    client = Grader()
+    lines = []
+    report = AU.regrade(client, DQ.parse(CSV), out=lines.append, cache_dir=study)
+    assert report["missed"] == ["qa2", "qa3"], "the plain run on the latest pool says which were missed"
+    assert report["controls"]["passed"] and report["controls"]["another question's RAG answer scored 0"] == 2
+
+    closed, plain, gated = report["sets"]
+    assert closed["condition"] == "closed-book" and "vs_closed_book" not in closed
+    assert (closed["gold_graded"], closed["regraded"]["mean"], closed["raised"], closed["lowered"]) == (1.5, 1.0, 1, 1), \
+        "closed-book answers are credited the same way - and can lose credit too"
+    assert plain["condition"] == "rag-bm25" and plain["regraded"]["mean"] == 1.0
+    assert plain["vs_closed_book"]["delta"]["mean"] == 0.0
+    assert (plain["vs_closed_book"]["better"], plain["vs_closed_book"]["worse"]) == (1, 1)
+    assert gated["regraded"]["mean"] == 0.0 and gated["lowered"] == 2 and gated["vs_closed_book"]["worse"] == 1
+    assert client.calls == 6 + 5, "six control grades; one answer was already graded as a control"
+    assert (study / "regrade.json").exists() and any("re-graded" in line for line in lines)
+
+    again = Grader()
+    AU.regrade(again, DQ.parse(CSV), out=lambda *_: None, cache_dir=study)
+    assert again.calls == 0, "grades are cached"
+
+
+def test_a_lenient_regrade_judge_is_stopped_by_its_controls(study):
+    client = Grader(lenient=True)
+    report = AU.regrade(client, DQ.parse(CSV), out=lambda *_: None, cache_dir=study)
+    assert not report["controls"]["passed"] and report["stopped"]
+    assert report["sets"] == [] and client.calls == 6, "no answer was graded by a judge that passes everything"

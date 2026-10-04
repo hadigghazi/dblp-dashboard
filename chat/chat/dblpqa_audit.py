@@ -20,6 +20,15 @@ hand:
 Two labellers, gpt-4.1 and gpt-4.1-mini, label everything independently; their agreement (Cohen's
 kappa) is reported and gpt-4.1's labels are used. Labels are cached, so a re-run pays for nothing
 already labelled.
+
+The audit credits only RAG answers, and its labellers have no controls, so it cannot by itself say
+that retrieval helps on the missed questions. `regrade` can: on the questions where retrieval missed
+the source, every answer set - closed-book included - is graded again by a judge that accepts any
+correct answer to the question as worded, given the same evidence for all (the reference answer and
+the plain run's five retrieved abstracts). The judge must first pass three controls on those very
+questions: the reference answer scores 2, another question's reference scores 0, and another
+question's RAG answer scores 0 - the last one catches a judge that rewards any fluent, on-topic-looking
+text.
 """
 import hashlib
 import json
@@ -302,3 +311,130 @@ def print_report(report, out=print):
             f"{lab['own_knowledge']:4d}   {str(r['closed_book']):>6s} {str(r['graded']):>6s} {str(r['crediting_valid']):>8s}")
     out("(closed = closed-book on the same questions; credited = graded, with valid answers about another "
         f"paper given full marks)  ${report['cost_usd']}")
+
+
+# --------------------------------------------------------------------------- the fair re-grade
+
+REGRADE_VERSION = 1
+MULTI_SYSTEM = (
+    "You grade answers to questions about computer-science research. Each question was written from one "
+    "paper's abstract and comes with that paper's answer (the reference). The question may have other "
+    "correct answers, so you are also given abstracts of other papers on the topic. Grade the answer to "
+    "the question as it is worded:\n"
+    "2 - correct and complete: it matches the reference, or it is an equally valid answer to the question "
+    "as worded that is supported by one of the abstracts or is established knowledge in the field;\n"
+    "1 - partially correct or incomplete;\n"
+    "0 - incorrect, unsupported, or it does not answer the question.\n"
+    "Do not reward an answer for length or fluency.\n"
+    'Reply with JSON only: {"score": 0, 1 or 2, "reason": "<one sentence>"}')
+
+
+def _condition_order(condition):
+    return ({"closed-book": 0}.get(condition, 1), condition)
+
+
+def regrade(client, rows, out=print, pool=None, cache_dir=None, judge_model="gpt-4.1", force=False):
+    """Every answer set on the questions where retrieval missed the source, graded again against the
+    reference and the same retrieved abstracts, after controls; paired with the same model's
+    closed-book answers graded the same way."""
+    cache_dir = Path(cache_dir or config.MODELS_DIR / "dblpqa")
+    runs = load_runs(cache_dir / "runs")
+    if pool is None:
+        pool = next((s.get("pool_sha256") for _, s, _ in reversed(runs) if s.get("pool_sha256")), None)
+    chosen = rag_runs(runs, pool)
+    plain = next((c for c in chosen if DQ.rag_parts(c[0])[1] == "plain"), None)
+    if not plain:
+        raise SystemExit(f"no plain rag run on pool {pool}")
+    pools = _load(cache_dir / "pools.json")
+    by_id = {r["id"]: r for r in rows}
+    # retrieval is the same for every model and mode on one pool: the plain run says which were missed
+    missed = [r["id"] for r in rows if r["id"] in plain[4] and not plain[4][r["id"]].get("source_in_context")]
+    evidence = {q: _blocks((pools.get(q) or {}).get("candidates") or {}, plain[4][q].get("retrieved") or [])
+                or "(none)" for q in missed}
+
+    sets = []
+    for model, sampling in dict.fromkeys((c[1], c[2]) for c in chosen):
+        name, closed = latest(runs, "closed-book", model, sampling)
+        if closed:
+            sets.append(("closed-book", model, sampling, name, closed))
+    sets = sorted(sets + chosen, key=lambda s: (s[2] != "ours", s[1], _condition_order(s[0])))
+
+    cache_path = cache_dir / "regrade-labels.json"
+    cache = _load(cache_path)
+    meter = DQ.Meter()
+
+    def grade(qid, answer):
+        key = hashlib.sha1(f"{REGRADE_VERSION}|{judge_model}|{qid}|{answer}".encode("utf-8")).hexdigest()
+        if key not in cache:
+            prompt = (f"Question: {by_id[qid]['question']}\n"
+                      f"Reference answer (from the paper the question was written from): {by_id[qid]['answer']}\n"
+                      f"Answer to grade: {answer}\n\nAbstracts of other papers on the topic:\n{evidence[qid]}")
+            step = client.complete([{"role": "system", "content": MULTI_SYSTEM},
+                                    {"role": "user", "content": prompt}], model=judge_model, temperature=0)
+            meter.add(judge_model, step.get("usage", {}))
+            cache[key] = DQ.parse_judgement(step.get("content"))
+        return cache[key]
+
+    # the controls, on these very questions and their evidence
+    order = DQ.derangement(len(missed))
+    n = len(missed)
+    checks = {"reference scored 2": [grade(q, by_id[q]["answer"])["score"] == 2 for q in missed],
+              "another question's reference scored 0":
+                  [grade(q, by_id[missed[order[i]]]["answer"])["score"] == 0 for i, q in enumerate(missed)],
+              "another question's RAG answer scored 0":
+                  [grade(q, plain[4][missed[order[i]]]["answer"])["score"] == 0 for i, q in enumerate(missed)]}
+    controls = {name: sum(ok) for name, ok in checks.items()}
+    controls["questions"] = n
+    controls["passed"] = all(sum(ok) / n >= 0.95 for ok in checks.values()) if n else False
+    cache_path.write_text(json.dumps(cache, indent=1), encoding="utf-8")
+    out(f"re-grade of the {n} questions where retrieval missed the source paper (judge {judge_model}, pool {pool})")
+    out("controls: " + "; ".join(f"{name} in {controls[name]}/{n}" for name in checks)
+        + f" -> {'PASS' if controls['passed'] else 'FAIL'}")
+    report = {"pool_sha256": pool, "judge": judge_model, "version": REGRADE_VERSION, "missed": missed,
+              "controls": controls, "sets": []}
+    if not controls["passed"] and not force:
+        report.update(stopped="the judge failed its controls", cost_usd=meter.cost())
+        (cache_dir / "regrade.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+        out("stopped: a judge that fails its controls is not used (--force to grade anyway)")
+        return report
+
+    regraded = {}
+    for condition, model, sampling, name, recs in sets:
+        regraded[(condition, model, sampling)] = {q: grade(q, recs[q]["answer"])["score"] for q in missed if q in recs}
+    cache_path.write_text(json.dumps(cache, indent=1), encoding="utf-8")
+
+    for condition, model, sampling, name, recs in sets:
+        mine = regraded[(condition, model, sampling)]
+        before = {q: recs[q]["score"] for q in mine}
+        entry = {"condition": condition, "model": model, "sampling": sampling, "run": name, "questions": len(mine),
+                 "gold_graded": _mean(before.values()), "regraded": DQ.bootstrap_ci(list(mine.values())),
+                 "raised": sum(mine[q] > before[q] for q in mine), "lowered": sum(mine[q] < before[q] for q in mine)}
+        closed = regraded.get(("closed-book", model, sampling))
+        if condition != "closed-book" and closed:
+            shared = [q for q in mine if q in closed]
+            diffs = [mine[q] - closed[q] for q in shared]
+            entry["vs_closed_book"] = {"questions": len(shared), "delta": DQ.bootstrap_ci(diffs),
+                                       "better": sum(d > 0 for d in diffs), "worse": sum(d < 0 for d in diffs)}
+        report["sets"].append(entry)
+    report["cost_usd"] = meter.cost()
+    (cache_dir / "regrade.json").write_text(json.dumps(dict(report, scores={
+        f"{c}|{m}|{s}": v for (c, m, s), v in regraded.items()}), indent=2), encoding="utf-8")
+    print_regrade(report, out)
+    return report
+
+
+def print_regrade(report, out=print):
+    out(f"\n{'model':20s} {'condition':22s} {'gold-graded':>11s} {'re-graded':>18s} {'raised':>7s} {'lowered':>8s}"
+        f"   vs closed-book (re-graded)")
+    for e in report["sets"]:
+        ci = e["regraded"]
+        line = (f"{e['model'][-20:]:20s} {e['condition']:22s} {str(e['gold_graded']):>11s} "
+                f"{ci['mean']:6.2f} ({ci['low']:.2f}-{ci['high']:.2f}) {e['raised']:7d} {e['lowered']:8d}")
+        paired = e.get("vs_closed_book")
+        if paired:
+            d = paired["delta"]
+            line += (f"   {d['mean']:+.2f} (95% CI {d['low']:+.2f} to {d['high']:+.2f}); better on "
+                     f"{paired['better']}, worse on {paired['worse']}")
+        out(line)
+    out(f"(gold-graded = the original score against the one reference; re-graded = any answer correct for the "
+        f"question as worded counts)  ${report['cost_usd']}")
