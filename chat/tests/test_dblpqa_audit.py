@@ -169,3 +169,16 @@ def test_a_lenient_regrade_judge_is_stopped_by_its_controls(study):
     report = AU.regrade(client, DQ.parse(CSV), out=lambda *_: None, cache_dir=study)
     assert not report["controls"]["passed"] and report["stopped"]
     assert report["sets"] == [] and client.calls == 6, "no answer was graded by a judge that passes everything"
+
+
+def test_an_unreadable_regrade_verdict_is_left_out_not_fatal(study):
+    class Mumbles(Grader):
+        def complete(self, messages, model, tools=None, temperature=None, extra=None):
+            if "Answer to grade: Nine again." in messages[1]["content"]:
+                self.calls += 1
+                return {"content": "hard to say", "usage": {}}
+            return super().complete(messages, model, tools, temperature, extra)
+
+    report = AU.regrade(Mumbles(), DQ.parse(CSV), out=lambda *_: None, cache_dir=study)
+    gated = next(s for s in report["sets"] if s["condition"] == "rag-bm25-gated")
+    assert gated["questions"] == 1, "the unreadable verdict is left out of the gated set"

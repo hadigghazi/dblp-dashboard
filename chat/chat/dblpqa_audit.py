@@ -33,6 +33,7 @@ text.
 import hashlib
 import json
 import re
+import time
 from pathlib import Path
 
 from . import config, dblpqa as DQ
@@ -362,6 +363,8 @@ def regrade(client, rows, out=print, pool=None, cache_dir=None, judge_model="gpt
     cache_path = cache_dir / "regrade-labels.json"
     cache = _load(cache_path)
     meter = DQ.Meter()
+    started, fresh = time.time(), [0]
+    most = 3 * len(missed) + sum(1 for s in sets for q in missed if q in s[4])
 
     def grade(qid, answer):
         key = hashlib.sha1(f"{REGRADE_VERSION}|{judge_model}|{qid}|{answer}".encode("utf-8")).hexdigest()
@@ -371,7 +374,16 @@ def regrade(client, rows, out=print, pool=None, cache_dir=None, judge_model="gpt
                       f"Answer to grade: {answer}\n\nAbstracts of other papers on the topic:\n{evidence[qid]}")
             step = DQ.judge_call(client, meter, judge_model, [{"role": "system", "content": MULTI_SYSTEM},
                                                               {"role": "user", "content": prompt}])
-            cache[key] = DQ.parse_judgement(step.get("content"))
+            try:
+                cache[key] = DQ.parse_judgement(step.get("content"))
+            except ValueError as e:      # a local judge's reply with no score in it: counted, left out
+                cache[key] = {"score": None, "reason": f"unreadable: {e}"[:300]}
+            fresh[0] += 1
+            # a local judge on a CPU takes most of a minute per verdict: say where it is, and keep what it did
+            if fresh[0] % 10 == 0:
+                cache_path.write_text(json.dumps(cache, indent=1), encoding="utf-8")
+                out(f"  {fresh[0]} verdicts in {time.time() - started:.0f}s "
+                    f"({(time.time() - started) / fresh[0]:.0f}s each; at most {most} in all, cached ones are free)")
         return cache[key]
 
     # the controls, on these very questions and their evidence
@@ -399,7 +411,8 @@ def regrade(client, rows, out=print, pool=None, cache_dir=None, judge_model="gpt
 
     regraded = {}
     for condition, model, sampling, name, recs in sets:
-        regraded[(condition, model, sampling)] = {q: grade(q, recs[q]["answer"])["score"] for q in missed if q in recs}
+        scored = {q: grade(q, recs[q]["answer"])["score"] for q in missed if q in recs}
+        regraded[(condition, model, sampling)] = {q: v for q, v in scored.items() if v is not None}
     cache_path.write_text(json.dumps(cache, indent=1), encoding="utf-8")
 
     for condition, model, sampling, name, recs in sets:
