@@ -316,7 +316,8 @@ def print_report(report, out=print):
 
 # --------------------------------------------------------------------------- the fair re-grade
 
-REGRADE_VERSION = 1
+# 2: the answer comes after the abstracts, so every verdict on one question shares a long prefix
+REGRADE_VERSION = 2
 MULTI_SYSTEM = (
     "You grade answers to questions about computer-science research. Each question was written from one "
     "paper's abstract and comes with that paper's answer (the reference). The question may have other "
@@ -370,8 +371,8 @@ def regrade(client, rows, out=print, pool=None, cache_dir=None, judge_model="gpt
         key = hashlib.sha1(f"{REGRADE_VERSION}|{judge_model}|{qid}|{answer}".encode("utf-8")).hexdigest()
         if key not in cache:
             prompt = (f"Question: {by_id[qid]['question']}\n"
-                      f"Reference answer (from the paper the question was written from): {by_id[qid]['answer']}\n"
-                      f"Answer to grade: {answer}\n\nAbstracts of other papers on the topic:\n{evidence[qid]}")
+                      f"Reference answer (from the paper the question was written from): {by_id[qid]['answer']}\n\n"
+                      f"Abstracts of other papers on the topic:\n{evidence[qid]}\n\nAnswer to grade: {answer}")
             step = DQ.judge_call(client, meter, judge_model, [{"role": "system", "content": MULTI_SYSTEM},
                                                               {"role": "user", "content": prompt}])
             try:
@@ -386,8 +387,17 @@ def regrade(client, rows, out=print, pool=None, cache_dir=None, judge_model="gpt
                     f"({(time.time() - started) / fresh[0]:.0f}s each; at most {most} in all, cached ones are free)")
         return cache[key]
 
-    # the controls, on these very questions and their evidence
+    # every verdict on one question in a row: a local judge reads the question's five abstracts once and
+    # reuses them (a hosted one caches the shared prefix too), so only the answer is new in each verdict.
+    # Nothing is reported unless the controls below pass.
     order = DQ.derangement(len(missed))
+    for i, q in enumerate(missed):
+        other = missed[order[i]]
+        for answer in ([by_id[q]["answer"], by_id[other]["answer"], plain[4][other]["answer"]]
+                       + [s[4][q]["answer"] for s in sets if q in s[4]]):
+            grade(q, answer)
+
+    # the controls, on these very questions and their evidence
     n = len(missed)
     checks = {"reference scored 2": [grade(q, by_id[q]["answer"])["score"] == 2 for q in missed],
               "another question's reference scored 0":

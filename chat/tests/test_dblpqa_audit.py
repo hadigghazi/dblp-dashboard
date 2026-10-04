@@ -131,7 +131,7 @@ class Grader:
     def complete(self, messages, model, tools=None, temperature=None, extra=None):
         self.calls += 1
         assert messages[0]["content"] == AU.MULTI_SYSTEM
-        user = messages[1]["content"]
+        user = self.last = messages[1]["content"]
         assert "[1] Nine\nNine abstract." in user, "every answer is graded with the same retrieved abstracts"
         question = user.split("Question: ")[1].split("\n")[0]
         reference = user.split("written from): ")[1].split("\n")[0]
@@ -157,6 +157,8 @@ def test_the_regrade_grades_every_answer_set_alike_after_its_controls(study):
     assert (plain["vs_closed_book"]["better"], plain["vs_closed_book"]["worse"]) == (1, 1)
     assert gated["regraded"]["mean"] == 0.0 and gated["lowered"] == 2 and gated["vs_closed_book"]["worse"] == 1
     assert client.calls == 6 + 5, "six control grades; one answer was already graded as a control"
+    assert "Answer to grade: " in client.last.split("Abstracts of other papers")[1], \
+        "the answer comes last, after the abstracts every verdict on the question shares"
     assert (study / "regrade.json").exists() and any("re-graded" in line for line in lines)
 
     again = Grader()
@@ -168,7 +170,7 @@ def test_a_lenient_regrade_judge_is_stopped_by_its_controls(study):
     client = Grader(lenient=True)
     report = AU.regrade(client, DQ.parse(CSV), out=lambda *_: None, cache_dir=study)
     assert not report["controls"]["passed"] and report["stopped"]
-    assert report["sets"] == [] and client.calls == 6, "no answer was graded by a judge that passes everything"
+    assert report["sets"] == [] and client.calls == 11, "graded question by question, but nothing reported"
 
 
 def test_an_unreadable_regrade_verdict_is_left_out_not_fatal(study):
