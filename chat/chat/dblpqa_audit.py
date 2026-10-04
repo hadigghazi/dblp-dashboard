@@ -316,8 +316,11 @@ def print_report(report, out=print):
 
 # --------------------------------------------------------------------------- the fair re-grade
 
-# 2: the answer comes after the abstracts, so every verdict on one question shares a long prefix
-REGRADE_VERSION = 2
+# The prompt's order. 1 (the method): the answer before the abstracts. 2: the answer after them, so that
+# every verdict on one question shares a long prefix a local judge can reuse - five times faster on a CPU,
+# but with it gpt-4.1 failed the mismatched-reference control (19/21), so it is a reported variant only.
+REGRADE_VERSIONS = {1: "answer before the abstracts", 2: "answer after the abstracts"}
+REGRADE_VERSION = 1
 MULTI_SYSTEM = (
     "You grade answers to questions about computer-science research. Each question was written from one "
     "paper's abstract and comes with that paper's answer (the reference). The question may have other "
@@ -335,10 +338,11 @@ def _condition_order(condition):
     return ({"closed-book": 0}.get(condition, 1), condition)
 
 
-def regrade(client, rows, out=print, pool=None, cache_dir=None, judge_model="gpt-4.1", force=False):
+def regrade(client, rows, out=print, pool=None, cache_dir=None, judge_model="gpt-4.1", force=False,
+            version=REGRADE_VERSION, modes="all"):
     """Every answer set on the questions where retrieval missed the source, graded again against the
     reference and the same retrieved abstracts, after controls; paired with the same model's
-    closed-book answers graded the same way."""
+    closed-book answers graded the same way. modes="plain" keeps closed-book and plain RAG only."""
     cache_dir = Path(cache_dir or DQ.study_dir())
     runs = load_runs(cache_dir / "runs")
     if pool is None:
@@ -359,7 +363,10 @@ def regrade(client, rows, out=print, pool=None, cache_dir=None, judge_model="gpt
         name, closed = latest(runs, "closed-book", model, sampling)
         if closed:
             sets.append(("closed-book", model, sampling, name, closed))
-    sets = sorted(sets + chosen, key=lambda s: (s[2] != "ours", s[1], _condition_order(s[0])))
+    graded = [c for c in chosen if modes == "all" or DQ.rag_parts(c[0])[1] == "plain"]
+    sets = sorted(sets + graded, key=lambda s: (s[2] != "ours", s[1], _condition_order(s[0])))
+    slug = re.sub(r"[^a-z0-9.]+", "-", judge_model.lower())
+    report_path = cache_dir / f"regrade-{slug}-v{version}{'-plain' if modes == 'plain' else ''}.json"
 
     cache_path = cache_dir / "regrade-labels.json"
     cache = _load(cache_path)
@@ -368,11 +375,13 @@ def regrade(client, rows, out=print, pool=None, cache_dir=None, judge_model="gpt
     most = 3 * len(missed) + sum(1 for s in sets for q in missed if q in s[4])
 
     def grade(qid, answer):
-        key = hashlib.sha1(f"{REGRADE_VERSION}|{judge_model}|{qid}|{answer}".encode("utf-8")).hexdigest()
+        key = hashlib.sha1(f"{version}|{judge_model}|{qid}|{answer}".encode("utf-8")).hexdigest()
         if key not in cache:
-            prompt = (f"Question: {by_id[qid]['question']}\n"
-                      f"Reference answer (from the paper the question was written from): {by_id[qid]['answer']}\n\n"
-                      f"Abstracts of other papers on the topic:\n{evidence[qid]}\n\nAnswer to grade: {answer}")
+            head = (f"Question: {by_id[qid]['question']}\n"
+                    f"Reference answer (from the paper the question was written from): {by_id[qid]['answer']}\n")
+            abstracts = f"Abstracts of other papers on the topic:\n{evidence[qid]}"
+            prompt = (f"{head}Answer to grade: {answer}\n\n{abstracts}" if version == 1
+                      else f"{head}\n{abstracts}\n\nAnswer to grade: {answer}")
             step = DQ.judge_call(client, meter, judge_model, [{"role": "system", "content": MULTI_SYSTEM},
                                                               {"role": "user", "content": prompt}])
             try:
@@ -387,15 +396,16 @@ def regrade(client, rows, out=print, pool=None, cache_dir=None, judge_model="gpt
                     f"({(time.time() - started) / fresh[0]:.0f}s each; at most {most} in all, cached ones are free)")
         return cache[key]
 
-    # every verdict on one question in a row: a local judge reads the question's five abstracts once and
-    # reuses them (a hosted one caches the shared prefix too), so only the answer is new in each verdict.
-    # Nothing is reported unless the controls below pass.
     order = DQ.derangement(len(missed))
-    for i, q in enumerate(missed):
-        other = missed[order[i]]
-        for answer in ([by_id[q]["answer"], by_id[other]["answer"], plain[4][other]["answer"]]
-                       + [s[4][q]["answer"] for s in sets if q in s[4]]):
-            grade(q, answer)
+    if version == 2:
+        # every verdict on one question in a row: a local judge reads the question's five abstracts once
+        # and reuses them, so only the answer is new in each verdict. Nothing is reported unless the
+        # controls below pass.
+        for i, q in enumerate(missed):
+            other = missed[order[i]]
+            for answer in ([by_id[q]["answer"], by_id[other]["answer"], plain[4][other]["answer"]]
+                           + [s[4][q]["answer"] for s in sets if q in s[4]]):
+                grade(q, answer)
 
     # the controls, on these very questions and their evidence
     n = len(missed)
@@ -408,14 +418,15 @@ def regrade(client, rows, out=print, pool=None, cache_dir=None, judge_model="gpt
     controls["questions"] = n
     controls["passed"] = all(sum(ok) / n >= 0.95 for ok in checks.values()) if n else False
     cache_path.write_text(json.dumps(cache, indent=1), encoding="utf-8")
-    out(f"re-grade of the {n} questions where retrieval missed the source paper (judge {judge_model}, pool {pool})")
+    out(f"re-grade of the {n} questions where retrieval missed the source paper (judge {judge_model}, pool {pool}, "
+        f"prompt v{version}: {REGRADE_VERSIONS[version]})")
     out("controls: " + "; ".join(f"{name} in {controls[name]}/{n}" for name in checks)
         + f" -> {'PASS' if controls['passed'] else 'FAIL'}")
-    report = {"pool_sha256": pool, "judge": judge_model, "version": REGRADE_VERSION, "missed": missed,
+    report = {"pool_sha256": pool, "judge": judge_model, "version": version, "modes": modes, "missed": missed,
               "controls": controls, "sets": []}
     if not controls["passed"] and not force:
         report.update(stopped="the judge failed its controls", cost_usd=meter.cost())
-        (cache_dir / "regrade.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+        report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
         out("stopped: a judge that fails its controls is not used (--force to grade anyway)")
         return report
 
@@ -439,7 +450,7 @@ def regrade(client, rows, out=print, pool=None, cache_dir=None, judge_model="gpt
                                        "better": sum(d > 0 for d in diffs), "worse": sum(d < 0 for d in diffs)}
         report["sets"].append(entry)
     report["cost_usd"] = meter.cost()
-    (cache_dir / "regrade.json").write_text(json.dumps(dict(report, scores={
+    report_path.write_text(json.dumps(dict(report, scores={
         f"{c}|{m}|{s}": v for (c, m, s), v in regraded.items()}), indent=2), encoding="utf-8")
     print_regrade(report, out)
     return report

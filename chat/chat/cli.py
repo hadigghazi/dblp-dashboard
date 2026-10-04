@@ -121,7 +121,8 @@ def cmd_dblpqa(args):
         rows = rows[:args.limit]
     if args.condition == "crossjudge":
         from . import dblpqa_crossjudge as CJ
-        CJ.run(client, rows, judge_model=args.second_judge, pool=args.pool, modes=args.modes, force=args.force)
+        CJ.run(client, rows, judge_model=args.second_judge, pool=args.pool, modes=args.modes or "plain",
+               force=args.force)
         return
     if args.condition in ("audit", "regrade"):
         from . import dblpqa_audit as AU
@@ -130,7 +131,8 @@ def cmd_dblpqa(args):
         elif args.judge == "none":
             sys.exit("regrade needs a judge")
         else:
-            AU.regrade(client, rows, pool=args.pool, judge_model=args.judge, force=args.force)
+            AU.regrade(client, rows, pool=args.pool, judge_model=args.judge, force=args.force,
+                       version=args.regrade_version, modes=args.modes)
         return
     condition, contexts = args.condition, None
     notes = None
@@ -276,8 +278,12 @@ def main():
                     help="for fresh-build: papers to sample (default 4x --target)")
     dq.add_argument("--second-judge", default="ollama:qwen2.5:14b",
                     help="for crossjudge: the independent judge, normally an open model on the local Ollama")
-    dq.add_argument("--modes", choices=["plain", "all"], default="plain",
-                    help="for crossjudge: plain RAG only, or the permissive and gated runs too")
+    dq.add_argument("--modes", choices=["plain", "all"], default=None,
+                    help="for crossjudge and regrade: plain RAG only, or the permissive and gated runs too "
+                         "(default: plain for crossjudge, all for regrade)")
+    dq.add_argument("--regrade-version", type=int, choices=[1, 2], default=1,
+                    help="for regrade: 1 = answer before the abstracts (the method); 2 = after them (faster "
+                         "on a local judge; a variant, gpt-4.1 failed its controls with it)")
     dq.add_argument("--pool", default=None,
                     help="for audit/regrade: the retrieval pool's fingerprint (default: the latest rag run's)")
     dq.add_argument("--allow-incomplete-pool", action="store_true",

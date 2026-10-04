@@ -157,9 +157,9 @@ def test_the_regrade_grades_every_answer_set_alike_after_its_controls(study):
     assert (plain["vs_closed_book"]["better"], plain["vs_closed_book"]["worse"]) == (1, 1)
     assert gated["regraded"]["mean"] == 0.0 and gated["lowered"] == 2 and gated["vs_closed_book"]["worse"] == 1
     assert client.calls == 6 + 5, "six control grades; one answer was already graded as a control"
-    assert "Answer to grade: " in client.last.split("Abstracts of other papers")[1], \
-        "the answer comes last, after the abstracts every verdict on the question shares"
-    assert (study / "regrade.json").exists() and any("re-graded" in line for line in lines)
+    assert "Answer to grade: " in client.last.split("Abstracts of other papers")[0], \
+        "the method's prompt: the answer before the abstracts"
+    assert (study / "regrade-gpt-4.1-v1.json").exists() and any("re-graded" in line for line in lines)
 
     again = Grader()
     AU.regrade(again, DQ.parse(CSV), out=lambda *_: None, cache_dir=study)
@@ -170,7 +170,7 @@ def test_a_lenient_regrade_judge_is_stopped_by_its_controls(study):
     client = Grader(lenient=True)
     report = AU.regrade(client, DQ.parse(CSV), out=lambda *_: None, cache_dir=study)
     assert not report["controls"]["passed"] and report["stopped"]
-    assert report["sets"] == [] and client.calls == 11, "graded question by question, but nothing reported"
+    assert report["sets"] == [] and client.calls == 6, "no answer was graded by a judge that passes everything"
 
 
 def test_an_unreadable_regrade_verdict_is_left_out_not_fatal(study):
@@ -184,3 +184,14 @@ def test_an_unreadable_regrade_verdict_is_left_out_not_fatal(study):
     report = AU.regrade(Mumbles(), DQ.parse(CSV), out=lambda *_: None, cache_dir=study)
     gated = next(s for s in report["sets"] if s["condition"] == "rag-bm25-gated")
     assert gated["questions"] == 1, "the unreadable verdict is left out of the gated set"
+
+
+def test_the_faster_prompt_variant_and_plain_only_sets(study):
+    """v2 puts the answer after the abstracts and grades each question's answers back to back; with
+    modes="plain" only closed-book and plain RAG are graded. Neither changes the controls."""
+    client = Grader()
+    report = AU.regrade(client, DQ.parse(CSV), out=lambda *_: None, cache_dir=study, version=2, modes="plain")
+    assert [s["condition"] for s in report["sets"]] == ["closed-book", "rag-bm25"]
+    assert "Answer to grade: " in client.last.split("Abstracts of other papers")[1]
+    assert report["controls"]["passed"] and report["version"] == 2
+    assert (study / "regrade-gpt-4.1-v2-plain.json").exists()
