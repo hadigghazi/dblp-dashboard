@@ -1,6 +1,6 @@
 name: Paper
 
-# Builds the DBLP-QA study's paper (CEUR-ART) into a PDF on every change to it, so nobody needs a
+# Builds the DBLP-QA study's paper (IEEE conference template) into a PDF on every change to it, so nobody needs a
 # local TeX installation; the PDF is attached to the run as an artifact.
 on:
   push:

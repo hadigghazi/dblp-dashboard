@@ -36,7 +36,6 @@ models/
 
 # paper build output (the PDF is built by the Paper workflow)
 research/**/*.pdf
-!research/dblpqa-paper/cc-by.pdf
 research/**/*.aux
 research/**/*.bbl
 research/**/*.blg
