@@ -55,18 +55,18 @@ export function PageResearch({ ask }) {
   );
   if (doc.missing || doc.error) {
     return (
-      <>
+      <div className="research">
         {head}
         <section className="card">
           {doc.missing ? <EmptyNote>The paper hasn’t been published on this server yet.</EmptyNote>
             : <div className="cardmsg error" role="alert"><b>Couldn’t load the research page.</b> {doc.error}</div>}
         </section>
-      </>
+      </div>
     );
   }
 
   return (
-    <>
+    <div className="research">
       {head}
       <KpiStrip items={d?.kpis} loading={!d} />
       {!d ? <div className="skel" style={{ height: 320, marginTop: 18 }} /> : (
@@ -113,6 +113,6 @@ export function PageResearch({ ask }) {
           </Card>
         </div>
       )}
-    </>
+    </div>
   );
 }

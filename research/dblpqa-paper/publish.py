@@ -25,7 +25,7 @@ def plain(tex):
     """LaTeX source text to plain text: the few constructs the title and abstract use."""
     for macro, text in MACROS.items():
         tex = tex.replace(macro, text)
-    tex = re.sub(r"%.*", "", tex)                               # comments
+    tex = re.sub(r"(?<!\\)%.*", "", tex)                      # comments - but not \%, a percent sign
     tex = re.sub(r"~?\\cite\{[^}]*\}", "", tex)
     tex = re.sub(r"\\(?:textbf|textit|emph|texttt)\{([^{}]*)\}", r"\1", tex)
     tex = tex.replace(r"\%", "%").replace(r"\&", "&").replace("---", "—").replace("--", "–")
