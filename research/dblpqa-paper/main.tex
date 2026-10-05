@@ -14,6 +14,7 @@
 \usepackage{url}
 \usepackage{pgfplots}
 \pgfplotsset{compat=1.18}
+\usetikzlibrary{positioning,arrows.meta}
 
 %% categorical slots 1-3 of the validated reference palette (light surface), one per answering model;
 %% markers differ too, so the figure survives grey-scale printing and colour-vision deficiencies
@@ -43,8 +44,8 @@ hadigghazi@gmail.com}}
 \begin{abstract}
 DBLP-QA is a benchmark of 50 questions written from the abstracts of computer-science papers. It was
 introduced with RAGScholar, a system that retrieves abstracts with BM25 and answers with small language
-models, and its answers were graded by hand. We re-evaluate it with current models and fully automatic
-grading: a language-model judge applies the benchmark's 0--2 scale and must pass control checks before its
+models, and its answers were graded by hand. We re-evaluate it as part of building Dewey, a
+retrieval-augmented assistant for dblp, with current models and fully automatic grading: a language-model judge applies the benchmark's 0--2 scale and must pass control checks before its
 grades are used, and a second judge from a different model family checks the results. We also build
 \fresh{}, 100 questions of the same kind about papers published after the models were trained. Answering
 is no longer the problem: given the right abstract, every model scores at least 1.96 out of 2. Without any
@@ -54,7 +55,8 @@ decides the score is whether retrieval finds the right paper. Using today's publ
 among the top five results for 58\% of DBLP-QA questions and 89\% of Fresh questions, and the benefit of
 retrieval grows with that rate. When retrieval misses, the wrong papers seem to cost points, but only
 because answers are graded against a single reference answer: once any correct answer counts, neither
-judge finds a cost.
+judge finds a cost. For Dewey, whose search covers paper titles only, the results point to adding search
+over abstracts.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -73,7 +75,14 @@ answers with instruction-tuned models from 1.1B to 14.7B parameters~\cite{neekhr
 Answers were rated by hand on a 0--2 scale; the best configuration, Mistral-7B with the top five
 abstracts concatenated, scored 1.74, against 0.80 without retrieval.
 
-Several questions remain open. The models evaluated are small, so it is unclear how much of the
+This study grew out of building Dewey, a retrieval-augmented assistant for dblp
+(Section~\ref{sec:dewey}). Dewey answers questions about dblp's records, such as who wrote what, where
+and with whom, by calling tools over the full dump, so its answers come from data rather than from a
+model's memory. Questions about what a paper says, the kind \dq{} asks, need the paper's text, which dblp
+does not hold. Before giving Dewey that ability, we wanted to know what retrieval over abstracts adds for
+current models, and how to measure it without grading by hand.
+
+\dq{} leaves several questions open. The models evaluated are small, so it is unclear how much of the
 benchmark a current model answers without retrieval, and whether it does so from general knowledge or
 from having read the papers. Retrieval was evaluated in a closed world: the questions were sampled from
 the very collection that was indexed, and the abstract set behind that index is no longer fully
@@ -95,16 +104,17 @@ Our research questions are:
 \item[RQ5] How robust are the conclusions to the grading protocol and the judge?
 \end{description}
 
-Our contributions are: (i)~an automatic evaluation harness for \dq{}, with an LLM judge on the
-benchmark's own rubric gated by controls, a second judge from another model family, bootstrap intervals,
-paired comparisons and per-question audits; (ii)~\fresh{}, an automatically built companion set of 100
-questions about 2025--2026 papers; (iii)~an open-world reconstruction of retrieval from public services,
-with a frozen candidate pool so that compared runs see identical candidates; (iv)~evidence that
-retrieval success, not generation, now decides performance, and that the models' prior knowledge is
-knowledge of the field rather than memory of the papers; (v)~a demonstration that single-reference
-grading decides how much retrieving the wrong papers appears to cost; and (vi)~an evaluation of two
-selective retrieval strategies. The harness is part of an open dblp exploration system and runs on a
-single CPU machine; all runs together cost under US\$8 in API fees.
+Our contributions are: (i)~Dewey, a tool-calling assistant over the full dblp dump, with an automatic
+evaluation harness for \dq{} built into it: an LLM judge on the benchmark's own rubric gated by
+controls, a second judge from another model family, bootstrap intervals, paired comparisons and
+per-question audits; (ii)~\fresh{}, an automatically built companion set of 100 questions about
+2025--2026 papers; (iii)~an open-world reconstruction of retrieval from public services, with a frozen
+candidate pool so that compared runs see identical candidates; (iv)~evidence that retrieval success, not
+generation, now decides performance, and that the models' prior knowledge is knowledge of the field
+rather than memory of the papers; (v)~a demonstration that single-reference grading decides how much
+retrieving the wrong papers appears to cost; and (vi)~an evaluation of two selective retrieval
+strategies, with what all of this means for Dewey. Dewey and the harness run on a single CPU machine as
+part of an open dblp exploration system; all runs together cost under US\$8 in API fees.
 
 %% ===================================================================================================
 \section{Related Work}
@@ -227,13 +237,62 @@ the same pool. Semantic Scholar's unauthenticated search was saturated: it refus
 search through all retries and 96 of 100 for \fresh{}, so those pools lack its candidates, which on \dq{}
 contained the source for only 8\% of questions.
 
-\subsection{Implementation}
+\subsection{Dewey and the Evaluation Harness}
+\label{sec:dewey}
 
-The harness is a Python module of the dblp Explorer system, run as a batch container next to its
-search and analysis services on one CPU virtual machine. Each experiment is one command; answers are
-written as they are produced, every external response (abstracts, searches, embeddings, judge and gate
-verdicts) is cached, and a run interrupted by an exhausted API credit can be completed later without
-repeating paid calls. The test suite runs every component against simulated services.
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+  font=\scriptsize, node distance=3.2mm,
+  box/.style={draw=inkmuted, rounded corners=2pt, align=center, text width=4.75cm, inner sep=3pt},
+  study/.style={draw=seriesA, dashed, rounded corners=2pt, align=center, text width=2.45cm, inner sep=3pt},
+  arr/.style={-{Stealth[length=1.8mm]}, draw=inkmuted, line width=0.5pt}]
+\node[box] (q) {Question, with the earlier turns of the conversation};
+\node[box, below=of q] (r) {\textbf{gpt-4.1-mini} chooses tools\\(at most 3 rounds and 8 calls)};
+\node[box, below=6mm of r] (t) {\textbf{27 tools over the full dblp dump}\\names to keys $\cdot$ profiles, papers,
+  co-authors $\cdot$ counts, rankings, trends $\cdot$ co-author network $\cdot$ hybrid title search
+  $\cdot$ learned co-author and venue models $\cdot$ read-only SQL};
+\node[box, below=of t] (a) {Answer, by \textbf{gpt-4.1} after two rounds\\grounding check: every number
+  must appear in a tool result};
+\node[study, right=3.5mm of t] (s) {\textbf{Studied here:} search over abstracts and BM25 re-ranking,
+  giving the top five abstracts, the content tool Dewey does not have yet};
+\draw[arr] (q) -- (r);
+\draw[arr] ([xshift=-7mm]r.south) -- node[left, font=\tiny, text=inkmuted] {calls} ([xshift=-7mm]t.north);
+\draw[arr] ([xshift=7mm]t.north) -- node[right, font=\tiny, text=inkmuted] {results} ([xshift=7mm]r.south);
+\draw[arr] (t) -- (a);
+\draw[arr, dashed, draw=seriesA] (s.west) -- (t.east);
+\end{tikzpicture}
+\caption{Dewey, the assistant this study was built for: a tool-calling agent over the dblp dump. Dashed:
+the retrieval over abstracts that this study evaluates, which Dewey does not have yet.}
+\label{fig:dewey}
+\end{figure}
+
+Dewey is the assistant of dblp Explorer, an open system for exploring the dblp dump, and the
+implementation behind this study. It is a tool-calling agent rather than a document-retrieval pipeline
+(Fig.~\ref{fig:dewey}). gpt-4.1-mini reads the question and calls tools; after two rounds of tool calls
+the answer is written by gpt-4.1, with at most three rounds and eight tool calls per question. Its 27
+tools query the full dump through DuckDB: they resolve author and venue names to dblp keys; return
+profiles, paper lists, co-authors, counts, rankings and time series; place authors in the co-authorship
+network; search all paper titles with a hybrid of BM25 and text-embedding-3-large rankings merged by
+reciprocal rank fusion; call two learned models that suggest likely co-authors and venues; and run
+read-only SQL. Before an answer is shown, a grounding check requires every number in it to appear in a
+tool result. Dewey keeps the previous turns for follow-up questions, streams its answers, runs under a
+daily budget, and is checked against a gold set of questions, each listing the tools it must use and,
+for questions outside the data, that it must decline.
+
+What Dewey cannot yet do is answer questions about the content of papers: dblp holds titles, not
+abstracts, and Dewey's paper search covers titles only. This study measures the missing piece on its own.
+Its retrieval pipeline (Section~\ref{sec:retrieval}) uses Dewey's title search as one of its four
+first-stage retrievers, adds abstract search from public services and BM25 re-ranking over abstracts,
+and passes the top abstracts to the model, the configuration a content tool for Dewey would use. We
+evaluate that pipeline directly rather than Dewey end to end, so that retrieval and answering can be
+measured separately.
+
+The evaluation harness is a Python module of the same codebase, run as a batch container next to Dewey's
+services on one CPU virtual machine. Each experiment is one command; answers are written as they are
+produced, every external response (abstracts, searches, embeddings, judge and gate verdicts) is cached,
+and a run interrupted by an exhausted API credit can be completed later without repeating paid calls. The
+test suite runs every component against simulated services.
 
 %% ===================================================================================================
 \section{Results}
@@ -586,6 +645,16 @@ papers than about papers published after their training data. A system's score t
 retriever, its model's general knowledge and the grading protocol more than on how it uses context, the
 aspect the original context strategies were designed to compare.
 
+\textbf{What this means for Dewey.} The results show how to give Dewey questions about paper content.
+Its title search alone finds the source within its top 50 for 32\% of \dq{} questions and 73\% of
+\fresh{} questions; adding abstract search and BM25 re-ranking over abstracts raises the top five to 58\%
+and 89\%, and once the right abstract is in the context the answering model is all but perfect. A content
+tool for Dewey should therefore search abstracts, re-rank them with BM25 (dense and hybrid re-ranking did
+not help), and return the top abstracts. The permissive prompt is a safe default, since it never did
+worse than plain RAG for the strongest model, and if a small local model answers, the relevance gate
+halves its cost at no loss in score. The harness in Dewey's codebase can then measure that tool, and later
+versions of Dewey, in the same way.
+
 \textbf{Recommendations for scholarly RAG benchmarks.} Report closed-book and oracle conditions next to
 retrieval, so that prior knowledge and the generation ceiling are visible. Evaluate retrieval in an open
 world, by the rate at which the source reaches the context, since a closed-world index guarantees the
@@ -619,7 +688,8 @@ oracle's gain that retrieval recovers follows that rate. What retrieving the wro
 depends on the grading: against a single reference it can cancel the gain, while neither of two judges
 from different families finds any cost once correct alternative answers are credited. For scholarly RAG
 evaluation, we recommend reporting closed-book and oracle bounds, open-world source recall,
-multi-reference grading and a second judge.
+multi-reference grading and a second judge. For Dewey, the assistant this study was built for, the path
+to questions about paper content is search over abstracts with BM25 re-ranking.
 
 \section*{Acknowledgment}
 
