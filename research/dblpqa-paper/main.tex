@@ -55,10 +55,10 @@ The original index cannot be rebuilt, so we reconstruct retrieval in the open wo
 search services: the source reaches the top five for 58\% of DBLP-QA questions and 89\% of Fresh
 questions, BM25 comes within two points of the pool's ceiling, and hybrid retrieval does not help. The
 share of the oracle's gain that retrieval recovers tracks that rate. When the source is retrieved, every
-model gains under both judges. When it is missed, the cost of the wrong papers depends on grading:
-against the single reference they cost up to 0.3 points, under a symmetric multi-reference re-grade
-nothing detectable, and the second judge grades them more strictly, which cancels the net gain for the
-GPT models on DBLP-QA.
+model gains under both judges. When it is missed, the cost of the wrong papers depends on grading: graded
+against the single reference they cost up to 0.3 points under the primary judge and up to 0.4 under the
+second, enough to cancel the GPT models' net gain under the latter; graded so that any correct answer
+counts, neither judge detects a cost.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -526,7 +526,8 @@ between the two judges is $-0.05$ for gpt-4.1's answers and $+0.02$ for gpt-4.1-
 
 \begin{table}[t]
 \caption{Paired differences from closed-book on \dq{} under the primary judge (gpt-4.1) and the second
-judge (Qwen2.5-14B). Bold: the 95\% interval excludes zero.}
+judge (Qwen2.5-14B), graded against the single reference, and for the missed questions also by each
+judge's multi-reference re-grade (multi-ref.). Bold: the 95\% interval excludes zero.}
 \label{tab:judges}
 \centering\footnotesize
 \setlength{\tabcolsep}{3pt}
@@ -537,16 +538,19 @@ Model & Contrast (questions) & gpt-4.1 & Qwen2.5-14B \\
 gpt-4.1 & RAG, all (50) & \textbf{$+$0.30} & $+$0.06 \\
  & RAG, source retrieved (29) & \textbf{$+$0.55} & \textbf{$+$0.31} \\
  & RAG, source missed (21) & $-$0.05 & $-$0.29 \\
+ & \quad multi-ref. & $-$0.10 & $+$0.10 \\
  & Oracle (46) & \textbf{$+$0.52} & \textbf{$+$0.33} \\
 \midrule
 gpt-4.1-mini & RAG, all (50) & \textbf{$+$0.32} & $-$0.02 \\
  & RAG, source retrieved (29) & \textbf{$+$0.66} & \textbf{$+$0.24} \\
  & RAG, source missed (21) & $-$0.14 & \textbf{$-$0.38} \\
+ & \quad multi-ref. & $-$0.05 & $-$0.14 \\
  & Oracle (46) & \textbf{$+$0.59} & \textbf{$+$0.26} \\
 \midrule
 Mistral-7B & RAG, all (50) & \textbf{$+$0.56} & $+$0.24 \\
  & RAG, source retrieved (29) & \textbf{$+$0.86} & \textbf{$+$0.66} \\
  & RAG, source missed (21) & $+$0.14 & $-$0.33 \\
+ & \quad multi-ref. & $+$0.10 & $-$0.29 \\
  & Oracle (46) & \textbf{$+$0.96} & \textbf{$+$0.74} \\
 \bottomrule
 \end{tabular}
@@ -556,9 +560,23 @@ Table~\ref{tab:judges} separates what holds from what does not. Under both judge
 with the source retrieved improve significantly on closed-book for every model. On the missed questions
 the judges diverge: graded against the single reference, Qwen penalises answers built on the wrong
 papers more heavily ($-0.29$ to $-0.38$, significant for gpt-4.1-mini), which cancels the net gain of
-plain RAG for the GPT models ($+0.06$ and $-0.02$, intervals spanning zero). The net benefit of RAG on
-\dq{} at 58\% retrieval is therefore a property of how the grader treats correct answers that differ
-from the reference, not only of the system. \pending{multi-reference re-grade by Qwen2.5-14B}
+plain RAG for the GPT models ($+0.06$ and $-0.02$, intervals spanning zero).
+
+Multi-reference grading reconciles the two judges on these questions. Qwen2.5-14B passes the re-grade's
+three controls on the 21 missed questions without error (21/21 each) and, crediting any answer that is
+correct for the question as worded, re-grades the closed-book and plain RAG answers of all three models.
+It then finds no detectable difference from closed-book for any model: $+0.10$ for gpt-4.1 ($-0.24$ to
+$+0.43$), $-0.14$ for gpt-4.1-mini ($-0.38$ to $+0.14$) and $-0.29$ for Mistral-7B ($-0.71$ to
+$+0.14$), against $-0.29$, $-0.38$ and $-0.33$ when it grades against the single reference
+(Table~\ref{tab:judges}). The one significant harm it found disappears; its estimate for Mistral-7B
+stays negative but uncertain, where gpt-4.1's is positive. Under both judges, then, retrieving the wrong
+papers does no detectable harm once correct alternative answers are credited, and the net benefit of
+RAG on \dq{} at 58\% retrieval depends on whether they are.
+
+The controls also guarded the protocol itself. Placing the answer after the abstracts, which lets a local
+judge reuse the abstracts across a question's verdicts and runs five times faster, made gpt-4.1 score
+two of 21 mismatched references above zero (19/21, below the 95\% threshold), so both judges use the
+original order, with the answer before the abstracts.
 
 %% ===================================================================================================
 \section{Discussion}
@@ -601,9 +619,11 @@ how systems use retrieved context: given the source abstract every model is near
 any context strong models already score about 1.4--1.5 of 2, from knowledge of the field rather than
 memory of the papers. What separates systems is whether retrieval finds the source, which in an open
 world succeeds for 58\% of \dq{} questions and 89\% of our fresh, paper-specific ones; the share of the
-oracle's gain that retrieval recovers follows that rate. What retrieving the wrong papers costs depends
-on the grader. For scholarly RAG evaluation, we recommend reporting closed-book and oracle bounds,
-open-world source recall, multi-reference grading and a second judge.
+oracle's gain that retrieval recovers follows that rate. What retrieving the wrong papers appears to cost
+depends on the grading: against a single reference it can cancel the gain, while neither of two judges
+from different families finds any cost once correct alternative answers are credited. For scholarly RAG
+evaluation, we recommend reporting closed-book and oracle bounds, open-world source recall,
+multi-reference grading and a second judge.
 
 \section*{Acknowledgment}
 
@@ -649,8 +669,8 @@ follow as examples.
 \textbf{Judge.} The benchmark's 0--2 scale with the original paper's worked example (its Table~2); it
 grades only against the reference, does not penalise extra correct detail, and does not reward fluency.
 
-\textbf{Multi-reference judge.} The same scale, with the reference and the five retrieved abstracts: 2 if
-the answer matches the reference \emph{or} is an equally valid answer to the question as worded,
-supported by one of the abstracts or established knowledge.
+\textbf{Multi-reference judge.} The same scale, with the reference and the five retrieved abstracts (the
+answer to grade precedes the abstracts): 2 if the answer matches the reference \emph{or} is an equally
+valid answer to the question as worded, supported by one of the abstracts or established knowledge.
 
 \end{document}
