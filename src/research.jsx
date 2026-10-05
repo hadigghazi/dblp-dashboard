@@ -104,9 +104,9 @@ export function PageResearch({ ask }) {
 
           <Card span2 title="Downloads and sources">
             <ul className="srclist">
-              <li><a href={BASE + d.paper.pdf} download>The paper</a> — PDF{d.paper.pages ? `, ${d.paper.pages} pages` : ""}</li>
+              <li><a href={BASE + d.paper.pdf} download>The paper</a> (PDF{d.paper.pages ? `, ${d.paper.pages} pages` : ""})</li>
               <li><a href={BASE + d.paper.bib} download>BibTeX entry</a></li>
-              <li><a href={`${BASE}dblpqa-fresh.csv`} download>DBLP-QA-Fresh</a> — the 100 questions about 2025–2026
+              <li><a href={`${BASE}dblpqa-fresh.csv`} download>DBLP-QA-Fresh</a>: the 100 questions about 2025–2026
                 papers, with their reference answers and dblp keys (CSV), built automatically for the study</li>
               {d.links.map((l) => <li key={l.href}><a href={l.href} target="_blank" rel="noopener">{l.label}</a></li>)}
             </ul>

@@ -31,34 +31,30 @@
 
 \begin{document}
 
-\title{What Does DBLP-QA Measure? General Knowledge, Open-World Retrieval and Single-Reference Grading
-in Retrieval-Augmented Scholarly QA}
+\title{Finding the Paper Is the Hard Part: A Re-evaluation of Retrieval-Augmented Scholarly QA on
+DBLP-QA}
 
 \author{\IEEEauthorblockN{Hadi Ghazi}
 \IEEEauthorblockA{\textit{Lebanese University}\\
-Lebanon\\
 hadigghazi@gmail.com}}
 
 \maketitle
 
 \begin{abstract}
-DBLP-QA is a recent benchmark of 50 questions written from computer-science abstracts, introduced with
-RAGScholar, a system that answers them with BM25 retrieval and small language models, rated by hand. We
-re-evaluate it with a fully automatic, reproducible protocol (an LLM judge on the benchmark's own 0--2
-rubric, checked by controls on every run, a second judge from another model family, bootstrap intervals
-and paired comparisons), and we build \fresh{}, 100 questions of the same kind about papers published
-after the models' training data. Given the source abstract, every model we test, a 7B one included,
-scores at least 1.96 on both sets. Without retrieval GPT-4.1 scores 1.46/2 on DBLP-QA, where an audit
-labels 58\% of the questions general knowledge; on paper-specific questions it scores the same on old
-and new papers (1.00 vs 1.02), so the models draw on knowledge of the field, not memory of the papers.
-The original index cannot be rebuilt, so we reconstruct retrieval in the open world from four public
-search services: the source reaches the top five for 58\% of DBLP-QA questions and 89\% of Fresh
-questions, BM25 comes within two points of the pool's ceiling, and hybrid retrieval does not help. The
-share of the oracle's gain that retrieval recovers tracks that rate. When the source is retrieved, every
-model gains under both judges. When it is missed, the cost of the wrong papers depends on grading: graded
-against the single reference they cost up to 0.3 points under the primary judge and up to 0.4 under the
-second, enough to cancel the GPT models' net gain under the latter; graded so that any correct answer
-counts, neither judge detects a cost.
+DBLP-QA is a benchmark of 50 questions written from the abstracts of computer-science papers. It was
+introduced with RAGScholar, a system that retrieves abstracts with BM25 and answers with small language
+models, and its answers were graded by hand. We re-evaluate it with current models and fully automatic
+grading: a language-model judge applies the benchmark's 0--2 scale and must pass control checks before its
+grades are used, and a second judge from a different model family checks the results. We also build
+\fresh{}, 100 questions of the same kind about papers published after the models were trained. Answering
+is no longer the problem: given the right abstract, every model scores at least 1.96 out of 2. Without any
+retrieval, GPT-4.1 already scores 1.46, because most DBLP-QA questions ask about general knowledge; on
+questions about a specific paper, the models know no more about older papers than about new ones. What
+decides the score is whether retrieval finds the right paper. Using today's public search services, it is
+among the top five results for 58\% of DBLP-QA questions and 89\% of Fresh questions, and the benefit of
+retrieval grows with that rate. When retrieval misses, the wrong papers seem to cost points, but only
+because answers are graded against a single reference answer: once any correct answer counts, neither
+judge finds a cost.
 \end{abstract}
 
 \begin{IEEEkeywords}

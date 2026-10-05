@@ -1,6 +1,6 @@
 {
   "page_title": "What does retrieval add? Re-evaluating DBLP-QA",
-  "lede": "Dewey answers questions about dblp by retrieving before it answers. This study asks how much retrieval actually helps on DBLP-QA, a scholarly QA benchmark built by dblp's own team - graded automatically, repeatably, and by two judges from different model families.",
+  "lede": "Dewey answers questions about dblp by retrieving before it answers. This study asks how much retrieval actually helps on DBLP-QA, a scholarly QA benchmark built by dblp's own team. Every answer is graded automatically and repeatably, by two judges from different model families.",
   "kpis": [
     {"n": "≥ 1.96 / 2", "l": "every model, given the right abstract"},
     {"n": "58%", "l": "of DBLP-QA questions are general knowledge"},
@@ -11,12 +11,12 @@
     {"title": "Answering is solved; finding is not",
      "text": "Given the abstract a question was written from, gpt-4.1, gpt-4.1-mini and Mistral-7B all score at least 1.96 of 2, on both question sets. What still separates systems is whether retrieval finds that abstract."},
     {"title": "Models know the field, not the papers",
-     "text": "Without retrieval gpt-4.1 scores 1.46 on DBLP-QA, where 58% of questions are general knowledge. On 100 new questions about 2025-2026 papers it scores 1.04 - but on paper-specific questions it scores the same on old and new papers (1.00 vs 1.02), so the models were not remembering DBLP-QA's papers."},
+     "text": "Without retrieval gpt-4.1 scores 1.46 on DBLP-QA, where 58% of questions are general knowledge. On 100 new questions about 2025–2026 papers it scores 1.04, but on paper-specific questions it scores the same on old and new papers (1.00 vs 1.02), so the models were not remembering DBLP-QA's papers."},
     {"title": "In the open world, BM25 is enough",
      "text": "The original index cannot be rebuilt, so retrieval was reconstructed from four public search services. The right paper reaches the top five for 58% of DBLP-QA questions and 89% of the new ones; BM25 gets within two points of the candidates' ceiling, and hybrid retrieval adds nothing."},
     {"title": "The gain follows retrieval success",
      "text": "The share of the right abstract's gain that RAG recovers tracks how often retrieval finds it: about 56% at 58% retrieval, about 82% at 89%, for every model."},
-    {"title": "Wrong papers do not hurt - single-reference grading does",
+    {"title": "It is the grading, not the wrong papers",
      "text": "Graded against the one reference answer, wrong papers seem to cost up to 0.4 points. Graded so that any correct answer counts, after controls, neither judge finds a measurable cost: the models give different correct answers, not wrong ones."},
     {"title": "Selective retrieval saves time, not accuracy",
      "text": "A prompt that allows ignoring irrelevant abstracts helps only gpt-4.1, slightly. A relevance gate does not improve accuracy, but a 7B model reading 1.7 abstracts instead of 5 answers twice as fast at the same score."}
@@ -48,7 +48,7 @@
     ]
   },
   "dewey": [
-    "Dewey answers questions about dblp's records - people, venues, counts, co-authors - by calling tools over the full dump, so its answers come from data, not from memory. Questions about what a paper says are the harder case this study measures.",
+    "Dewey answers questions about dblp's records (people, venues, counts, co-authors) by calling tools over the full dump, so its answers come from data, not from memory. Questions about what a paper says are the harder case this study measures.",
     "Dewey's paper search is the study's dblp-search: a hybrid search over every dblp title. On its own it finds the right paper within its top 50 for 32% of DBLP-QA questions and 73% of the fresh ones; adding abstract search (OpenAlex) and BM25 re-ranking over abstracts lifts the top five to 58% and 89%.",
     "The study's evaluation harness lives in the same codebase as Dewey and runs on the same machine, so the next version of Dewey can be measured the same way."
   ],
