@@ -1,16 +1,22 @@
 name: Paper
 
-# Builds the DBLP-QA study's paper (IEEE conference template) into a PDF on every change to it, so nobody needs a
-# local TeX installation; the PDF is attached to the run as an artifact.
+# Builds the DBLP-QA study's paper (IEEE conference template) into a PDF on every change to it, so nobody
+# needs a local TeX installation, and publishes it on the site's research page: the PDF, a BibTeX entry
+# and paper.json (title and abstract read from main.tex, the rest from site.json) go to the VM's
+# /downloads/research/dblpqa/, which the page reads. Changing the paper is all it takes to update the page.
 on:
   push:
     branches: [main]
     paths: ["research/dblpqa-paper/**", ".github/workflows/paper.yml"]
   workflow_dispatch:
 
+concurrency: paper-publish
+
 jobs:
   pdf:
     runs-on: ubuntu-latest
+    env:
+      HAS_HOST: ${{ secrets.VM_HOST != '' }}
     steps:
       - uses: actions/checkout@v4
       - name: Build with latexmk (pdflatex + bibtex)
@@ -24,3 +30,33 @@ jobs:
           name: dblpqa-paper
           path: research/dblpqa-paper/main.pdf
           if-no-files-found: error
+
+      - name: Prepare the research page's files
+        run: |
+          PAPER_DATE="$(git log -1 --format=%cI)" PAPER_COMMIT="$GITHUB_SHA" \
+            python3 research/dblpqa-paper/publish.py research/dblpqa-paper site-out
+          ls -la site-out
+
+      - name: Publish on the site
+        if: github.ref == 'refs/heads/main' && env.HAS_HOST == 'true'
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.VM_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.VM_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          VM="${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}"
+          # relative to the deploying user's home; nginx serves models/downloads at /downloads/
+          ssh -i ~/.ssh/deploy_key "$VM" 'rm -rf dblp-dashboard/models/downloads/research/dblpqa.incoming && mkdir -p dblp-dashboard/models/downloads/research/dblpqa.incoming'
+          scp -i ~/.ssh/deploy_key site-out/* "$VM:dblp-dashboard/models/downloads/research/dblpqa.incoming/"
+          ssh -i ~/.ssh/deploy_key "$VM" bash -s <<'EOF'
+          set -e
+          cd dblp-dashboard/models/downloads/research
+          # the DBLP-QA-Fresh questions live on the VM, where they were built
+          if [ -f ../../dblpqa-fresh/fresh.csv ]; then cp ../../dblpqa-fresh/fresh.csv dblpqa.incoming/dblpqa-fresh.csv; fi
+          # swap the whole folder at once, so the page never sees a new PDF with an old paper.json
+          rm -rf dblpqa.previous
+          if [ -d dblpqa ]; then mv dblpqa dblpqa.previous; fi
+          mv dblpqa.incoming dblpqa
+          rm -rf dblpqa.previous
+          ls -la dblpqa
+          EOF

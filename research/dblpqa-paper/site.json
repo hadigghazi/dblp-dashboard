@@ -1,0 +1,59 @@
+{
+  "page_title": "What does retrieval add? Re-evaluating DBLP-QA",
+  "lede": "Dewey answers questions about dblp by retrieving before it answers. This study asks how much retrieval actually helps on DBLP-QA, a scholarly QA benchmark built by dblp's own team - graded automatically, repeatably, and by two judges from different model families.",
+  "kpis": [
+    {"n": "≥ 1.96 / 2", "l": "every model, given the right abstract"},
+    {"n": "58%", "l": "of DBLP-QA questions are general knowledge"},
+    {"n": "58% · 89%", "l": "right paper in the top five (DBLP-QA · Fresh)"},
+    {"n": "0", "l": "detectable harm from wrong papers, once correct alternatives count"}
+  ],
+  "findings": [
+    {"title": "Answering is solved; finding is not",
+     "text": "Given the abstract a question was written from, gpt-4.1, gpt-4.1-mini and Mistral-7B all score at least 1.96 of 2, on both question sets. What still separates systems is whether retrieval finds that abstract."},
+    {"title": "Models know the field, not the papers",
+     "text": "Without retrieval gpt-4.1 scores 1.46 on DBLP-QA, where 58% of questions are general knowledge. On 100 new questions about 2025-2026 papers it scores 1.04 - but on paper-specific questions it scores the same on old and new papers (1.00 vs 1.02), so the models were not remembering DBLP-QA's papers."},
+    {"title": "In the open world, BM25 is enough",
+     "text": "The original index cannot be rebuilt, so retrieval was reconstructed from four public search services. The right paper reaches the top five for 58% of DBLP-QA questions and 89% of the new ones; BM25 gets within two points of the candidates' ceiling, and hybrid retrieval adds nothing."},
+    {"title": "The gain follows retrieval success",
+     "text": "The share of the right abstract's gain that RAG recovers tracks how often retrieval finds it: about 56% at 58% retrieval, about 82% at 89%, for every model."},
+    {"title": "Wrong papers do not hurt - single-reference grading does",
+     "text": "Graded against the one reference answer, wrong papers seem to cost up to 0.4 points. Graded so that any correct answer counts, after controls, neither judge finds a measurable cost: the models give different correct answers, not wrong ones."},
+    {"title": "Selective retrieval saves time, not accuracy",
+     "text": "A prompt that allows ignoring irrelevant abstracts helps only gpt-4.1, slightly. A relevance gate does not improve accuracy, but a 7B model reading 1.7 abstracts instead of 5 answers twice as fast at the same score."}
+  ],
+  "results": {
+    "caption": "Mean score (0-2) graded by gpt-4.1. RAG: BM25 over a frozen candidate pool, top five abstracts. Oracle: the abstract the question was written from.",
+    "columns": ["Model", "Set", "No retrieval", "RAG", "Right abstract"],
+    "rows": [
+      ["gpt-4.1", "DBLP-QA (50)", "1.46", "1.76", "1.98"],
+      ["gpt-4.1-mini", "DBLP-QA (50)", "1.40", "1.72", "2.00"],
+      ["Mistral-7B", "DBLP-QA (50)", "1.04", "1.60", "1.98"],
+      ["gpt-4.1", "Fresh (100)", "1.04", "1.82", "1.99"],
+      ["gpt-4.1-mini", "Fresh (100)", "0.96", "1.82", "1.99"],
+      ["Mistral-7B", "Fresh (100)", "0.78", "1.73", "1.96"]
+    ]
+  },
+  "recovery": {
+    "caption": "The share of the right abstract's gain over no retrieval that plain RAG recovers, against how often the right paper reaches the context (gpt-4.1 judge). The dashed line is where the two are equal.",
+    "points": [
+      {"model": "gpt-4.1", "where": "DBLP-QA, earlier pool", "x": 36, "y": 0.154},
+      {"model": "gpt-4.1", "where": "DBLP-QA, frozen pool", "x": 58, "y": 0.577},
+      {"model": "gpt-4.1", "where": "DBLP-QA-Fresh", "x": 89, "y": 0.821},
+      {"model": "gpt-4.1-mini", "where": "DBLP-QA, earlier pool", "x": 36, "y": 0.136},
+      {"model": "gpt-4.1-mini", "where": "DBLP-QA, frozen pool", "x": 58, "y": 0.542},
+      {"model": "gpt-4.1-mini", "where": "DBLP-QA-Fresh", "x": 89, "y": 0.835},
+      {"model": "Mistral-7B", "where": "DBLP-QA, earlier pool", "x": 38, "y": 0.396},
+      {"model": "Mistral-7B", "where": "DBLP-QA, frozen pool", "x": 58, "y": 0.583},
+      {"model": "Mistral-7B", "where": "DBLP-QA-Fresh", "x": 89, "y": 0.805}
+    ]
+  },
+  "dewey": [
+    "Dewey answers questions about dblp's records - people, venues, counts, co-authors - by calling tools over the full dump, so its answers come from data, not from memory. Questions about what a paper says are the harder case this study measures.",
+    "Dewey's paper search is the study's dblp-search: a hybrid search over every dblp title. On its own it finds the right paper within its top 50 for 32% of DBLP-QA questions and 73% of the fresh ones; adding abstract search (OpenAlex) and BM25 re-ranking over abstracts lifts the top five to 58% and 89%.",
+    "The study's evaluation harness lives in the same codebase as Dewey and runs on the same machine, so the next version of Dewey can be measured the same way."
+  ],
+  "links": [
+    {"label": "RAGScholar & DBLP-QA (the original paper)", "href": "https://ceur-ws.org/Vol-4187/short-06.pdf"},
+    {"label": "DBLP-QA dataset (the original 50 questions)", "href": "https://seafile.rlp.net/f/6581519cdd1d4782bccc/"}
+  ]
+}

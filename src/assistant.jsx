@@ -556,6 +556,11 @@ export function DeweyPanel({ open, onClose, go, onBusy }) {
                   <p className="introrole">{DEWEY.role}</p>
                   <p className="intropitch">{DEWEY.greeting}</p>
                   <Suggestions examples={d?.examples} ask={ask} />
+                  <p className="introfoot">
+                    <a href="#research" onClick={(e) => { e.preventDefault(); onClose(); go("research"); }}>
+                      How much does retrieval help an assistant like {DEWEY.name}? Read the study →
+                    </a>
+                  </p>
                 </div>
               ) : (
                 <div className="thread">

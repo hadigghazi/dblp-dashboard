@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { PageOverview, PagePublishing, PageIdentity, PageNetwork, PageDatasheet, PageTitles, PageVenues, PageQuality, PageEnrichment, PageTails } from "./pages.jsx";
 import { PageAuthors, PageVenueExplorer, PagePapers } from "./explore.jsx";
 import { PageDisambiguation, PageCollaborators, PageWhereToPublish } from "./ml.jsx";
+import { PageResearch } from "./research.jsx";
 import { DeweyButton, DeweyPanel, ASSISTANT_NAME } from "./assistant.jsx";
 import { useStatus } from "./api.js";
 
@@ -21,6 +22,7 @@ const PAGES = [
   { id: "disambiguation", no: "M1", label: "Disambiguation", group: "Machine learning", Comp: PageDisambiguation },
   { id: "collaborators", no: "M2", label: "Next co-authors", group: "Machine learning", Comp: PageCollaborators },
   { id: "where-to-publish", no: "M3", label: "Where to publish", group: "Machine learning", Comp: PageWhereToPublish },
+  { id: "research", no: "R1", label: "Dewey & DBLP-QA", group: "Research", Comp: PageResearch },
   // reached from the network page's download card rather than from the menu; while it is open the
   // menu keeps the network page highlighted, since that is where the reader is
   { id: "datasheet", label: "Datasheet", hidden: true, parent: "network", Comp: PageDatasheet },
@@ -117,7 +119,7 @@ export default function App() {
         </nav>
       </aside>
       <main>
-        <current.Comp key={current.id} params={route.params} go={go} status={status} />
+        <current.Comp key={current.id} params={route.params} go={go} status={status} ask={() => setAskOpen(true)} />
       </main>
       <DeweyButton onClick={() => setAskOpen(true)} hidden={askOpen} busy={askBusy} />
       <DeweyPanel open={askOpen} onClose={() => setAskOpen(false)} go={go} onBusy={setAskBusy} />

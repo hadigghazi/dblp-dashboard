@@ -312,6 +312,40 @@ export function scatterOption(p, { series, xName, yName, fmtX, fmtY, labelTop = 
 }
 
 /**
+ * The research page's figure: per model, the share of the oracle's gain that RAG recovers against how
+ * often retrieval puts the right paper in the context, with the line where the two are equal.
+ * series: [{name, color, data: [{x (0-100), y (0-1), where}]}]
+ */
+export function recoveryOption(p, { series, xName, yName }) {
+  const names = [...series.map((s) => s.name), "equal shares"];
+  return {
+    ...base(p, { legend: true, legendNames: names }),
+    grid: { left: 44, right: 22, top: 40, bottom: 34, containLabel: true },
+    tooltip: { ...base(p).tooltip, trigger: "item",
+      formatter: (d) => `<b>${d.seriesName}</b> · ${d.data.where}<br/>right paper in the context: ${d.data.value[0]}%`
+        + `<br/>share of the right abstract's gain recovered: ${Math.round(d.data.value[1] * 100)}%` },
+    xAxis: { type: "value", min: 0, max: 100, interval: 20, name: xName, nameLocation: "middle", nameGap: 26,
+             nameTextStyle: { color: p.muted, fontSize: 11.5 },
+             axisLine: { lineStyle: { color: p.rule } }, axisTick: { show: false },
+             axisLabel: { color: p.muted, fontSize: 11, formatter: (v) => `${v}%` }, splitLine: { lineStyle: { color: p.rule } } },
+    yAxis: { type: "value", min: 0, max: 1, interval: 0.2, name: yName, nameLocation: "middle", nameGap: 40, nameRotate: 90,
+             nameTextStyle: { color: p.muted, fontSize: 11.5 }, axisLine: { show: false }, axisTick: { show: false },
+             axisLabel: { color: p.muted, fontSize: 11, formatter: fmt.frac }, splitLine: { lineStyle: { color: p.rule } } },
+    series: [
+      ...series.map((s) => ({
+        type: "line", name: s.name, symbol: "circle", symbolSize: 9,
+        data: s.data.map((d) => ({ value: [d.x, d.y], where: d.where })),
+        lineStyle: { width: 2, color: s.color }, itemStyle: { color: s.color, borderColor: p.surface, borderWidth: 2 },
+        emphasis: { focus: "series", lineStyle: { width: 2.5 } },
+      })),
+      { type: "line", name: "equal shares", data: [[0, 0], [100, 1]], symbol: "none", silent: true,
+        tooltip: { show: false }, itemStyle: { color: p.muted },
+        lineStyle: { color: p.muted, width: 1, type: "dashed" } },
+    ],
+  };
+}
+
+/**
  * 2-D density on log-log axes: a grid of log10 bins drawn as cells on a sequential ramp (colour is log of the
  * count, since counts span many orders of magnitude), with iso-count contours (marching squares) on top.
  * grid[y][x] = count; bin i covers 10^(i/b) .. 10^((i+1)/b).
