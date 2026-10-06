@@ -464,11 +464,22 @@ def rank(query, cands):
     if not docs:
         return []
     ranking = RAG.bm25_rank(query, docs)
+    index = sorted((k for k in docs if cands[k].get("dx_rank")), key=lambda k: cands[k]["dx_rank"])
+    if not index or config.CONTENT_FUSION not in ("rrf", "rrf-impute"):
+        return ranking
     if config.CONTENT_FUSION == "rrf":
-        index = sorted((k for k in docs if cands[k].get("dx_rank")), key=lambda k: cands[k]["dx_rank"])
-        if index:
-            return RAG.rrf([ranking, index])
-    return ranking
+        return RAG.rrf([ranking, index])
+    # version 3.1: a paper the index does not hold (newer than its snapshot, or without an abstract
+    # there) takes its pool rank as its index rank; a paper the index holds but did not return stays
+    # behind every one it did return
+    held = set(AI.lookup([k for k in ranking if k not in index])) if len(index) < len(ranking) else set()
+    pos = {k: i for i, k in enumerate(ranking, 1)}
+    second = {k: cands[k]["dx_rank"] for k in index}
+    for k in ranking:
+        if k not in second:
+            second[k] = pos[k] if k not in held else len(index) + pos[k]
+    score = {k: 1 / (RAG.RRF_K + pos[k]) + 1 / (RAG.RRF_K + second[k]) for k in ranking}
+    return sorted(ranking, key=lambda k: (-score[k], k))
 
 
 def search_abstracts(ctx, question=None, keys=None, frm=None, to=None):

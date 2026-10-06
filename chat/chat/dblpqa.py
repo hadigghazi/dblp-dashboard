@@ -44,7 +44,9 @@ DATASET_URL = "https://seafile.rlp.net/f/6581519cdd1d4782bccc/?dl=1"
 # from its first version's failures on dblpqa and fresh, so it is measured on questions never looked at
 DATASETS = {"dblpqa": {"dir": "dblpqa", "file": "dblp-qa.csv", "url": DATASET_URL},
             "fresh": {"dir": "dblpqa-fresh", "file": "fresh.csv", "url": None},
-            "fresh2": {"dir": "dblpqa-fresh2", "file": "fresh.csv", "url": None}}
+            "fresh2": {"dir": "dblpqa-fresh2", "file": "fresh.csv", "url": None},
+            # fresh3: held out from version 3.1, which was designed after Fresh-2's results were seen
+            "fresh3": {"dir": "dblpqa-fresh3", "file": "fresh.csv", "url": None}}
 DATASET = "dblpqa"
 
 

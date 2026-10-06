@@ -100,9 +100,11 @@ CONTENT_WRITER = os.environ.get("CHAT_CONTENT_WRITER", MODEL_DEEP)
 CONTENT_LOCAL_INDEX = os.environ.get("CHAT_CONTENT_LOCAL_INDEX", "1") != "0"
 CONTENT_SEARCH = os.environ.get("CHAT_CONTENT_SEARCH", "live")
 # how the pool is ordered: "pool" = BM25 with the pool's own statistics, as the study did; "rrf" = that
-# fused with the index's whole-corpus order (reciprocal rank fusion), when the index took part. Chosen
-# on DBLP-QA and Fresh before the held-out set: R@1 .71 against .62, R@5 .78 against .77 (150 questions)
-CONTENT_FUSION = os.environ.get("CHAT_CONTENT_FUSION", "rrf")
+# fused with the index's whole-corpus order (reciprocal rank fusion). "rrf" was chosen on DBLP-QA and
+# Fresh, and lost to version 2 on the held-out Fresh-2: a paper newer than the snapshot is in no index
+# list, so papers in both lists outranked it. "rrf-impute" (version 3.1) gives a paper the index does
+# not hold its pool rank in place of the index rank it cannot have.
+CONTENT_FUSION = os.environ.get("CHAT_CONTENT_FUSION", "pool")
 
 
 def configured() -> bool:

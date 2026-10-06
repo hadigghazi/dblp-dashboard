@@ -218,7 +218,8 @@ def cmd_dblpqa(args):
         ctx = _ready()
         variants = {"live": "dewey", "frozen": "dewey-frozen", "v0": "dewey-v0", "v2": "dewey-v2",
                     "v2-frozen": "dewey-v2-frozen", "v3": "dewey-v3", "v3-local": "dewey-v3-local",
-                    "v3-poolrank": "dewey-v3-poolrank", "v3-local-poolrank": "dewey-v3-local-poolrank"}
+                    "v3-poolrank": "dewey-v3-poolrank", "v3-local-poolrank": "dewey-v3-local-poolrank",
+                    "v31": "dewey-v31", "v31-local": "dewey-v31-local"}
         if args.condition == "dewey-retrieval":
             # without --variant: the search as deployed
             DW.retrieval_check(ctx, rows, allow_incomplete=args.allow_incomplete_pool,
@@ -417,7 +418,7 @@ def main():
                          "question alone (--models)")
     dq.add_argument("--seed", type=int, default=7, help="for structured-build: which questions are drawn")
     dq.add_argument("--variant", choices=["live", "frozen", "v0", "v2", "v2-frozen", "v3", "v3-local", "v3-poolrank",
-                                          "v3-local-poolrank"], default=None,
+                                          "v3-local-poolrank", "v31", "v31-local"], default=None,
                     help="for dewey (default live): live = the first content tool (v1), searching live; frozen = "
                          "v1 ranking the study's frozen pool; v0 = before the abstract search (declines content "
                          "questions); v2 = the second version; v2-frozen = v2 on the frozen pool; v3 = v2 with "
@@ -442,7 +443,7 @@ def main():
                     help="for rag: permissive = told the abstracts may be off-topic; gated = a relevance "
                          "check keeps only abstracts that address the question (none kept = closed-book)")
     dq.add_argument("--gate-model", default="gpt-4.1-mini", help="for --mode gated")
-    dq.add_argument("--dataset", choices=["dblpqa", "fresh", "fresh2"], default="dblpqa",
+    dq.add_argument("--dataset", choices=["dblpqa", "fresh", "fresh2", "fresh3"], default="dblpqa",
                     help="the original 50 questions, DBLP-QA-Fresh, or the held-out Fresh set (fresh-build "
                          "builds either)")
     dq.add_argument("--target", type=int, default=100, help="for fresh-build: questions to keep")

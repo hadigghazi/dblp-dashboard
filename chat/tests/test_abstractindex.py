@@ -193,3 +193,18 @@ def test_rrf_fuses_the_pools_bm25_with_the_index_order(monkeypatch):
     assert content.rank("traffic forecasting", cands)[0] == "c"
     monkeypatch.setattr(config, "CONTENT_FUSION", "rrf")
     assert content.rank("traffic forecasting", cands) == ["b", "a", "c"]
+
+
+def test_v31_keeps_a_paper_the_index_lacks_at_its_live_rank(monkeypatch):
+    """Fresh-2's failure: the newest paper, first in the live search, is in no index list."""
+    cands = {"new": {"title": "traffic forecasting traffic forecasting"},       # newer than the snapshot
+             "b": {"title": "traffic notes", "dx_rank": 1},
+             "a": {"title": "forecasting", "dx_rank": 2}}
+    monkeypatch.setattr(content.AI, "lookup", lambda keys: {})
+    monkeypatch.setattr(config, "CONTENT_FUSION", "rrf")
+    assert content.rank("traffic forecasting", cands)[0] == "b", "plain RRF buries it"
+    monkeypatch.setattr(config, "CONTENT_FUSION", "rrf-impute")
+    assert content.rank("traffic forecasting", cands)[0] == "new"
+    # held by the index but not returned by it: no imputed rank
+    monkeypatch.setattr(content.AI, "lookup", lambda keys: {k: {} for k in keys})
+    assert content.rank("traffic forecasting", cands)[0] != "new"

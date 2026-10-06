@@ -35,8 +35,8 @@ from . import dblpqa as DQ, dblpqa_rag as RAG
 FIRST_YEAR = 2025
 SEED = "dblpqa-fresh-1"
 # each Fresh set has its own seed and its own id prefix, and never reuses another's papers
-SEEDS = {"fresh": SEED, "fresh2": "dblpqa-fresh-2"}
-PREFIX = {"fresh": "fq", "fresh2": "hq"}
+SEEDS = {"fresh": SEED, "fresh2": "dblpqa-fresh-2", "fresh3": "dblpqa-fresh-3"}
+PREFIX = {"fresh": "fq", "fresh2": "hq", "fresh3": "tq"}
 GENERATOR = "gpt-4.1"
 CHECKER = "gpt-4.1-mini"
 MIN_WORDS = 80

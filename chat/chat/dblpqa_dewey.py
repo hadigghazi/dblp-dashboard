@@ -42,7 +42,7 @@ from .llm import LLMError
 log = logging.getLogger("dblp.chat.dblpqa_dewey")
 
 VARIANTS = ("dewey", "dewey-frozen", "dewey-v0", "dewey-v2", "dewey-v2-frozen", "dewey-v3", "dewey-v3-local",
-            "dewey-v3-poolrank", "dewey-v3-local-poolrank")
+            "dewey-v3-poolrank", "dewey-v3-local-poolrank", "dewey-v31", "dewey-v31-local")
 MODEL = "dewey"
 # What each variant is: its content path's settings, applied for the run and restored after it, so any
 # version can be measured from one build. "dewey" is the first content tool (version 1); "dewey-v2" the
@@ -58,7 +58,10 @@ V3_LOCAL = dict(V3, CONTENT_SEARCH="local", CONTENT_FALLBACK=False)
 SETTINGS = {"dewey": V1, "dewey-frozen": V1, "dewey-v0": dict(V1, CONTENT_TOOL=False), "dewey-v2": V2,
             "dewey-v2-frozen": V2, "dewey-v3": V3, "dewey-v3-local": V3_LOCAL,
             "dewey-v3-poolrank": dict(V3, CONTENT_FUSION="pool"),
-            "dewey-v3-local-poolrank": dict(V3_LOCAL, CONTENT_FUSION="pool")}
+            "dewey-v3-local-poolrank": dict(V3_LOCAL, CONTENT_FUSION="pool"),
+            # version 3.1, after the held-out Fresh-2: papers the index lacks keep their live rank
+            "dewey-v31": dict(V3, CONTENT_FUSION="rrf-impute"),
+            "dewey-v31-local": dict(V3_LOCAL, CONTENT_FUSION="rrf-impute")}
 CITE = re.compile(r"\[(\d+)\]")
 # what each Dewey run is set beside: (label, condition, model, sampling, on the same pool)
 BASELINES = [
@@ -78,6 +81,8 @@ BASELINES = [
     ("plain RAG over Dewey's index, gpt-4.1-mini", "rag-dewey-index", "gpt-4.1-mini", "ours", True),
     ("Dewey v3", "dewey-v3", MODEL, "ours", False),
     ("Dewey v3, local only", "dewey-v3-local", MODEL, "ours", False),
+    ("Dewey v3.1", "dewey-v31", MODEL, "ours", False),
+    ("Dewey v3.1, local only", "dewey-v31-local", MODEL, "ours", False),
 ]
 
 
