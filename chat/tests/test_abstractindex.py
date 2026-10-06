@@ -183,3 +183,13 @@ def test_the_index_is_a_ranker_of_its_own_beside_the_frozen_pool(built, tmp_path
     AI.forget()
     again = RAG.index_pools(rows, {"q1": dict(pools["q1"])}, oracle, tmp_path)
     assert list(again["q1"]["candidates"]) == list(found["q1"]["candidates"])
+
+
+def test_rrf_fuses_the_pools_bm25_with_the_index_order(monkeypatch):
+    cands = {"c": {"title": "traffic forecasting traffic forecasting"},         # live search only
+             "b": {"title": "traffic notes", "dx_rank": 1},                      # the index's first
+             "a": {"title": "forecasting", "dx_rank": 2}}
+    monkeypatch.setattr(config, "CONTENT_FUSION", "pool")
+    assert content.rank("traffic forecasting", cands)[0] == "c"
+    monkeypatch.setattr(config, "CONTENT_FUSION", "rrf")
+    assert content.rank("traffic forecasting", cands) == ["b", "a", "c"]

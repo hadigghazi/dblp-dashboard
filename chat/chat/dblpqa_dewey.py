@@ -41,19 +41,23 @@ from .llm import LLMError
 
 log = logging.getLogger("dblp.chat.dblpqa_dewey")
 
-VARIANTS = ("dewey", "dewey-frozen", "dewey-v0", "dewey-v2", "dewey-v2-frozen", "dewey-v3", "dewey-v3-local")
+VARIANTS = ("dewey", "dewey-frozen", "dewey-v0", "dewey-v2", "dewey-v2-frozen", "dewey-v3", "dewey-v3-local",
+            "dewey-v3-rrf", "dewey-v3-local-rrf")
 MODEL = "dewey"
 # What each variant is: its content path's settings, applied for the run and restored after it, so any
 # version can be measured from one build. "dewey" is the first content tool (version 1); "dewey-v2" the
 # second, built from where the first lost points.
 V1 = {"CONTENT_TOOL": True, "CONTENT_RULE_VERSION": 1, "CONTENT_WRITER": "", "CONTENT_FALLBACK": False,
-      "CONTENT_LOCAL_INDEX": False, "CONTENT_SEARCH": "live"}
+      "CONTENT_LOCAL_INDEX": False, "CONTENT_SEARCH": "live", "CONTENT_FUSION": "pool"}
 V2 = {"CONTENT_TOOL": True, "CONTENT_RULE_VERSION": 2, "CONTENT_WRITER": "gpt-4.1", "CONTENT_FALLBACK": True,
-      "CONTENT_LOCAL_INDEX": False, "CONTENT_SEARCH": "live"}
+      "CONTENT_LOCAL_INDEX": False, "CONTENT_SEARCH": "live", "CONTENT_FUSION": "pool"}
 V3 = dict(V2, CONTENT_LOCAL_INDEX=True)
 SETTINGS = {"dewey": V1, "dewey-frozen": V1, "dewey-v0": dict(V1, CONTENT_TOOL=False), "dewey-v2": V2,
             "dewey-v2-frozen": V2, "dewey-v3": V3,
-            "dewey-v3-local": dict(V3, CONTENT_SEARCH="local", CONTENT_FALLBACK=False)}
+            "dewey-v3-local": dict(V3, CONTENT_SEARCH="local", CONTENT_FALLBACK=False),
+            # candidates for version 3's ordering, chosen on DBLP-QA and Fresh before the held-out set
+            "dewey-v3-rrf": dict(V3, CONTENT_FUSION="rrf"),
+            "dewey-v3-local-rrf": dict(V3, CONTENT_SEARCH="local", CONTENT_FALLBACK=False, CONTENT_FUSION="rrf")}
 CITE = re.compile(r"\[(\d+)\]")
 # what each Dewey run is set beside: (label, condition, model, sampling, on the same pool)
 BASELINES = [

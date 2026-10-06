@@ -23,7 +23,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import agent, budget, config, data, docs, paperids, store, tools as T, usage
+from . import abstractindex, agent, budget, config, data, docs, paperids, store, tools as T, usage
 from .llm import Client
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -180,6 +180,12 @@ def _evaluation():
         return None
 
 
+def _abstract_index():
+    """Dewey's own index of abstracts, when it is built and in use: its size and snapshot."""
+    got = abstractindex.info() if config.CONTENT_TOOL and config.CONTENT_LOCAL_INDEX else None
+    return {k: got.get(k) for k in ("snapshot", "documents", "built_at")} if got else None
+
+
 @app.get("/chat/status")
 def status(_ok=Depends(require_token)):
     return {
@@ -198,6 +204,7 @@ def status(_ok=Depends(require_token)):
         "store": state.store_meta,
         "paper_ids": state.paper_ids,
         "content_tool": config.CONTENT_TOOL,
+        "abstract_index": _abstract_index(),
         "budget": budget.ledger.snapshot(),
         "limits": {"question_chars": config.MAX_QUESTION_CHARS, "rounds": config.MAX_ROUNDS,
                    "tool_calls": config.MAX_TOOL_CALLS, "seconds": config.TIME_BUDGET_SECONDS,

@@ -217,7 +217,8 @@ def cmd_dblpqa(args):
         from . import dblpqa_dewey as DW
         ctx = _ready()
         variants = {"live": "dewey", "frozen": "dewey-frozen", "v0": "dewey-v0", "v2": "dewey-v2",
-                    "v2-frozen": "dewey-v2-frozen", "v3": "dewey-v3", "v3-local": "dewey-v3-local"}
+                    "v2-frozen": "dewey-v2-frozen", "v3": "dewey-v3", "v3-local": "dewey-v3-local",
+                    "v3-rrf": "dewey-v3-rrf", "v3-local-rrf": "dewey-v3-local-rrf"}
         if args.condition == "dewey-retrieval":
             # without --variant: the search as deployed
             DW.retrieval_check(ctx, rows, allow_incomplete=args.allow_incomplete_pool,
@@ -415,7 +416,8 @@ def main():
                     help="for structured: Dewey, RAGScholar's pipeline over the records (--models), or the "
                          "question alone (--models)")
     dq.add_argument("--seed", type=int, default=7, help="for structured-build: which questions are drawn")
-    dq.add_argument("--variant", choices=["live", "frozen", "v0", "v2", "v2-frozen", "v3", "v3-local"], default=None,
+    dq.add_argument("--variant", choices=["live", "frozen", "v0", "v2", "v2-frozen", "v3", "v3-local", "v3-rrf",
+                                          "v3-local-rrf"], default=None,
                     help="for dewey (default live): live = the first content tool (v1), searching live; frozen = "
                          "v1 ranking the study's frozen pool; v0 = before the abstract search (declines content "
                          "questions); v2 = the second version; v2-frozen = v2 on the frozen pool; v3 = v2 with "

@@ -93,3 +93,11 @@ def test_rounding_does_not_excuse_a_different_number():
     got = grounding.check("It was 0.05% of titles in 2016.",
                           [{"name": "title_terms", "result": {"rows": [{"year": 2016, "pct": 0.0284}]}}])
     assert not got["ok"]
+
+
+def test_an_ordinal_with_thousands_is_one_number():
+    """Scenario 14's answer: the rank came back as 208984 and was written "208,984th"."""
+    out = grounding.check("By papers she ranks 208,984th of 4,151,660 authors, and 3rd in her group.",
+                          payload({"rows": [{"rank": 208984, "authors": 4151660}]}))
+    assert out["ok"], out
+    assert grounding.check("It ranks 250,000th.", payload({"rows": [{"rank": 208984}]}))["ungrounded"] == [250000.0]

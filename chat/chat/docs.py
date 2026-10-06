@@ -101,11 +101,14 @@ CHUNKS = [
 
     ("Questions about what papers say", """
      What a paper proposes, what a method is, why something is needed: dblp holds titles, so these are
-     answered from abstracts. The search_abstracts tool pools three searches - dblp's own title search
-     and OpenAlex's keyword and semantic search over abstracts - keeps the papers dblp has, ranks their
-     titles and abstracts with BM25, and gives the five best to the model, which cites them as [1] to
-     [5]. This is the configuration the project's DBLP-QA study found best. The abstracts come from
-     OpenAlex, some papers have none there, and the question's words are sent to OpenAlex to search."""),
+     answered from abstracts. The search_abstracts tool pools up to four searches - Dewey's own index of
+     the abstracts of dblp's papers (copied from OpenAlex's open snapshot, searched with BM25 in
+     milliseconds), dblp's own title search, and OpenAlex's keyword and semantic search over abstracts -
+     keeps the papers dblp has, ranks their titles and abstracts with BM25, and gives the five best to
+     the model, which cites them as [1] to [5]. This is the configuration the project's DBLP-QA study
+     found best, with the closed index RAGScholar had rebuilt from open data. The abstracts come from
+     OpenAlex (the copy, or live), Semantic Scholar or Crossref; some papers have none anywhere open, and
+     the question's words are sent to OpenAlex to search."""),
 
     ("Why citation questions cannot be answered", """
      The parquet has an n_cites column, but dblp does not publish citation counts, so it is not a
@@ -185,6 +188,13 @@ LIMITS = (
     "answered from this data. dblp has no abstracts either: search_abstracts takes them from OpenAlex "
     "for the papers it finds, and some papers have none there."
 )
+LIMITS_WITH_INDEX = (
+    "dblp has no citations, no full text, no per-paper affiliations, no impact factors, no awards and "
+    "no author demographics (gender, country, institution). Questions that need those cannot be "
+    "answered from this data. dblp has no abstracts either: search_abstracts takes them from Dewey's own "
+    "copy of OpenAlex's abstracts of dblp's papers and from OpenAlex's live search, and some papers have "
+    "none anywhere open."
+)
 # what the assistant said before it could read abstracts, and says again with the tool switched off
 LIMITS_WITHOUT_ABSTRACTS = (
     "dblp has no citations, no abstracts, no full text, no per-paper affiliations, no impact "
@@ -195,7 +205,10 @@ LIMITS_WITHOUT_ABSTRACTS = (
 
 def limits():
     from . import config
-    return LIMITS if config.CONTENT_TOOL else LIMITS_WITHOUT_ABSTRACTS
+    if not config.CONTENT_TOOL:
+        return LIMITS_WITHOUT_ABSTRACTS
+    from . import abstractindex                  # here, not at the top: docs is imported by everything
+    return LIMITS_WITH_INDEX if config.CONTENT_LOCAL_INDEX and abstractindex.available() else LIMITS
 
 _TOKEN = re.compile(r"[a-z0-9']+")
 STOP = set("the a an of in on to by is are and or for with from into over under via using this that "

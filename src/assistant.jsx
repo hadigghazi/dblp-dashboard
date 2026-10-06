@@ -413,6 +413,7 @@ function About({ status }) {
   const d = status;
   if (!d) return null;
   const ev = d.evaluation;
+  const ix = d.abstract_index;
   return (
     <details className="deweyabout">
       <summary>About {DEWEY.name}{ev ? ` · ${Math.round(100 * ev.tool_choice_accuracy)}% right query, median ${ev.median_seconds}s` : ""}</summary>
@@ -421,7 +422,11 @@ function About({ status }) {
           rankings and trends are worked out from the records, “papers about …” searches 5.4 million
           titles by meaning as well as words, and predictions come from the models trained on this
           data. Questions about what papers say are answered from the abstracts of the closest papers,
-          taken from OpenAlex and cited as [1] to [5]. He is instructed to answer only from what these
+          {ix
+            ? ` found in his own index of ${(ix.documents / 1e6).toFixed(1)} million abstracts of dblp’s
+              papers (from OpenAlex’s open snapshot of ${ix.snapshot}) and in OpenAlex’s live search, and`
+            : " taken from OpenAlex and"}
+          {" "}cited as [1] to [5]. He is instructed to answer only from what these
           lookups return, and you can open every lookup above an answer to see exactly what it found.</p>
         {ev ? (
           <p><b>Measured on {ev.cases} questions</b> covering every kind he claims to answer, each naming

@@ -366,7 +366,8 @@ def retrieve(ctx, query, deadline):
         for hit in index_hits:
             if hit["key"] in known:
                 cands[hit["key"]] = {"title": hit.get("title"), "abstract": hit.get("abstract"),
-                                     "doi": hit.get("doi"), "found_by": ["dewey-index"]}
+                                     "doi": hit.get("doi"), "found_by": ["dewey-index"],
+                                     "dx_rank": len(cands) + 1}
     for hit in got.get("dblp-search") or []:
         cands.setdefault(hit["key"], {"title": hit.get("title"), "found_by": []})["found_by"].append("dblp-search")
     works = [w for s in ("openalex-search", "openalex-semantic") for w in got.get(s) or []]
@@ -455,9 +456,17 @@ def pool_for(ctx, query, deadline):
 
 
 def rank(query, cands):
-    """Every candidate with a title or an abstract, best first: the study's BM25 over title + abstract."""
+    """Every candidate with a title or an abstract, best first: the study's BM25 over title + abstract,
+    with the pool's statistics; with CONTENT_FUSION=rrf, fused with the index's own order."""
     docs = {k: RAG.doc_text(c) for k, c in cands.items() if RAG.doc_text(c)}
-    return RAG.bm25_rank(query, docs) if docs else []
+    if not docs:
+        return []
+    ranking = RAG.bm25_rank(query, docs)
+    if config.CONTENT_FUSION == "rrf":
+        index = sorted((k for k in docs if cands[k].get("dx_rank")), key=lambda k: cands[k]["dx_rank"])
+        if index:
+            return RAG.rrf([ranking, index])
+    return ranking
 
 
 def search_abstracts(ctx, question=None, keys=None, frm=None, to=None):

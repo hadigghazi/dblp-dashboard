@@ -16,7 +16,9 @@ accounted for, and names the ones that are not, so a regression is visible.
 import json
 import re
 
-NUMBER = re.compile(r"(?<![\w.])(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)(?![\w])")
+# an ordinal suffix belongs to the number ("ranked 208,984th"), and a comma-grouped number is never
+# read in pieces: without both, "208,984th" was read as an unsupported 208
+NUMBER = re.compile(r"(?<![\w.,])(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)(?:st|nd|rd|th)?(?![\w]|,\d)")
 SCALE = {"thousand": 1e3, "k": 1e3, "million": 1e6, "m": 1e6, "billion": 1e9, "bn": 1e9}
 SMALL = 24          # ordinals, list lengths, "the top 10": never worth flagging
 YEARS = range(1900, 2101)

@@ -99,6 +99,9 @@ CONTENT_WRITER = os.environ.get("CHAT_CONTENT_WRITER", MODEL_DEEP)
 # own title search only): the closed world the evaluation sets beside RAGScholar's.
 CONTENT_LOCAL_INDEX = os.environ.get("CHAT_CONTENT_LOCAL_INDEX", "1") != "0"
 CONTENT_SEARCH = os.environ.get("CHAT_CONTENT_SEARCH", "live")
+# how the pool is ordered: "pool" = BM25 with the pool's own statistics, as the study did; "rrf" = that
+# fused with the index's whole-corpus order (reciprocal rank fusion), when the index took part
+CONTENT_FUSION = os.environ.get("CHAT_CONTENT_FUSION", "pool")
 
 
 def configured() -> bool:
