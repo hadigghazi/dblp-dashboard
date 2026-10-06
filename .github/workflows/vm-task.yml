@@ -47,6 +47,10 @@ on:
         description: "start: memory cap for each step's container, e.g. 3500m or 8g (default 6g)"
         required: false
         default: ""
+      start_at:
+        description: "start: wait on the VM until this UTC time (HH:MM) before the first step"
+        required: false
+        default: ""
 
 concurrency: vm-task-${{ github.event.inputs.action }}-${{ github.event.inputs.name }}
 
@@ -64,6 +68,7 @@ jobs:
       LINES: ${{ github.event.inputs.lines }}
       FETCH_PATH: ${{ github.event.inputs.path }}
       MEMORY: ${{ github.event.inputs.memory }}
+      START_AT: ${{ github.event.inputs.start_at }}
     steps:
       - name: Check the inputs
         run: |
@@ -89,6 +94,7 @@ jobs:
           fi
           if [ "$ACTION" = log ]; then [[ "$LINES" =~ ^[0-9]{1,5}$ ]] || { echo "bad lines"; exit 1; }; fi
           if [ -n "$MEMORY" ]; then [[ "$MEMORY" =~ ^[0-9]{1,5}[mg]$ ]] || { echo "bad memory: '$MEMORY'"; exit 1; }; fi
+          if [ -n "$START_AT" ]; then [[ "$START_AT" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] || { echo "bad start_at: '$START_AT'"; exit 1; }; fi
           if [ "$ACTION" = fetch ]; then
             [[ "$FETCH_PATH" =~ ^[A-Za-z0-9_.*/-]+$ ]] && [[ "$FETCH_PATH" != *..* ]] \
               || { echo "bad path: '$FETCH_PATH'"; exit 1; }
@@ -120,6 +126,11 @@ jobs:
             if [ -n "$AFTER" ]; then
               echo "echo \"== waiting for task $AFTER\""
               echo "while [ -f ~/vm-tasks/$AFTER.pid ] && kill -0 \"\$(cat ~/vm-tasks/$AFTER.pid)\" 2>/dev/null; do sleep 60; done"
+            fi
+            if [ -n "$START_AT" ]; then
+              # e.g. after a daily API allowance resets: the task waits on the VM, not on anyone's laptop
+              echo "echo \"== waiting until $START_AT UTC\""
+              echo "while [ \"\$(date -u +%H:%M)\" != \"$START_AT\" ]; do sleep 20; done"
             fi
             echo 'echo "== started $(date -u +%FT%TZ)"'
             IFS=';' read -ra parts <<< "$STEPS"
