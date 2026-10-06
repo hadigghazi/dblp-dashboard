@@ -121,6 +121,7 @@ def summarize(records, condition, runs_dir, pool):
         "answers_citing": sum(1 for r in records if r["cited"]),
         "invalid_citations": sum(len(r["invalid_citations"]) for r in records),
         "writers": writers, "errors": sum(1 for r in records if r.get("error")),
+        "degraded_searches": sum(1 for r in records if r.get("search_degraded")),
         "median_seconds": seconds[len(seconds) // 2] if seconds else None,
         "p90_seconds": seconds[int(0.9 * (len(seconds) - 1))] if seconds else None,
         "cost_usd": round(sum(r.get("cost_usd") or 0 for r in records), 4),
@@ -225,6 +226,8 @@ def run(ctx, client, rows, sha, variant="dewey", judge_model="gpt-4.1", allow_in
                 cites = citations(text, payloads)
                 queries = [(p.get("arguments") or {}).get("question") for p in payloads
                            if p.get("name") == "search_abstracts"]
+                metas = [((p.get("result") or {}).get("meta") or {}) for p in payloads
+                         if p.get("name") == "search_abstracts"]
                 rec = {"condition": variant, "model": MODEL, "id": qid, "question": row["question"],
                        "gold": row["answer"], "answer": text, "score": verdict["score"], "reason": verdict["reason"],
                        "rouge_l": round(DQ.rouge_l(text, row["answer"]), 4), "answer_words": len(text.split()),
@@ -233,6 +236,9 @@ def run(ctx, client, rows, sha, variant="dewey", judge_model="gpt-4.1", allow_in
                        "query_verbatim": bool(queries) and all(_norm(q) == _norm(row["question"]) for q in queries if q),
                        "cited": cites["cited"], "invalid_citations": cites["invalid"],
                        "seconds": done.get("seconds"), "cost_usd": done.get("cost_usd"), "error": done.get("error"),
+                       "search_degraded": any(m.get("degraded") or any(v != "ok" for v in (m.get("sources") or {}).values())
+                                              for m in metas),
+                       "search_cached": [m.get("cached") for m in metas],
                        **hits}
                 records.append(rec)
                 fh.write(json.dumps(rec, ensure_ascii=False) + "\n")

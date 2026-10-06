@@ -74,7 +74,7 @@ CONTENT_TOOL = os.environ.get("CHAT_CONTENT_TOOL", "1") != "0"
 OPENALEX_URL = "https://api.openalex.org/works"
 OPENALEX_API_KEY = os.environ.get("OPENALEX_API_KEY", "")
 # the free key allows $1 a day: a search costs $0.001, a lookup by DOI $0.0001
-OPENALEX_CALLS_PER_DAY = int(os.environ.get("CHAT_OPENALEX_CALLS_PER_DAY", "900"))
+OPENALEX_CALLS_PER_DAY = int(os.environ.get("CHAT_OPENALEX_CALLS_PER_DAY", "1200"))
 CONTENT_DEADLINE = float(os.environ.get("CHAT_CONTENT_DEADLINE", "8"))    # inside the 10 s tool limit
 CONTENT_POOL = 50                 # results asked of each search, as in the study
 CONTENT_TOP = 5                   # abstracts given to the model, as in the study
