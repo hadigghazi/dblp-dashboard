@@ -47,9 +47,36 @@ def weighted_kappa(a, b, cats=(0, 1, 2)):
     return 1.0 if expected == 0 else round(1 - observed / expected, 3)
 
 
-def answer_sets(runs, pool, modes="plain"):
+# what an included set (Dewey's runs) is compared with under both judges
+BASELINES = (("closed-book", "gpt-4.1-mini", "ours"), ("rag-bm25", "gpt-4.1-mini", "ours"),
+             ("rag-bm25", "ollama:mistral:v0.1", "paper"))
+
+
+def included_sets(runs, pool, include):
+    """The named conditions' latest runs (Dewey: model "dewey"), and the baselines they are compared
+    with - closed-book and plain RAG for Dewey's own model, and RAGScholar's configuration."""
+    sets = []
+    for condition in include:
+        for name, summary, records in reversed(runs):
+            if summary.get("condition") == condition:
+                model = (summary.get("models") or ["dewey"])[0]
+                mine = {r["id"]: r for r in records if r.get("score") is not None}
+                if mine:
+                    sets.append((condition, model, AU.sampling_of(summary), name, mine))
+                break
+    for condition, model, sampling in BASELINES:
+        name, recs = AU.latest(runs, condition, model, sampling, pool if condition.startswith(DQ.RAG_PREFIX) else None)
+        if recs:
+            sets.append((condition, model, sampling, name, recs))
+    return sets
+
+
+def answer_sets(runs, pool, modes="plain", include=()):
     """[(condition, model, sampling, run name, {id: record})]: per answering model, its latest
-    closed-book, oracle and plain-RAG runs (and the selective modes too with modes="all")."""
+    closed-book, oracle and plain-RAG runs (and the selective modes too with modes="all"). With
+    `include`, only those conditions and the baselines they are set against."""
+    if include:
+        return included_sets(runs, pool, include)
     chosen = [c for c in AU.rag_runs(runs, pool) if modes == "all" or DQ.rag_parts(c[0])[1] == "plain"]
     sets = []
     for model, sampling in dict.fromkeys((c[1], c[2]) for c in chosen):
@@ -70,12 +97,12 @@ def _paired(first, second, ids):
 
 
 def run(client, rows, judge_model=DEFAULT_JUDGE, out=print, pool=None, cache_dir=None, modes="plain",
-        force=False):
+        force=False, include=()):
     cache_dir = Path(cache_dir or DQ.study_dir())
     runs = AU.load_runs(cache_dir / "runs")
     if pool is None:
         pool = next((s.get("pool_sha256") for _, s, _ in reversed(runs) if s.get("pool_sha256")), None)
-    sets = answer_sets(runs, pool, modes)
+    sets = answer_sets(runs, pool, modes, include)
     if not sets:
         raise SystemExit(f"no answer sets on pool {pool}")
     by_id = {r["id"]: r for r in rows}
@@ -123,7 +150,7 @@ def run(client, rows, judge_model=DEFAULT_JUDGE, out=print, pool=None, cache_dir
         scores[(condition, model, sampling)] = {
             q: (rec["score"], grade(q, rec["answer"])) for q, rec in recs.items() if q in by_id}
     cache_path.write_text(json.dumps(cache), encoding="utf-8")
-    report.update(summarize(sets, scores))
+    report.update(summarize(sets, scores, include))
     report["cost_usd"] = meter.cost()
     (cache_dir / "crossjudge.json").write_text(json.dumps(dict(report, scores={
         f"{c}|{m}|{s}": v for (c, m, s), v in scores.items()}), indent=2), encoding="utf-8")
@@ -131,7 +158,7 @@ def run(client, rows, judge_model=DEFAULT_JUDGE, out=print, pool=None, cache_dir
     return report
 
 
-def summarize(sets, scores):
+def summarize(sets, scores, include=()):
     pairs = [(f, s, model) for (c, model, _), per_q in scores.items() for f, s in per_q.values()]
     usable = [(f, s, m) for f, s, m in pairs if f is not None and s is not None]
     agreement = {"answers": len(pairs), "unreadable": sum(1 for _, s, _ in pairs if s is None),
@@ -166,6 +193,21 @@ def summarize(sets, scores):
                                   "first": _paired({q: v[0] for q, v in closed.items()}, {q: v[0] for q, v in per_q.items()}, ids),
                                   "second": _paired({q: v[1] for q, v in closed.items()}, {q: v[1] for q, v in per_q.items()}, ids)})
 
+    # an included set (Dewey) against each baseline, question by question, under both judges
+    for condition, model, sampling, _, _ in sets:
+        if condition not in include:
+            continue
+        mine = scores[(condition, model, sampling)]
+        for base in BASELINES:
+            theirs = scores.get(base)
+            if not theirs:
+                continue
+            ids = [q for q in mine if q in theirs]
+            contrasts.append({"model": model, "sampling": sampling,
+                              "contrast": f"{condition} - {base[0]} {base[1]}", "questions": "all",
+                              "first": _paired({q: v[0] for q, v in theirs.items()}, {q: v[0] for q, v in mine.items()}, ids),
+                              "second": _paired({q: v[1] for q, v in theirs.items()}, {q: v[1] for q, v in mine.items()}, ids)})
+
     # self-preference: what gpt-4.1 gives beyond the second judge, per answering model
     preference = {}
     for model in dict.fromkeys(m for _, _, m in usable):
@@ -183,13 +225,13 @@ def print_report(report, out=print):
     ci = lambda c: f"{c['mean']:6.2f} ({c['low']:.2f}-{c['high']:.2f})" if c and c["mean"] is not None else "-"
     for e in report["sets"]:
         out(f"{e['model'][-20:]:20s} {e['condition']:14s} {ci(e['first']):>18s} {ci(e['second']):>18s}")
-    out(f"\n{'model':20s} {'contrast':26s} {'questions':17s} {report['first_judge'] + ' delta':>26s} {'second judge delta':>26s}")
+    out(f"\n{'model':20s} {'contrast':44s} {'questions':17s} {report['first_judge'] + ' delta':>26s} {'second judge delta':>26s}")
     for c in report["contrasts"]:
         cells = []
         for side in ("first", "second"):
             d = c[side]["delta"]
             cells.append(f"{d['mean']:+.2f} ({d['low']:+.2f} to {d['high']:+.2f})" if d else "-")
-        out(f"{c['model'][-20:]:20s} {c['contrast']:26s} {c['questions'] + ' (' + str(c['first']['questions']) + ')':17s} "
+        out(f"{c['model'][-20:]:20s} {c['contrast'][:44]:44s} {c['questions'] + ' (' + str(c['first']['questions']) + ')':17s} "
             f"{cells[0]:>26s} {cells[1]:>26s}")
     out("\nself-preference check - how much more the first judge gives than the second, per answering model:")
     for model, ci in report["first_minus_second"].items():

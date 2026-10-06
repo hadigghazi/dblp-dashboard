@@ -166,7 +166,7 @@ def cmd_dblpqa(args):
     if args.condition == "crossjudge":
         from . import dblpqa_crossjudge as CJ
         CJ.run(client, rows, judge_model=args.second_judge, pool=args.pool, modes=args.modes or "plain",
-               force=args.force)
+               force=args.force, include=[c.strip() for c in (args.include or "").split(",") if c.strip()])
         return
     if args.condition in ("audit", "regrade"):
         from . import dblpqa_audit as AU
@@ -373,6 +373,9 @@ def main():
                          "abstract, combined into one (needs the single runs first)")
     dq.add_argument("--variants", default=None,
                     help="for grid: comma-separated, e.g. A1,Top-3-CD (default: all ten)")
+    dq.add_argument("--include", default=None,
+                    help="for crossjudge: only these conditions (e.g. dewey,dewey-frozen) and the baselines "
+                         "they are compared with")
     dq.add_argument("--rankers", default=None,
                     help="for bearing: comma-separated rankers (default: bm25, dense, hybrid and three first stages)")
     dq.add_argument("--ranker", default="bm25",
