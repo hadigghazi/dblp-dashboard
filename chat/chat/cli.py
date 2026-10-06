@@ -3,6 +3,9 @@ Command line, for the VM.
 
   python -m chat.cli store                      build the leaderboard store for this dump
   python -m chat.cli paper-ids                  build the DOI/arXiv index the abstract search maps papers with
+  python -m chat.cli abstract-index fetch       stream OpenAlex's snapshot, keeping dblp's papers (hours, resumable)
+  python -m chat.cli abstract-index build       Dewey's own BM25 index of their abstracts
+  python -m chat.cli abstract-index status      what is fetched and built; `search Q` tries it
   python -m chat.cli tools                      list the tool catalogue
   python -m chat.cli ask "who has most papers"  one question, printed as it happens
   python -m chat.cli evaluate [--limit N]       run the gold set, write the report
@@ -34,6 +37,7 @@ import argparse
 import json
 import logging
 import sys
+import time
 
 import httpx
 
@@ -67,6 +71,34 @@ def cmd_paper_ids(_args):
         path = paperids.build(con, meta)
         con.execute(f"ATTACH '{path}' AS x (READ_ONLY)")
         print(f"built {path}: {dict(con.execute('SELECT k, v FROM x._meta').fetchall())}")
+    finally:
+        con.close()
+
+
+def cmd_abstract_index(args):
+    """Dewey's own abstract index (abstractindex.py): fetch, build, status, search."""
+    from . import abstractindex as AI
+    if args.action == "status":
+        print(json.dumps({"tantivy": AI.tantivy is not None, "fetch": AI.latest_fetch(), "index": AI.info()},
+                         indent=2))
+        return
+    if args.action == "search":
+        query = " ".join(args.query)
+        t = time.time()
+        hits = AI.search(query, limit=10)
+        print(f"{len(hits)} hits in {1000 * (time.time() - t):.0f} ms for {query!r}")
+        for i, h in enumerate(hits, 1):
+            print(f"{i:>3}. {h['score']:7.2f}  {h['key']}  {h['title'][:90]}")
+        return
+    con, meta = data.connect()
+    try:
+        if not paperids.attach(con, meta):
+            sys.exit("no paper ids for this dump yet: run `paper-ids` first")
+        if args.action == "fetch":
+            AI.fetch(con, httpx.Client(timeout=120, follow_redirects=True), threads=args.threads or 16,
+                     batch=args.batch, limit=args.limit)
+        else:
+            AI.build(con, partial=args.partial, threads=args.threads or 4)
     finally:
         con.close()
 
@@ -333,6 +365,14 @@ def main():
     sub.add_parser("store", help="build the leaderboard store").set_defaults(fn=cmd_store)
     sub.add_parser("tools", help="list the tool catalogue").set_defaults(fn=cmd_tools)
     sub.add_parser("paper-ids", help="build the DOI/arXiv index for the abstract search").set_defaults(fn=cmd_paper_ids)
+    ai = sub.add_parser("abstract-index", help="Dewey's own index of the abstracts of dblp's papers")
+    ai.add_argument("action", choices=["fetch", "build", "status", "search"])
+    ai.add_argument("query", nargs="*", help="for search: the words to look for")
+    ai.add_argument("--threads", type=int, default=None, help="DuckDB threads for fetch (16), writers for build (4)")
+    ai.add_argument("--batch", type=int, default=20, help="for fetch: snapshot files per part")
+    ai.add_argument("--limit", type=int, default=None, help="for fetch: the first N batches only, as a trial")
+    ai.add_argument("--partial", action="store_true", help="for build: index an unfinished fetch")
+    ai.set_defaults(fn=cmd_abstract_index)
     ask = sub.add_parser("ask", help="ask one question")
     ask.add_argument("question")
     ask.set_defaults(fn=cmd_ask)

@@ -78,7 +78,7 @@ jobs:
               p="$(echo "$p" | xargs)"
               [ -z "$p" ] && continue
               # a chat.cli subcommand, then plain words: no quotes, no $, no redirection, no globbing
-              [[ "$p" =~ ^(dblpqa|evaluate|scenarios|qa|search-eval|paper-ids|store|tools)([[:space:]][A-Za-z0-9_.,:=/@+-]+)*$ ]] \
+              [[ "$p" =~ ^(dblpqa|evaluate|scenarios|qa|search-eval|paper-ids|abstract-index|store|tools)([[:space:]][A-Za-z0-9_.,:=/@+-]+)*$ ]] \
                 || { echo "refused step: '$p'"; exit 1; }
             done
           fi

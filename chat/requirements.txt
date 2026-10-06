@@ -1,4 +1,6 @@
 duckdb==1.5.5
+# Dewey's own abstract index (abstractindex.py): BM25 over millions of abstracts in milliseconds
+tantivy==0.26.2
 fastapi>=0.115,<1
 uvicorn>=0.30
 httpx>=0.27
