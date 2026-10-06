@@ -100,8 +100,9 @@ CONTENT_WRITER = os.environ.get("CHAT_CONTENT_WRITER", MODEL_DEEP)
 CONTENT_LOCAL_INDEX = os.environ.get("CHAT_CONTENT_LOCAL_INDEX", "1") != "0"
 CONTENT_SEARCH = os.environ.get("CHAT_CONTENT_SEARCH", "live")
 # how the pool is ordered: "pool" = BM25 with the pool's own statistics, as the study did; "rrf" = that
-# fused with the index's whole-corpus order (reciprocal rank fusion), when the index took part
-CONTENT_FUSION = os.environ.get("CHAT_CONTENT_FUSION", "pool")
+# fused with the index's whole-corpus order (reciprocal rank fusion), when the index took part. Chosen
+# on DBLP-QA and Fresh before the held-out set: R@1 .71 against .62, R@5 .78 against .77 (150 questions)
+CONTENT_FUSION = os.environ.get("CHAT_CONTENT_FUSION", "rrf")
 
 
 def configured() -> bool:
