@@ -176,5 +176,5 @@ CASES = [
 REFUSAL_MARKERS = [
     "does not", "doesn't", "no citation", "not in the data", "not available", "cannot", "can't",
     "has no", "not contain", "no abstract", "no affiliation", "not something dblp", "outside",
-    "not recorded", "no information",
+    "not recorded", "no information", "not included", "isn't included", "aren't included", "not part of",
 ]
