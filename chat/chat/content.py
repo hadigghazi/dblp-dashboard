@@ -66,7 +66,9 @@ _budget_lock = threading.Lock()
 # --------------------------------------------------------------------------- the day's OpenAlex calls
 
 def _budget_path():
-    return config.MODELS_DIR / "openalex-calls.json"
+    # one count per key: the cap stands for that key's daily allowance
+    tag = hashlib.sha1(config.OPENALEX_API_KEY.encode("utf-8")).hexdigest()[:8] if config.OPENALEX_API_KEY else "keyless"
+    return config.MODELS_DIR / f"openalex-calls-{tag}.json"
 
 
 def take_openalex(n):
