@@ -653,8 +653,17 @@ def _blocks(cands, keys):
                        for i, key in enumerate(keys, 1))
 
 
-def condition_name(ranker, mode="plain"):
-    return f"{DQ.RAG_PREFIX}{ranker}" + ("" if mode == "plain" else f"-{mode}")
+def condition_name(ranker, mode="plain", strategy="cd", k=TOP_K):
+    """rag-bm25 for the paper's best strategy (Top-5 Concatenated Documents), the name every earlier run
+    has; the paper's other strategies say which they are (see dblpqa.rag_strategy)."""
+    name = f"{DQ.RAG_PREFIX}{ranker}"
+    if strategy == "single":
+        name += f"-a{k}"
+    elif strategy == "ca":
+        name += f"-ca{k}"
+    elif k != TOP_K:
+        name += f"-cd{k}"
+    return name + ("" if mode == "plain" else f"-{mode}")
 
 
 def rag_contexts(rows, pools, rankings, ranker, k=TOP_K):
@@ -669,6 +678,20 @@ def rag_contexts(rows, pools, rankings, ranker, k=TOP_K):
         contexts[row["id"]] = {"abstract": _blocks(cands, keys) or "(no papers were retrieved)",
                                "source": f"{ranker}@{k}", "retrieved": keys, "source_rank": rank,
                                "source_in_context": rank is not None and rank <= k}
+    return contexts
+
+
+def single_contexts(rows, pools, rankings, ranker, j):
+    """The paper's Single-Document strategy: the j-th ranked paper's abstract on its own (A1 ... A5)."""
+    contexts = {}
+    for row in rows:
+        ranking = rankings[ranker].get(row["id"]) or []
+        cands = pools[row["id"]]["candidates"]
+        keys = ranking[j - 1:j]
+        rank = source_rank(ranking, set(pools[row["id"]]["aliases"]))
+        contexts[row["id"]] = {"abstract": _blocks(cands, keys) or "(no paper was retrieved at this rank)",
+                               "source": f"{ranker}@a{j}", "retrieved": keys, "source_rank": rank,
+                               "source_in_context": rank == j}
     return contexts
 
 

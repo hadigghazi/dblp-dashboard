@@ -17,6 +17,9 @@ Command line, for the VM.
   python -m chat.cli dblpqa regrade             the missed questions graded fairly: any correct answer counts
   python -m chat.cli dblpqa crossjudge          the main answer sets re-judged by an open model of another family
   python -m chat.cli dblpqa fresh-build         DBLP-QA-Fresh: questions from papers newer than the models
+  python -m chat.cli dblpqa grid --models M     the original paper's ten context variants for M, judged
+  python -m chat.cli dblpqa bearing             the original paper's RQ1: does a top abstract answer the question?
+  python -m chat.cli dblpqa replication         the grid beside the original paper's Table 3, finding by finding
   python -m chat.cli dblpqa --dataset fresh ... any of the above on DBLP-QA-Fresh instead
 
 `ask` is the same code path the web endpoint uses, so a question that works here works there.
@@ -134,6 +137,25 @@ def cmd_dblpqa(args):
             AU.regrade(client, rows, pool=args.pool, judge_model=args.judge, force=args.force,
                        version=args.regrade_version, modes=args.modes)
         return
+    models = [m.strip() for m in args.models.split(",") if m.strip()]
+    if args.condition in ("grid", "bearing", "replication"):
+        from . import dblpqa_replicate as RP
+        if args.condition == "bearing":
+            rankers = [r.strip() for r in (args.rankers or ",".join(RP.BEARING_RANKERS)).split(",") if r.strip()]
+            RP.run_bearing(client, rows, rankers=rankers, judge_model=args.judge,
+                           allow_incomplete=args.allow_incomplete_pool, force=args.force)
+            return
+        if args.condition == "grid":
+            labels = [v.strip() for v in args.variants.split(",")] if args.variants else []
+            unknown = [v for v in labels if v not in RP.BY_LABEL]
+            if unknown:
+                sys.exit(f"unknown variants {unknown}; the paper's are {', '.join(RP.BY_LABEL)}")
+            variants = [RP.BY_LABEL[v] for v in labels] or list(RP.VARIANTS)
+            RP.run_grid(client, rows, sha, models, sampling=args.sampling, judge_model=args.judge,
+                        ranker=args.ranker, variants=variants, allow_incomplete=args.allow_incomplete_pool)
+        RP.report(rows, models, sampling=args.sampling, ranker=args.ranker,
+                  allow_incomplete=args.allow_incomplete_pool)
+        return
     condition, contexts = args.condition, None
     notes = None
     if condition in ("retrieval", "rag"):
@@ -144,17 +166,31 @@ def cmd_dblpqa(args):
         RAG.print_retrieval(report)
         if condition == "retrieval":
             return
+        if args.strategy != "cd":
+            # one of the paper's other strategies: contexts depend on the model (Concatenated Answers
+            # are built from that model's own single-abstract answers), so one run per model
+            from . import dblpqa_replicate as RP
+            if args.mode != "plain":
+                sys.exit("--mode applies to concatenated documents (--strategy cd) only")
+            for model in models:
+                variant = (args.strategy, args.k)
+                contexts, notes = RP.contexts_for(variant, rows, pools, rankings, args.ranker, model,
+                                                  args.sampling, report["pool"]["sha256"],
+                                                  DQ.study_dir() / "runs")
+                DQ.run_condition(client, [model], args.judge, rows, sha, RP.condition_for(variant, args.ranker),
+                                 contexts=contexts, force=args.force, sampling=args.sampling,
+                                 reuse_controls=not args.recheck_judge and not args.limit, notes=notes)
+            return
         contexts = RAG.rag_contexts(rows, pools, rankings, args.ranker, k=args.k)
         notes = {"pool_sha256": report["pool"]["sha256"],
                  "retrieval": {"ranker": args.ranker, "k": args.k, "mode": args.mode}}
         if args.mode == "gated":
             contexts, notes["gate"] = RAG.gate_contexts(client, rows, pools, contexts, args.gate_model)
-        condition = RAG.condition_name(args.ranker, args.mode)
+        condition = RAG.condition_name(args.ranker, args.mode, "cd", args.k)
     elif condition == "oracle":
         contexts = DQ.fetch_abstracts(rows)
     print(f"DBLP-QA: {len(rows)} questions (sha256 {sha[:12]}), {condition}, judge {args.judge}, "
           f"sampling {args.sampling}")
-    models = [m.strip() for m in args.models.split(",") if m.strip()]
     DQ.run_condition(client, models, args.judge, rows, sha, condition, contexts=contexts,
                      force=args.force, sampling=args.sampling,
                      reuse_controls=not args.recheck_judge and not args.limit, notes=notes)
@@ -259,10 +295,21 @@ def main():
     ql.set_defaults(fn=cmd_questions)
     dq = sub.add_parser("dblpqa", help="experiments on the DBLP-QA benchmark")
     dq.add_argument("condition", choices=["closed-book", "oracle", "retrieval", "rag", "audit", "regrade", "crossjudge", "report",
-                             "rescore", "fresh-build"],
+                             "rescore", "fresh-build", "grid", "bearing", "replication"],
                     help="oracle = each question with the abstract it was written from; retrieval = where "
                          "each ranker puts that paper (no answers); rag = answers from the top --k papers "
-                         "of --ranker; rescore = score the unscored answers of --run")
+                         "of --ranker; rescore = score the unscored answers of --run; grid = the original "
+                         "paper's ten context variants for --models; bearing = the paper's RQ1 measure "
+                         "(does a top abstract answer the question?); replication = the grid beside the "
+                         "paper's Table 3")
+    dq.add_argument("--strategy", choices=["cd", "single", "ca"], default="cd",
+                    help="for rag: the paper's context strategies - cd = top --k abstracts concatenated; "
+                         "single = only the --k-th ranked abstract (A1-A5); ca = an answer per top --k "
+                         "abstract, combined into one (needs the single runs first)")
+    dq.add_argument("--variants", default=None,
+                    help="for grid: comma-separated, e.g. A1,Top-3-CD (default: all ten)")
+    dq.add_argument("--rankers", default=None,
+                    help="for bearing: comma-separated rankers (default: bm25, dense, hybrid and three first stages)")
     dq.add_argument("--ranker", default="bm25",
                     choices=["bm25", "dense", "hybrid", "dblp-search", "s2-search", "openalex-search",
                              "openalex-semantic"],

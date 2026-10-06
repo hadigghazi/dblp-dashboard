@@ -72,6 +72,14 @@ PERMISSIVE_SYSTEM = ("You answer questions about computer-science research. You 
                      "where they address the question; if none does, ignore them and answer from your own "
                      "knowledge. Answer in one to three sentences.")
 RAG_MODES = ("permissive", "gated")
+# the paper's other context strategies (dblpqa_replicate): one retrieved abstract on its own (A1 ... A5),
+# and Concatenated Answers - an answer written from each of the top k abstracts alone, then one answer
+# written from those. The paper publishes neither prompt; these mirror RAG_SYSTEM.
+SINGLE_SYSTEM = ("You answer questions about computer-science research using the paper abstract you are "
+                 "given. Answer in one to three sentences.")
+CA_SYSTEM = ("You answer questions about computer-science research. You are given answers to the question, "
+             "each written from the abstract of one paper a search returned. Combine them into one answer, "
+             "in one to three sentences.")
 CONDITIONS = ("closed-book", "oracle")      # plus rag-<ranker>, see dblpqa_rag
 
 # Generation settings. "paper" is Table 1 of the paper (Mistral-7B and TinyLlama rows): what a
@@ -319,8 +327,9 @@ def messages_for(condition, question, abstract=None):
         return [{"role": "system", "content": CONTEXT_SYSTEM},
                 {"role": "user", "content": f"Abstract:\n{abstract}\n\nQuestion: {question}"}]
     if condition.startswith(RAG_PREFIX) and abstract is not None:
+        label = {"single": "Abstract", "ca": "Answers"}.get(rag_strategy(condition)[0], "Abstracts")
         return [{"role": "system", "content": system_prompt(condition)},
-                {"role": "user", "content": f"Abstracts:\n{abstract}\n\nQuestion: {question}"}]
+                {"role": "user", "content": f"{label}:\n{abstract}\n\nQuestion: {question}"}]
     # closed-book - and a gated question whose gate kept no abstract, asked exactly as closed-book
     return [{"role": "system", "content": ANSWER_SYSTEM}, {"role": "user", "content": question}]
 
@@ -333,10 +342,26 @@ def rag_parts(condition):
     return condition, "plain"
 
 
+def rag_strategy(condition):
+    """The paper's context strategy behind a rag condition, as (strategy, k): rag-bm25 is Top-5
+    Concatenated Documents, the study's main condition and the name every earlier run has; -cd3 is
+    Top-3, -a2 the second-ranked abstract alone, -ca5 Top-5 Concatenated Answers."""
+    base = rag_parts(condition)[0]
+    found = re.search(r"-(cd|a|ca)(\d+)$", base)
+    if not found:
+        return "cd", 5
+    return {"cd": "cd", "a": "single", "ca": "ca"}[found.group(1)], int(found.group(2))
+
+
 def system_prompt(condition):
     if condition == "oracle":
         return CONTEXT_SYSTEM
     if condition.startswith(RAG_PREFIX):
+        strategy = rag_strategy(condition)[0]
+        if strategy == "single":
+            return SINGLE_SYSTEM
+        if strategy == "ca":
+            return CA_SYSTEM
         return PERMISSIVE_SYSTEM if rag_parts(condition)[1] == "permissive" else RAG_SYSTEM
     return ANSWER_SYSTEM
 

@@ -3,9 +3,9 @@ name: Build and deploy
 on:
   push:
     branches: [main]
-    paths-ignore: ["research/**", ".github/workflows/paper.yml"]   # the paper has its own workflow
+    paths-ignore: ["research/**", ".github/workflows/paper.yml", ".github/workflows/vm-task.yml"]   # the paper has its own workflow
   pull_request:
-    paths-ignore: ["research/**", ".github/workflows/paper.yml"]
+    paths-ignore: ["research/**", ".github/workflows/paper.yml", ".github/workflows/vm-task.yml"]
   workflow_dispatch:
 
 env:

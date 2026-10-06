@@ -1,0 +1,182 @@
+name: VM task
+
+# Long experiments on the VM, started and watched from here instead of a terminal session.
+# Manual only (workflow_dispatch): nothing in this file runs on a push.
+#
+#   start        run chat.cli commands one after another, detached, logging to ~/vm-tasks/<name>.log
+#                (steps separated by ';' - each is the argument list of `python -m chat.cli`); with
+#                `after`, wait until that task has finished first
+#   log          the last `lines` lines of a task's log
+#   status       every task (running or finished), containers, memory, disk, the Ollama server
+#   stop         stop a running task
+#   ollama-pull  pull a model into the Ollama container, detached (it can take a while)
+#   fetch        copy files from ~/dblp-dashboard/models/<path> into this run's artifacts
+#
+# Every input is checked against a strict pattern on the runner before anything reaches the VM,
+# so a step can only ever be `python -m chat.cli <one of its own subcommands> <plain arguments>`.
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "start | log | status | stop | ollama-pull | fetch"
+        required: true
+        default: status
+        type: choice
+        options: [start, log, status, stop, ollama-pull, fetch]
+      name:
+        description: "task name (letters, digits, dashes); for ollama-pull, the model tag"
+        required: false
+        default: ""
+      steps:
+        description: "start: chat.cli argument lists separated by ';'"
+        required: false
+        default: ""
+      after:
+        description: "start: name of a task to wait for before starting"
+        required: false
+        default: ""
+      lines:
+        description: "log: lines from the end"
+        required: false
+        default: "120"
+      path:
+        description: "fetch: path under ~/dblp-dashboard/models (globs allowed, no '..')"
+        required: false
+        default: ""
+
+concurrency: vm-task-${{ github.event.inputs.action }}-${{ github.event.inputs.name }}
+
+jobs:
+  task:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      ACTION: ${{ github.event.inputs.action }}
+      NAME: ${{ github.event.inputs.name }}
+      STEPS: ${{ github.event.inputs.steps }}
+      AFTER: ${{ github.event.inputs.after }}
+      LINES: ${{ github.event.inputs.lines }}
+      FETCH_PATH: ${{ github.event.inputs.path }}
+    steps:
+      - name: Check the inputs
+        run: |
+          set -eu
+          name_ok='^[A-Za-z0-9][A-Za-z0-9-]{0,63}$'
+          case "$ACTION" in
+            start|log|stop)
+              [[ "$NAME" =~ $name_ok ]] || { echo "bad task name: '$NAME'"; exit 1; } ;;
+            ollama-pull)
+              [[ "$NAME" =~ ^[a-z0-9][a-z0-9._:-]{0,63}$ ]] || { echo "bad model tag: '$NAME'"; exit 1; } ;;
+          esac
+          if [ "$ACTION" = start ]; then
+            [ -z "$AFTER" ] || [[ "$AFTER" =~ $name_ok ]] || { echo "bad 'after': '$AFTER'"; exit 1; }
+            [ -n "$STEPS" ] || { echo "start needs steps"; exit 1; }
+            IFS=';' read -ra parts <<< "$STEPS"
+            for p in "${parts[@]}"; do
+              p="$(echo "$p" | xargs)"
+              [ -z "$p" ] && continue
+              # a chat.cli subcommand, then plain words: no quotes, no $, no redirection, no globbing
+              [[ "$p" =~ ^(dblpqa|evaluate|scenarios|qa|search-eval|paper-ids|store|tools)([[:space:]][A-Za-z0-9_.,:=/@+-]+)*$ ]] \
+                || { echo "refused step: '$p'"; exit 1; }
+            done
+          fi
+          if [ "$ACTION" = log ]; then [[ "$LINES" =~ ^[0-9]{1,5}$ ]] || { echo "bad lines"; exit 1; }; fi
+          if [ "$ACTION" = fetch ]; then
+            [[ "$FETCH_PATH" =~ ^[A-Za-z0-9_.*/-]+$ ]] && [[ "$FETCH_PATH" != *..* ]] \
+              || { echo "bad path: '$FETCH_PATH'"; exit 1; }
+          fi
+          echo "inputs ok"
+
+      - name: Prepare SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.VM_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.VM_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          echo "VM=${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}" >> "$GITHUB_ENV"
+
+      - name: Start
+        if: env.ACTION == 'start'
+        run: |
+          set -eu
+          # the task script is written here and copied over, so nothing typed in the inputs is ever
+          # interpreted by a shell on the VM: every step was checked to be plain words above
+          {
+            echo 'set -e'
+            echo 'trap '"'"'echo "== exit $? at $(date -u +%FT%TZ)"'"'"' EXIT'
+            echo 'cd ~/dblp-dashboard'
+            if [ -n "$AFTER" ]; then
+              echo "echo \"== waiting for task $AFTER\""
+              echo "while [ -f ~/vm-tasks/$AFTER.pid ] && kill -0 \"\$(cat ~/vm-tasks/$AFTER.pid)\" 2>/dev/null; do sleep 60; done"
+            fi
+            echo 'echo "== started $(date -u +%FT%TZ)"'
+            IFS=';' read -ra parts <<< "$STEPS"
+            for p in "${parts[@]}"; do
+              p="$(echo "$p" | xargs)"
+              [ -z "$p" ] && continue
+              echo "echo \"== step: $p\""
+              echo "docker compose -f docker-compose.prod.yml run --rm -T chat python -m chat.cli $p"
+            done
+          } > task.sh
+          cat task.sh
+          ssh -i ~/.ssh/deploy_key "$VM" "mkdir -p ~/vm-tasks"
+          if ssh -i ~/.ssh/deploy_key "$VM" "[ -f ~/vm-tasks/$NAME.pid ] && kill -0 \$(cat ~/vm-tasks/$NAME.pid) 2>/dev/null"; then
+            echo "task $NAME is still running - stop it first or pick another name"; exit 1
+          fi
+          scp -i ~/.ssh/deploy_key task.sh "$VM:vm-tasks/$NAME.sh"
+          ssh -i ~/.ssh/deploy_key "$VM" "cd ~/vm-tasks && nohup setsid sh $NAME.sh > $NAME.log 2>&1 < /dev/null & echo \$! > ~/vm-tasks/$NAME.pid; sleep 5; tail -n 20 ~/vm-tasks/$NAME.log"
+
+      - name: Log
+        if: env.ACTION == 'log'
+        run: ssh -i ~/.ssh/deploy_key "$VM" "tail -n $LINES ~/vm-tasks/$NAME.log"
+
+      - name: Status
+        if: env.ACTION == 'status'
+        run: |
+          ssh -i ~/.ssh/deploy_key "$VM" bash -s <<'EOF'
+            mkdir -p ~/vm-tasks; cd ~/vm-tasks
+            echo "== tasks"
+            for pid in $(ls -t *.pid 2>/dev/null); do
+              n="${pid%.pid}"
+              if kill -0 "$(cat "$pid")" 2>/dev/null; then state=running; else state=finished; fi
+              echo "-- $n: $state, log updated $(date -u -r "$n.log" +%FT%TZ 2>/dev/null)"
+              tail -n 3 "$n.log" 2>/dev/null | sed 's/^/     /'
+            done
+            echo; echo "== containers"; docker ps --format '{{.Names}}\t{{.Status}}'
+            echo; echo "== memory"; free -h
+            echo; echo "== disk"; df -h / | tail -1
+            echo; echo "== ollama"
+            docker exec ollama ollama --version 2>/dev/null
+            docker exec ollama ollama list 2>/dev/null
+            docker exec ollama ollama ps 2>/dev/null
+            echo "context windows the server loaded, and any prompt it cut:"
+            docker logs ollama 2>&1 | grep -oE 'n_ctx(_per_seq)? *= *[0-9]+|truncating input prompt[^"]*' | sort | uniq -c | tail -10
+          EOF
+
+      - name: Stop
+        if: env.ACTION == 'stop'
+        run: |
+          ssh -i ~/.ssh/deploy_key "$VM" "pid=\$(cat ~/vm-tasks/$NAME.pid 2>/dev/null) && kill -- -\$pid 2>/dev/null; sleep 2; kill -0 \$pid 2>/dev/null && echo still running || echo stopped; docker ps --filter name=chat-run --format '{{.Names}}' | xargs -r docker stop"
+
+      - name: Pull an Ollama model
+        if: env.ACTION == 'ollama-pull'
+        run: |
+          task="pull-$(echo "$NAME" | tr ':.' '--')"
+          ssh -i ~/.ssh/deploy_key "$VM" "mkdir -p ~/vm-tasks && cd ~/vm-tasks && nohup setsid docker exec ollama ollama pull $NAME > $task.log 2>&1 < /dev/null & echo \$! > ~/vm-tasks/$task.pid; sleep 10; tail -c 400 ~/vm-tasks/$task.log; echo; df -h / | tail -1"
+
+      - name: Fetch
+        if: env.ACTION == 'fetch'
+        run: |
+          mkdir -p fetched
+          ssh -i ~/.ssh/deploy_key "$VM" "cd ~/dblp-dashboard/models && tar czf - $FETCH_PATH" > fetched.tgz
+          tar xzf fetched.tgz -C fetched && find fetched -type f | head -50 && du -sh fetched
+
+      - name: Upload what was fetched
+        if: env.ACTION == 'fetch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: vm-files
+          path: fetched
+          retention-days: 7

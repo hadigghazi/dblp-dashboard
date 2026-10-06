@@ -149,11 +149,14 @@ def latest(runs, condition, model, sampling, pool=None):
 
 def rag_runs(runs, pool):
     """The latest run per (rag condition, model, sampling) on this pool: [(condition, model, sampling,
-    run name, {id: record})]."""
+    run name, {id: record})]. Only the study's own strategy (Top-5 Concatenated Documents, in its plain,
+    permissive and gated modes): the replication of the paper's other strategies is reported apart."""
     seen, chosen = set(), []
     for name, summary, records in reversed(runs):
         condition = summary.get("condition") or ""
         if not condition.startswith(DQ.RAG_PREFIX) or summary.get("pool_sha256") != pool:
+            continue
+        if DQ.rag_strategy(condition) != ("cd", 5):
             continue
         for model in summary.get("models") or []:
             key = (condition, model, sampling_of(summary))
