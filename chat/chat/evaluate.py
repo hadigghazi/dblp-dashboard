@@ -142,8 +142,12 @@ def run_cases(ctx, client, cases, each=None):
     return results, None
 
 
-def run(ctx, client, cases=None, limit=None):
+def run(ctx, client, cases=None, limit=None, only=None):
     cases = (cases or goldset.CASES)[:limit] if limit else (cases or goldset.CASES)
+    if only:
+        # a diagnostic subset: the cases whose question (or any turn) contains one of the fragments
+        parts = [x.strip().lower() for x in only.split(",") if x.strip()]
+        cases = [c for c in cases if any(f in " ".join(c.get("turns") or [c.get("q", "")]).lower() for f in parts)]
     results, stopped = run_cases(ctx, client, cases)
     cases = cases[:len(results)]
     scoped = [r for c, r in zip(cases, results) if not c.get("refuses")]

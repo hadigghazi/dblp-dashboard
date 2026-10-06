@@ -109,7 +109,16 @@ def cmd_evaluate(args):
     client = Client()
     if not client.configured():
         sys.exit("No OPENAI_API_KEY set.")
-    payload = E.run(ctx, client, limit=args.limit)
+    if args.no_content_tool:
+        config.CONTENT_TOOL = False          # Dewey as it was before the abstract search, for comparison
+    payload = E.run(ctx, client, limit=args.limit, only=args.only)
+    if args.only:
+        # a diagnostic subset: printed, never saved over the full report
+        print(json.dumps(payload["summary"], indent=2))
+        for case in payload.get("results") or []:
+            print(f"\n== {case['question']} | passed {case['passed']} {case['reason']}\n   tools {case['tools']}\n"
+                  f"   {case['answer']}")
+        return
     if payload["summary"].get("stopped"):
         # not saved: a run cut short by the provider would replace the last real measurement
         print(json.dumps(payload["summary"], indent=2))
@@ -327,6 +336,10 @@ def main():
     ask.set_defaults(fn=cmd_ask)
     ev = sub.add_parser("evaluate", help="run the gold set")
     ev.add_argument("--limit", type=int, default=None)
+    ev.add_argument("--only", default=None,
+                    help="comma-separated fragments: run only the cases whose question contains one (not saved)")
+    ev.add_argument("--no-content-tool", action="store_true",
+                    help="switch the abstract search off, as Dewey was before it")
     ev.set_defaults(fn=cmd_evaluate)
     se = sub.add_parser("search-eval", help="can search find a paper from a description of it?")
     se.add_argument("--papers", type=int, default=60)

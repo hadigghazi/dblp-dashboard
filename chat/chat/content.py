@@ -157,17 +157,36 @@ def map_works(cur, works):
     return found
 
 
+def twins(cur, keys):
+    """{key: [records with the same normalised title]} - a published paper and its preprint are two
+    dblp records, and OpenAlex often has the abstract of only one of them."""
+    if not keys:
+        return {}
+    rows = cur.execute("""
+        SELECT a.key, b.key FROM s.pubs a JOIN s.pubs b ON a.title_norm = b.title_norm AND a.key <> b.key
+        WHERE a.key IN (SELECT unnest(?::VARCHAR[])) AND length(a.title_norm) >= 20""", [list(keys)]).fetchall()
+    found = {}
+    for key, twin in rows:
+        found.setdefault(key, []).append(twin)
+    return found
+
+
 def fill_abstracts(http, cur, cands, timeout):
     """Abstracts for the candidates that came without one (dblp's own hits), in one OpenAlex lookup
-    by DOI. Returns whether the lookup was made."""
+    by DOI - their own, or their preprint's or published twin's. Returns whether the lookup was made."""
     need = [k for k, c in cands.items() if not c.get("abstract")]
+    twin_of = twins(cur, need)
+    ids = paperids.ids_for(cur, need + [t for ts in twin_of.values() for t in ts])
     by_doi = {}
-    for key, ids in paperids.ids_for(cur, need).items():
-        doi = ids.get("doi") or (f"10.48550/arxiv.{ids['arxiv']}" if ids.get("arxiv") else None)
-        # OpenAlex's filter syntax splits on "," and "|", so a DOI holding either cannot be asked for
-        if doi and not set(doi) & {",", "|"}:
-            by_doi.setdefault(doi.lower(), key)
-            cands[key]["doi"] = cands[key].get("doi") or doi.lower()
+    for key in need:
+        for source in [key] + twin_of.get(key, []):
+            got = ids.get(source) or {}
+            doi = got.get("doi") or (f"10.48550/arxiv.{got['arxiv']}" if got.get("arxiv") else None)
+            # OpenAlex's filter syntax splits on "," and "|", so a DOI holding either cannot be asked for
+            if doi and not set(doi) & {",", "|"} and doi.lower() not in by_doi:
+                by_doi[doi.lower()] = key
+                if source == key:
+                    cands[key]["doi"] = cands[key].get("doi") or doi.lower()
     if not by_doi or not take_openalex(1):
         return False
     params = {"filter": "doi:" + "|".join(list(by_doi)[:50]), "per-page": 50,
@@ -180,7 +199,7 @@ def fill_abstracts(http, cur, cands, timeout):
     for work in (r.json() or {}).get("results") or []:
         doi = (work.get("doi") or "").lower().replace("https://doi.org/", "")
         text = RAG._inverted(work.get("abstract_inverted_index"))
-        if doi in by_doi and text:
+        if doi in by_doi and text and not cands[by_doi[doi]].get("abstract"):
             cands[by_doi[doi]]["abstract"] = text
     return True
 
