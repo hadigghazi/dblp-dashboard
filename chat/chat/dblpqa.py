@@ -40,8 +40,11 @@ DATASET_URL = "https://seafile.rlp.net/f/6581519cdd1d4782bccc/?dl=1"
 # Which question set the harness works on: the original 50, or DBLP-QA-Fresh (dblpqa_fresh), questions
 # from papers too recent for the models to have seen. Each has its own folder, so runs, caches and the
 # pairings between runs never mix.
+# fresh2 is a held-out set built the same way from other papers: Dewey's second version was designed
+# from its first version's failures on dblpqa and fresh, so it is measured on questions never looked at
 DATASETS = {"dblpqa": {"dir": "dblpqa", "file": "dblp-qa.csv", "url": DATASET_URL},
-            "fresh": {"dir": "dblpqa-fresh", "file": "fresh.csv", "url": None}}
+            "fresh": {"dir": "dblpqa-fresh", "file": "fresh.csv", "url": None},
+            "fresh2": {"dir": "dblpqa-fresh2", "file": "fresh.csv", "url": None}}
 DATASET = "dblpqa"
 
 

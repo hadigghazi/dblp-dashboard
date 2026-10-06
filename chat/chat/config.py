@@ -85,6 +85,14 @@ CONTENT_ABSTRACT_CHARS = 2000
 CONTENT_MAX_CHARS = 16000         # what the model reads of the tool's result (other tools: 6,000)
 CONTENT_CALLS_PER_QUESTION = 2
 CONTENT_CACHE_DAYS = 30
+# Version 2 of the content path, from the failure analysis of version 1 on DBLP-QA and Fresh: the rule
+# that never declines a research question before searching and searches a second time with the
+# question's distinctive terms (2; 1 is the first rule); abstracts from Semantic Scholar and Crossref for
+# the best candidates OpenAlex has none for; and a stronger model writing answers built on abstracts
+# ("" leaves them to the router). The evaluation switches these per variant to measure each version.
+CONTENT_RULE_VERSION = int(os.environ.get("CHAT_CONTENT_RULE_VERSION", "2"))
+CONTENT_FALLBACK = os.environ.get("CHAT_CONTENT_FALLBACK", "1") != "0"
+CONTENT_WRITER = os.environ.get("CHAT_CONTENT_WRITER", MODEL_DEEP)
 
 
 def configured() -> bool:

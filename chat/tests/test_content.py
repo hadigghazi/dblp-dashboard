@@ -227,7 +227,11 @@ class DeweyAndJudge:
         return {"content": text, "usage": usage, "model": model, "tool_calls": []}
 
     def stream(self, messages, model, temperature=None):
-        yield "token", "unused"
+        # the content writer (version 2): answers from the tool result, as the router would
+        found = json.loads(next(m["content"] for m in messages if m["role"] == "tool"))
+        rows = found.get("rows") or []
+        yield "token", f"It is about {rows[0]['title']} [1]." if rows else "No abstract addresses it."
+        yield "usage", {"input_tokens": 100, "output_tokens": 10}
 
 
 DEWEY_CSV = """id,question,answer,dblp_key,semantic_scholar_id
@@ -277,3 +281,98 @@ def test_source_hits_and_citations():
     assert not none["source_listed"] and none["retrieved"] == ["conf/a/X", "corr/abs-1"]
     cites = DW.citations("A [1] and B [2] and C [7].", payloads)
     assert cites == {"cited": [1, 2, 7], "invalid": [7]}
+
+
+# --------------------------------------------------------------------------- version 2
+
+LONG = ("A long enough abstract about graph learning at scale, written so that a fallback source has "
+        "something worth returning: partitioning, sampling and training on billions of edges.")
+
+
+def test_v2_fills_missing_abstracts_from_semantic_scholar_then_crossref(indexed, monkeypatch):
+    monkeypatch.setattr(config, "SEARCH_URL", "http://searchapi")
+    monkeypatch.setattr(config, "CONTENT_FALLBACK", True)
+    monkeypatch.setattr(content, "_semantic_last", [0.0])
+    log = []
+    base = fake_web(log)
+
+    def handler(request):
+        url = request.url
+        if url.host == "api.openalex.org" and "filter" in url.params:
+            log.append(url)
+            return httpx.Response(200, json={"results": []})        # OpenAlex has neither abstract
+        if url.host == "api.semanticscholar.org":
+            log.append(url)
+            ids = json.loads(request.content)["ids"]
+            return httpx.Response(200, json=[{"abstract": LONG} if i == "DOI:10.1109/6" else None for i in ids])
+        if url.host == "api.crossref.org":
+            log.append(url)
+            return httpx.Response(200, json={"message": {"abstract": f"<jats:p>Abstract {LONG} Crossref.</jats:p>"}})
+        return base(request)
+
+    ctx = agent.Ctx(data.pool, httpx.Client(transport=httpx.MockTransport(handler)), indexed["store_meta"])
+    out = T.call(ctx, "search_abstracts", {"question": "graph learning at scale with fallback abstracts"})
+    rows = {r["key"]: r for r in out["rows"]}
+    assert rows["conf/aaa/p6"]["abstract"] == LONG, "Semantic Scholar's abstract, by DOI"
+    assert rows["conf/aaa/p9"]["abstract"].startswith("A long enough") and rows["conf/aaa/p9"]["abstract"].endswith("Crossref."), \
+        "Crossref's, with its markup and its 'Abstract' heading removed"
+    assert [u.path for u in log if u.host == "api.crossref.org"] == ["/works/10.1109/9"], "only what is still missing"
+    assert "search once more" in out["note"]
+
+    monkeypatch.setattr(config, "CONTENT_FALLBACK", False)
+    monkeypatch.setattr(config, "CONTENT_RULE_VERSION", 1)
+    v1 = T.call(agent.Ctx(data.pool, httpx.Client(transport=httpx.MockTransport(handler)), indexed["store_meta"]),
+                "search_abstracts", {"question": "graph learning at scale with fallback abstracts"})
+    assert {r["key"]: r for r in v1["rows"]}["conf/aaa/p6"]["abstract"] == "(no abstract available)", \
+        "version 1 has no fallback, and its own cache entry"
+    assert "search once more" not in v1["note"]
+
+
+def test_v2_answers_built_on_abstracts_are_written_by_the_stronger_model(ctx, ledger, monkeypatch):
+    from chat.llm import FakeClient
+    monkeypatch.setitem(T.HANDLERS, "search_abstracts", lambda ctx, **kw: {
+        "summary": "1 abstract", "columns": ["n", "title", "abstract"],
+        "rows": [{"n": 1, "title": "T", "key": "conf/x/T", "abstract": "A"}],
+        "meta": {"sources": {"dblp-search": "ok"}}})
+    call = {"id": "c1", "name": "search_abstracts", "arguments": {"question": "What is X?"}}
+
+    monkeypatch.setattr(config, "CONTENT_WRITER", "gpt-4.1")
+    client = FakeClient(script=[{"tool_calls": [call]}, {"content": "the router's draft"}], answer="X is T [1].")
+    out = agent.answer(ctx, client, "What is X?", ledger=ledger)
+    assert out["answer"].strip() == "X is T [1]." and out["model"] == "gpt-4.1"
+    assert client.calls[-1]["kind"] == "stream" and client.calls[-1]["model"] == "gpt-4.1"
+
+    plain = FakeClient(script=[{"tool_calls": [{"id": "c2", "name": "top_authors", "arguments": {"limit": 1}}]},
+                               {"content": "Ada Alpha."}])
+    assert agent.answer(ctx, plain, "who has most papers?", ledger=ledger)["model"] == config.MODEL_FAST, \
+        "no abstracts read: the router's answer stands"
+
+    monkeypatch.setattr(config, "CONTENT_WRITER", "")
+    v1 = FakeClient(script=[{"tool_calls": [call]}, {"content": "the router's answer [1]."}])
+    out = agent.answer(ctx, v1, "What is X?", ledger=ledger)
+    assert out["answer"] == "the router's answer [1]." and out["model"] == config.MODEL_FAST, "version 1"
+
+
+def test_the_v2_prompt_searches_before_declining_and_searches_again():
+    v1, v2 = agent.CONTENT_RULES[1], agent.CONTENT_RULES[2]
+    assert "never call such a question outside the data" in v2 and "search once more" in v2
+    assert "outside the data" not in v1, "version 1 is kept as it was"
+
+
+def test_a_variant_sets_its_own_content_settings_and_puts_them_back(indexed, tmp_path, monkeypatch):
+    rows = DQ.parse(DEWEY_CSV)
+    pools = {"qa1": {"aliases": ["journals/bbb/p7"], "candidates": {
+        "journals/bbb/p7": {"title": "Graph neural networks for traffic", "abstract": ABSTRACTS["10.1109/7"]}}},
+             "qa2": {"aliases": ["conf/x/B2"], "candidates": {}}, "qa3": {"aliases": ["conf/x/C3"], "candidates": {}}}
+    monkeypatch.setattr(DQ, "study_dir", lambda: tmp_path)
+    monkeypatch.setattr(RAG, "prepare", lambda rows, **kw: (pools, {}, {"pool": {"sha256": "P1"}, "rankers": {}}))
+    monkeypatch.setattr(DQ, "fetch_abstracts", lambda rows, **kw: {q: {"title": None} for q in ("qa1", "qa2", "qa3")})
+    before = {n: getattr(config, n) for n in DW.V2}
+    ctx = agent.Ctx(data.pool, httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(404))),
+                    indexed["store_meta"])
+    got = DW.run(ctx, DeweyAndJudge(), rows, "sha", variant="dewey-v2-frozen", judge_model="judge", out=lambda *_: None)
+    assert {n: getattr(config, n) for n in DW.V2} == before, "settings restored"
+    assert got["agent"]["content_rule_version"] == 2 and got["agent"]["content_writer"] == "gpt-4.1"
+    run = next(d for d in (tmp_path / "runs").iterdir() if d.name.endswith("-dewey-v2-frozen"))
+    first = json.loads((run / "answers.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    assert first["writer"] == "gpt-4.1" and first["source_in_context"]

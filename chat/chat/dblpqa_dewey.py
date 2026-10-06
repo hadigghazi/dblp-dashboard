@@ -36,8 +36,15 @@ from .llm import LLMError
 
 log = logging.getLogger("dblp.chat.dblpqa_dewey")
 
-VARIANTS = ("dewey", "dewey-frozen", "dewey-v0")
+VARIANTS = ("dewey", "dewey-frozen", "dewey-v0", "dewey-v2", "dewey-v2-frozen")
 MODEL = "dewey"
+# What each variant is: its content path's settings, applied for the run and restored after it, so any
+# version can be measured from one build. "dewey" is the first content tool (version 1); "dewey-v2" the
+# second, built from where the first lost points.
+V1 = {"CONTENT_TOOL": True, "CONTENT_RULE_VERSION": 1, "CONTENT_WRITER": "", "CONTENT_FALLBACK": False}
+V2 = {"CONTENT_TOOL": True, "CONTENT_RULE_VERSION": 2, "CONTENT_WRITER": "gpt-4.1", "CONTENT_FALLBACK": True}
+SETTINGS = {"dewey": V1, "dewey-frozen": V1, "dewey-v0": dict(V1, CONTENT_TOOL=False), "dewey-v2": V2,
+            "dewey-v2-frozen": V2}
 CITE = re.compile(r"\[(\d+)\]")
 # what each Dewey run is set beside: (label, condition, model, sampling, on the same pool)
 BASELINES = [
@@ -49,9 +56,11 @@ BASELINES = [
     ("RAGScholar's configuration (Mistral-7B, BM25 top-5 concatenated)", "rag-bm25", "ollama:mistral:v0.1",
      "paper", True),
     ("oracle, gpt-4.1-mini", "oracle", "gpt-4.1-mini", "ours", False),
-    ("Dewey as deployed", "dewey", MODEL, "ours", False),
-    ("Dewey on the frozen pool", "dewey-frozen", MODEL, "ours", True),
+    ("Dewey v1", "dewey", MODEL, "ours", False),
+    ("Dewey v1 on the frozen pool", "dewey-frozen", MODEL, "ours", True),
     ("Dewey before the abstract search", "dewey-v0", MODEL, "ours", False),
+    ("Dewey v2", "dewey-v2", MODEL, "ours", False),
+    ("Dewey v2 on the frozen pool", "dewey-v2-frozen", MODEL, "ours", True),
 ]
 
 
@@ -204,14 +213,17 @@ def run(ctx, client, rows, sha, variant="dewey", judge_model="gpt-4.1", allow_in
             out("stopped: the judge failed its controls")
             return None
     ledger = budget.Ledger(path=DQ.study_dir() / "dewey-ledger.json")
-    was = config.CONTENT_TOOL
-    config.CONTENT_TOOL = variant != "dewey-v0"
+    settings = SETTINGS[variant]
+    was = {name: getattr(config, name) for name in settings}
+    for name, value in settings.items():
+        setattr(config, name, value)
+    frozen = variant.endswith("-frozen")
     started, records, stopped = time.time(), [], None
     try:
         with open(out_dir / "answers.jsonl", "w", encoding="utf-8") as fh:
             for i, row in enumerate(rows, 1):
                 qid = row["id"]
-                ctx.frozen_pool = pools.get(qid) if variant == "dewey-frozen" else None
+                ctx.frozen_pool = pools.get(qid) if frozen else None
                 payloads = []
                 done = _answer(ctx, client, row["question"], ledger, payloads)
                 if done.get("error_kind") in ("credit", "key"):
@@ -246,7 +258,8 @@ def run(ctx, client, rows, sha, variant="dewey", judge_model="gpt-4.1", allow_in
                 if i % 10 == 0 or i == len(rows):
                     out(f"  {variant}: {i}/{len(rows)} answered, {time.time() - started:.0f}s")
     finally:
-        config.CONTENT_TOOL = was
+        for name, value in was.items():
+            setattr(config, name, value)
         ctx.frozen_pool = None
     entry = summarize(records, variant, runs_dir, pool)
     print_summary(entry, variant, out)
@@ -258,8 +271,8 @@ def run(ctx, client, rows, sha, variant="dewey", judge_model="gpt-4.1", allow_in
         "agent": {"router": config.MODEL_FAST, "deep": config.MODEL_DEEP,
                   "escalate_after_rounds": config.ESCALATE_AFTER_ROUNDS, "max_rounds": config.MAX_ROUNDS,
                   "max_tool_calls": config.MAX_TOOL_CALLS, "time_budget": config.TIME_BUDGET_SECONDS,
-                  "content_tool": variant != "dewey-v0", "content_top": config.CONTENT_TOP,
-                  "content_pool": config.CONTENT_POOL},
+                  "content_top": config.CONTENT_TOP, "content_pool": config.CONTENT_POOL,
+                  **{name.lower(): value for name, value in settings.items()}},
         "judge_cost_usd": meter.cost(), "seconds": round(time.time() - started, 1),
     }
     (out_dir / "summary.json").write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")

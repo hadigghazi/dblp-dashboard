@@ -117,7 +117,8 @@ MISSING = ("neither dblp nor the abstracts can give (citations, full text, per-p
            "awards, demographics)")
 MISSING_WITHOUT_ABSTRACTS = ("dblp does not have (citations, abstracts, affiliations, impact, awards, "
                              "demographics)")
-CONTENT_RULE = """9. Questions about what papers say - what a method or idea is, how something works, what a paper
+# Version 1 is kept word for word: the evaluation re-runs it beside version 2.
+CONTENT_RULES = {1: """9. Questions about what papers say - what a method or idea is, how something works, what a paper
    proposes, finds or argues, why something is needed - are answered with search_abstracts. Pass the
    question as the user asked it, made self-contained (resolve "it" or "that paper" from earlier
    turns; pass `keys` when the papers are already known). Answer from the returned abstracts, and end
@@ -125,7 +126,24 @@ CONTENT_RULE = """9. Questions about what papers say - what a method or idea is,
    addresses the question, say so in one
    clause; you may then add one or two sentences of general background, saying that it is general
    background, with no numbers and no citations. Never attribute to an abstract what it does not say.
-"""
+""",
+    # version 2, from where version 1 lost points: it called research outside computing "not in the
+    # data" without searching, took one search's word for it, and diluted the paper that answered with
+    # the four that did not
+    2: """9. Questions about what research says - what a method, system or idea is, how something works,
+   what a paper proposes, finds or argues, why something matters - are answered with search_abstracts,
+   whatever the field: dblp indexes papers from all of computing and from fields that use it (health,
+   engineering, education, the social sciences), so never call such a question outside the data
+   before searching. Pass the question as the user asked it, made self-contained (resolve "it" or
+   "that paper" from earlier turns; pass `keys` when the papers are already known). If none of the
+   abstracts addresses the question, search once more with its most distinctive terms: the name of
+   the method or system, an acronym, a specific phrase. Answer the question first from the abstract
+   that addresses it most directly, then add what other abstracts say only where it answers the same
+   question; end every sentence that uses an abstract with its number in brackets, like [2] or [1][3].
+   If no abstract addresses it even after the second search, say so in one clause, then answer as
+   well as you can from general knowledge, saying that it is general background, with no numbers and
+   no citations. Never attribute to an abstract what it does not say.
+"""}
 
 
 def system_prompt(ctx):
@@ -141,7 +159,7 @@ def system_prompt(ctx):
                          latest_mdate=ctx.meta.get("latest_mdate", "unknown"),
                          last_full_year=ctx.last_full_year(), limits=docs.limits(),
                          missing=MISSING if content else MISSING_WITHOUT_ABSTRACTS,
-                         content_rule=CONTENT_RULE if content else "")
+                         content_rule=CONTENT_RULES[config.CONTENT_RULE_VERSION] if content else "")
 
 
 def _trim(payload, cap=MAX_RESULT_CHARS):
@@ -318,13 +336,18 @@ def answer(ctx, client, question, history=None, emit=None, ledger=None, collect=
                              "Say plainly if something is missing."})
             break
 
-    if direct is not None:
+    # an answer built on abstracts is written by the content writer (version 2): synthesising five
+    # abstracts into a cited answer is where the router's own prose was weakest
+    searched = any(p.get("name") == "search_abstracts" and not (p.get("result") or {}).get("refused")
+                   for p in collect)
+    writer = config.CONTENT_WRITER if searched and config.CONTENT_WRITER else None
+    if direct is not None and not writer:
         # the model answered without tools: usually a definition or a clarifying question
         for piece in direct.split(" "):
             emit({"type": "token", "text": piece + " "})
         text = direct
     else:
-        model = config.MODEL_DEEP if rounds >= config.ESCALATE_AFTER_ROUNDS else config.MODEL_FAST
+        model = writer or (config.MODEL_DEEP if rounds >= config.ESCALATE_AFTER_ROUNDS else config.MODEL_FAST)
         emit({"type": "status", "text": "writing the answer"})
         pieces = []
         try:

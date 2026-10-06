@@ -40,6 +40,14 @@ log = logging.getLogger("dblp.chat.content")
 SOURCES = ("dblp-search", "openalex-search", "openalex-semantic")
 NOTE = ("Abstracts come from OpenAlex, not dblp. Answer from them and cite each claim as [n]; if none "
         "addresses the question, say so. A paper missing here is not evidence that none exists.")
+NOTE_V2 = ("Abstracts come from OpenAlex, Semantic Scholar or Crossref, not dblp. Answer from the one that "
+           "addresses the question most directly and cite each claim as [n]. If none addresses it, search "
+           "once more with the question's most distinctive terms. A paper missing here is not evidence that "
+           "none exists.")
+S2_BATCH = "https://api.semanticscholar.org/graph/v1/paper/batch"
+CROSSREF = "https://api.crossref.org/works/"
+FALLBACK_TOP = 10          # the best-ranked candidates worth a second abstract source
+FALLBACK_CROSSREF = 3
 
 _semantic_lock = threading.Lock()
 _semantic_last = [0.0]
@@ -204,6 +212,63 @@ def fill_abstracts(http, cur, cands, timeout):
     return True
 
 
+def _crossref_abstract(http, doi, timeout):
+    r = http.get(CROSSREF + doi, timeout=timeout)
+    if r.status_code != 200:
+        return None
+    raw = ((r.json() or {}).get("message") or {}).get("abstract") or ""
+    text = " ".join(re.sub(r"<[^>]+>", " ", raw).split())
+    text = re.sub(r"^Abstract\s+", "", text)
+    return text if len(text.split()) >= 20 else None
+
+
+def fallback_abstracts(http, cur, cands, query, deadline):
+    """Version 2: abstracts for the best-ranked candidates OpenAlex has none for - Semantic Scholar in
+    one batch, then Crossref for a few - as the study fetched its own source abstracts. The paper a
+    question is about is often found by its title and has no OpenAlex abstract (a 2026 conference
+    paper, say), so without this it is ranked first and read as nothing. Returns how many were found."""
+    need = [k for k in rank(query, cands)[:FALLBACK_TOP] if not cands[k].get("abstract")]
+    if not need or time.time() > deadline - 1.5:
+        return 0
+    ids = paperids.ids_for(cur, need)
+    s2 = {}
+    for key in need:
+        got = ids.get(key) or {}
+        if got.get("doi"):
+            s2[key] = f"DOI:{got['doi']}"
+        elif got.get("arxiv"):
+            s2[key] = f"ARXIV:{got['arxiv']}"
+    found = 0
+    if s2:
+        try:
+            r = http.post(S2_BATCH, params={"fields": "abstract"}, json={"ids": list(s2.values())},
+                          timeout=max(0.5, min(3.0, deadline - time.time() - 1.0)))
+            if r.status_code == 200:
+                for key, paper in zip(s2, r.json() or []):
+                    if paper and len((paper.get("abstract") or "").split()) >= 20:
+                        cands[key]["abstract"] = paper["abstract"]
+                        found += 1
+        except Exception as e:                  # a slow or refused source costs the abstract, not the answer
+            log.warning("Semantic Scholar abstracts: %s", e)
+    left = [k for k in need if not cands[k].get("abstract") and (ids.get(k) or {}).get("doi")][:FALLBACK_CROSSREF]
+    if left and time.time() < deadline - 1.0:
+        pool = ThreadPoolExecutor(max_workers=len(left))
+        try:
+            timeout = max(0.5, min(2.5, deadline - time.time() - 0.5))
+            futures = {k: pool.submit(_crossref_abstract, http, ids[k]["doi"], timeout) for k in left}
+            for key, future in futures.items():
+                try:
+                    text = future.result(timeout=timeout + 0.5)
+                except Exception:
+                    text = None
+                if text:
+                    cands[key]["abstract"] = text
+                    found += 1
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
+    return found
+
+
 def retrieve(ctx, query, deadline):
     """The live pool: ({dblp key: {title, abstract, doi, found_by}}, {source: status}, degraded)."""
     cur = ctx.cursor()
@@ -262,6 +327,8 @@ def retrieve(ctx, query, deadline):
             fill_abstracts(ctx.http, cur, cands, max(0.5, deadline - time.time() - 0.3))
         except Exception as e:
             log.warning("abstract lookup by DOI failed: %s", e)
+    if config.CONTENT_FALLBACK and cands:
+        fallback_abstracts(ctx.http, cur, cands, query, deadline)
     return cands, status, degraded
 
 
@@ -304,8 +371,9 @@ def pool_for(ctx, query, deadline):
                      "found_by": ["frozen pool"]}
                  for k, e in (frozen.get("candidates") or {}).items()}
         return cands, {"frozen pool": "ok"}, None, False
-    # v2: abstracts from a preprint's or published twin, a 12 s search limit - pools from before are not reused
-    request = {"v": 2, "q": query.lower()}
+    # v2: abstracts from a preprint's or published twin, a 12 s search limit; v3: Semantic Scholar and
+    # Crossref abstracts too (content version 2) - pools of one version are never served to another
+    request = {"v": 3 if config.CONTENT_FALLBACK else 2, "q": query.lower()}
     hit = _cached(request)
     if hit is not None:
         return hit["cands"], hit["status"], None, True
@@ -360,7 +428,7 @@ def search_abstracts(ctx, question=None, keys=None, frm=None, to=None):
                + (f" ({missing} of them without an abstract)" if missing else "") + ".")
     if not rows:
         summary = f"No papers found for “{query}”."
-    note = NOTE + (f" Degraded: {degraded}." if degraded else "")
+    note = (NOTE_V2 if config.CONTENT_RULE_VERSION >= 2 else NOTE) + (f" Degraded: {degraded}." if degraded else "")
     return result(summary, ["n", "title", "year", "venue", "found_by", "key", "doi", "abstract"], rows,
                   note=note, link={"page": "papers", "q": query}, candidates=len(cands),
                   with_abstract=with_abstract, sources=status, degraded=degraded, cached=cached,

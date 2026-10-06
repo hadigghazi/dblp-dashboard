@@ -134,10 +134,11 @@ def cmd_dblpqa(args):
     client = Client()
     if not client.configured():
         sys.exit("No OPENAI_API_KEY set.")
-    DQ.use_dataset("fresh" if args.condition == "fresh-build" else args.dataset)
+    fresh_set = args.dataset if args.dataset.startswith("fresh") else "fresh"
+    DQ.use_dataset(fresh_set if args.condition == "fresh-build" else args.dataset)
     if args.condition == "fresh-build":
         from . import dblpqa_fresh as FR
-        FR.build(client, target=args.target, candidates=args.candidates)
+        FR.build(client, target=args.target, candidates=args.candidates, dataset=fresh_set)
         return
     if args.condition == "report":
         DQ.report(args.run)
@@ -186,7 +187,8 @@ def cmd_dblpqa(args):
         if args.condition == "dewey-retrieval":
             DW.retrieval_check(ctx, rows, allow_incomplete=args.allow_incomplete_pool)
             return
-        variant = {"live": "dewey", "frozen": "dewey-frozen", "v0": "dewey-v0"}[args.variant]
+        variant = {"live": "dewey", "frozen": "dewey-frozen", "v0": "dewey-v0", "v2": "dewey-v2",
+                   "v2-frozen": "dewey-v2-frozen"}[args.variant]
         DW.run(ctx, client, rows, sha, variant=variant, judge_model=args.judge,
                allow_incomplete=args.allow_incomplete_pool)
         return
@@ -364,9 +366,10 @@ def main():
                     help="for structured: Dewey, RAGScholar's pipeline over the records (--models), or the "
                          "question alone (--models)")
     dq.add_argument("--seed", type=int, default=7, help="for structured-build: which questions are drawn")
-    dq.add_argument("--variant", choices=["live", "frozen", "v0"], default="live",
-                    help="for dewey: live = as deployed; frozen = its abstract search ranks the study's frozen "
-                         "pool; v0 = as it was before the abstract search (declines content questions)")
+    dq.add_argument("--variant", choices=["live", "frozen", "v0", "v2", "v2-frozen"], default="live",
+                    help="for dewey: live = the first content tool (v1), searching live; frozen = v1 ranking the "
+                         "study's frozen pool; v0 = before the abstract search (declines content questions); "
+                         "v2 = the second version (as deployed); v2-frozen = v2 on the frozen pool")
     dq.add_argument("--strategy", choices=["cd", "single", "ca"], default="cd",
                     help="for rag: the paper's context strategies - cd = top --k abstracts concatenated; "
                          "single = only the --k-th ranked abstract (A1-A5); ca = an answer per top --k "
@@ -386,8 +389,9 @@ def main():
                     help="for rag: permissive = told the abstracts may be off-topic; gated = a relevance "
                          "check keeps only abstracts that address the question (none kept = closed-book)")
     dq.add_argument("--gate-model", default="gpt-4.1-mini", help="for --mode gated")
-    dq.add_argument("--dataset", choices=["dblpqa", "fresh"], default="dblpqa",
-                    help="the original 50 questions, or DBLP-QA-Fresh (built by fresh-build)")
+    dq.add_argument("--dataset", choices=["dblpqa", "fresh", "fresh2"], default="dblpqa",
+                    help="the original 50 questions, DBLP-QA-Fresh, or the held-out Fresh set (fresh-build "
+                         "builds either)")
     dq.add_argument("--target", type=int, default=100, help="for fresh-build: questions to keep")
     dq.add_argument("--candidates", type=int, default=None,
                     help="for fresh-build: papers to sample (default 4x --target)")

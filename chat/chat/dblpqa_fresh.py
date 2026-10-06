@@ -34,6 +34,9 @@ from . import dblpqa as DQ, dblpqa_rag as RAG
 
 FIRST_YEAR = 2025
 SEED = "dblpqa-fresh-1"
+# each Fresh set has its own seed and its own id prefix, and never reuses another's papers
+SEEDS = {"fresh": SEED, "fresh2": "dblpqa-fresh-2"}
+PREFIX = {"fresh": "fq", "fresh2": "hq"}
 GENERATOR = "gpt-4.1"
 CHECKER = "gpt-4.1-mini"
 MIN_WORDS = 80
@@ -90,9 +93,21 @@ def parse_pair(text):
     return question, answer
 
 
-def build(client, target=100, out=print, parquet=None, http=None, candidates=None):
-    """Write the Fresh set (fresh.csv, abstracts.json) to its study folder; returns its rows."""
-    DQ.use_dataset("fresh")
+def used_keys(dataset):
+    """The source papers of every other Fresh set already built."""
+    keys = set()
+    for name in SEEDS:
+        if name == dataset:
+            continue
+        path = DQ.config.MODELS_DIR / DQ.DATASETS[name]["dir"] / DQ.DATASETS[name]["file"]
+        if path.exists():
+            keys |= {r["dblp_key"] for r in DQ.parse(path.read_text(encoding="utf-8"))}
+    return keys
+
+
+def build(client, target=100, out=print, parquet=None, http=None, candidates=None, dataset="fresh"):
+    """Write a Fresh set (fresh.csv, abstracts.json) to its study folder; returns its rows."""
+    DQ.use_dataset(dataset)
     folder = DQ.study_dir()
     folder.mkdir(parents=True, exist_ok=True)
     state_path = folder / "fresh-build.json"
@@ -100,7 +115,9 @@ def build(client, target=100, out=print, parquet=None, http=None, candidates=Non
     http = http or httpx.Client(follow_redirects=True, timeout=60, headers={"User-Agent": "dblp-explorer-research"})
     meter = DQ.Meter()
 
-    papers = sample_papers(candidates or target * 4, parquet)
+    taken = used_keys(dataset)
+    papers = [p for p in sample_papers((candidates or target * 4) + len(taken), parquet, seed=SEEDS[dataset])
+              if p[0] not in taken][:candidates or target * 4]
     if not papers:
         raise SystemExit(f"no papers from {FIRST_YEAR} on in the dblp dump")
     out(f"{len(papers)} candidate papers from {FIRST_YEAR} on (newest year in the sample: "
@@ -141,7 +158,7 @@ def build(client, target=100, out=print, parquet=None, http=None, candidates=Non
             record["check"]["answer"] = got
         if "question" in record and record["check"]["score"] == 2:
             s2 = ids.get(key) or {}
-            rows.append({"id": f"fq{len(rows) + 1}", "question": record["question"], "answer": record["answer"],
+            rows.append({"id": f"{PREFIX[dataset]}{len(rows) + 1}", "question": record["question"], "answer": record["answer"],
                          "dblp_key": key, "semantic_scholar_id": str(s2.get("corpus_id") or "")})
             record["kept_as"] = rows[-1]["id"]
         if len(state["papers"]) % 10 == 0:
@@ -166,7 +183,8 @@ def build(client, target=100, out=print, parquet=None, http=None, candidates=Non
         why = why if why in ("kept", "no abstract", "abstract too short", "its abstract did not answer it",
                              "not reached") else "unusable question"
         reasons[why] = reasons.get(why, 0) + 1
-    out(f"\nDBLP-QA-Fresh: {len(rows)} questions (target {target}) -> {folder / 'fresh.csv'}")
+    out(f"\n{dataset}: {len(rows)} questions (target {target}), none from the {len(taken)} papers of the other "
+        f"Fresh sets -> {folder / 'fresh.csv'}")
     out("papers read: " + ", ".join(f"{k} {v}" for k, v in sorted(reasons.items())) + f"   ${meter.cost()}")
     if len(rows) < target:
         out(f"fewer than {target}: re-run with a larger --candidates to read more papers (the rest is cached)")
