@@ -13,6 +13,7 @@ Everything is synchronous: DuckDB is synchronous, and the endpoint streams from 
 """
 import json
 import logging
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 
@@ -56,9 +57,8 @@ HOW TO WORK
    Never explain a failed lookup with a guess about the person or the data ("he probably has no
    co-authors"): a wrong key is a wrong key - resolve the name again. An empty result is only evidence
    of "never" or "none" when every filter behind it came from a tool, not from a guess.
-6. When a question needs something dblp does not have (citations, abstracts, affiliations, impact,
-   awards, demographics), say it is not in the data, in one sentence, then offer the nearest thing
-   that IS answerable and answer that if it is obvious.
+6. When a question needs something {missing}, say it is not in the data, in one sentence, then
+   offer the nearest thing that IS answerable and answer that if it is obvious.
 7. For accuracy claims about the ML models or search, call model_cards and quote the measured
    numbers with their baseline. Never estimate them.
 8. A follow-up ("and his co-authors?", "what about 2014?", "the second one") is about the subject of
@@ -69,7 +69,7 @@ HOW TO WORK
    list, call resolve_author or resolve_venue again with the name. Never guess a key, and never
    ask the user for one - nobody knows dblp keys. Name the subject in your answer so it cannot be
    misread.
-
+{content_rule}
 STYLE
 - Two to four sentences. Lead with the answer.
 - The interface already renders each tool's table under your answer: do not repeat more than the two
@@ -107,6 +107,22 @@ class Ctx:
         return self.pool.last_full_year()
 
 
+# What a question about paper content gets. With the abstract search switched off (CHAT_CONTENT_TOOL=0,
+# or the evaluation's "as it was" variant) the old rule is back: abstracts are among what dblp lacks.
+MISSING = ("neither dblp nor the abstracts can give (citations, full text, per-paper affiliations, impact, "
+           "awards, demographics)")
+MISSING_WITHOUT_ABSTRACTS = ("dblp does not have (citations, abstracts, affiliations, impact, awards, "
+                             "demographics)")
+CONTENT_RULE = """9. Questions about what papers say - what a method or idea is, how something works, what a paper
+   proposes, finds or argues, why something is needed - are answered with search_abstracts. Pass the
+   question as the user asked it, made self-contained (resolve "it" or "that paper" from earlier
+   turns; pass `keys` when the papers are already known). Answer from the returned abstracts and cite
+   each claim with its number, [1] to [5]. If none of them addresses the question, say so in one
+   clause; you may then add one or two sentences of general background, saying that it is general
+   background, with no numbers and no citations. Never attribute to an abstract what it does not say.
+"""
+
+
 def system_prompt(ctx):
     facts = {}
     try:
@@ -114,27 +130,35 @@ def system_prompt(ctx):
     except Exception as e:                       # the store may not be attached yet
         log.warning("dataset facts unavailable for the prompt: %s", e)
     fmt = lambda k: f"{facts[k]:,}" if k in facts else "an unknown number of"
+    content = config.CONTENT_TOOL
     return SYSTEM.format(records=fmt("records"), publications=fmt("publications"),
                          author_pages=fmt("author_pages"),
                          latest_mdate=ctx.meta.get("latest_mdate", "unknown"),
-                         last_full_year=ctx.last_full_year(), limits=docs.LIMITS)
+                         last_full_year=ctx.last_full_year(), limits=docs.limits(),
+                         missing=MISSING if content else MISSING_WITHOUT_ABSTRACTS,
+                         content_rule=CONTENT_RULE if content else "")
 
 
-def _trim(payload):
+def _trim(payload, cap=MAX_RESULT_CHARS):
     text = json.dumps(payload, default=str)
-    if len(text) <= MAX_RESULT_CHARS:
+    if len(text) <= cap:
         return text
     rows = payload.get("rows")
     if isinstance(rows, list) and len(rows) > 5:
         payload = dict(payload, rows=rows[:5], rows_omitted=len(rows) - 5)
         text = json.dumps(payload, default=str)
-    return text[:MAX_RESULT_CHARS] + '..." (truncated)'
+    return text[:cap] + '..." (truncated)'
 
 
 def run_tools(ctx, calls, emit, budget_left, collect=None):
     """Execute tool calls in parallel; returns the tool messages for the next model call."""
     messages = []
-    with ThreadPoolExecutor(max_workers=min(4, max(1, len(calls)))) as pool:
+    # how long a tool may take, for one that can stop itself in time (the abstract search)
+    ctx.time_left = max(0.5, min(config.TOOL_TIMEOUT, budget_left()))
+    # not a `with` block: leaving one waits for every thread, so a tool that was given up on would
+    # still hold the answer until it finished
+    pool = ThreadPoolExecutor(max_workers=min(4, max(1, len(calls))))
+    try:
         started = {}
         for call in calls:
             emit({"type": "tool_start", "name": call["name"], "arguments": call["arguments"]})
@@ -163,7 +187,9 @@ def run_tools(ctx, calls, emit, budget_left, collect=None):
                 # answer against its sources has to see exactly what the model was given
                 collect.append({"name": call["name"], "arguments": call["arguments"], "result": out})
             messages.append({"role": "tool", "tool_call_id": call["id"], "name": call["name"],
-                             "content": _trim(out)})
+                             "content": _trim(out, T.max_chars(call["name"], MAX_RESULT_CHARS))})
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
     return messages
 
 
@@ -219,10 +245,19 @@ def with_memory(answer_text, payloads):
             f"them; use these keys for follow-ups:\n{memory}]")
 
 
+def _complete_search(payload):
+    """Whether an abstract search ran in full: every source answered and nothing was rationed."""
+    meta = (payload.get("result") or {}).get("meta") or {}
+    return not meta.get("degraded") and all(v == "ok" for v in (meta.get("sources") or {}).values())
+
+
 def answer(ctx, client, question, history=None, emit=None, ledger=None, collect=None,
-           channel="web"):
-    """Run one question. `emit` receives events; returns a summary of the run."""
+           channel="web", tools=None):
+    """Run one question. `emit` receives events; returns a summary of the run. `tools` limits the
+    catalogue offered to the model (an evaluation variant); None offers all of it."""
     emit = emit or (lambda _e: None)
+    # per-answer state a tool may keep (the abstract search counts its calls), reset every question
+    ctx.turn = {"content_calls": 0, "lock": threading.Lock()}
     # every tool result is kept for this answer's memory, whether or not the caller collects them
     collect = collect if collect is not None else []
     started = time.time()
@@ -251,7 +286,7 @@ def answer(ctx, client, question, history=None, emit=None, ledger=None, collect=
     for rounds in range(1, config.MAX_ROUNDS + 1):
         emit({"type": "status", "text": "looking it up" if rounds == 1 else "checking one more thing"})
         try:
-            step = client.complete(messages, model=config.MODEL_FAST, tools=T.schemas())
+            step = client.complete(messages, model=config.MODEL_FAST, tools=T.schemas(tools))
         except LLMError as e:
             log.warning("provider error (%s): %s", getattr(e, "kind", "?"), getattr(e, "raw", "")[:300])
             emit({"type": "error", "message": str(e)})
@@ -303,7 +338,9 @@ def answer(ctx, client, question, history=None, emit=None, ledger=None, collect=
 
     if ledger is not None:
         ledger.finish_request(model, channel)
-    done = {"type": "done", "answer": text, "rounds": rounds, "tools": used_tools,
+    # an answer built on a degraded search is not worth caching for the next asker
+    cacheable = all(_complete_search(p) for p in collect if p.get("name") == "search_abstracts")
+    done = {"type": "done", "answer": text, "rounds": rounds, "tools": used_tools, "cacheable": cacheable,
             "usage": usage_total, "cost_usd": round(cost_total, 5),
             "seconds": round(time.time() - started, 2), "model": model,
             "memory": with_memory(text, collect),

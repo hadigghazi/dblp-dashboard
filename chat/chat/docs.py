@@ -96,7 +96,16 @@ CHUNKS = [
      country, no institution per paper. Affiliation exists only as a note on some author pages, and
      mostly on numbered pages, because editors add it to tell namesakes apart. Questions that need
      any of these cannot be answered from this data, and the honest answer is to say so - optionally
-     pointing at OpenAlex, which the dashboard samples for exactly this reason."""),
+     pointing at OpenAlex, which the dashboard samples for exactly this reason. Abstracts are the one
+     exception the assistant can work around: see "Questions about what papers say"."""),
+
+    ("Questions about what papers say", """
+     What a paper proposes, what a method is, why something is needed: dblp holds titles, so these are
+     answered from abstracts. The search_abstracts tool pools three searches - dblp's own title search
+     and OpenAlex's keyword and semantic search over abstracts - keeps the papers dblp has, ranks their
+     titles and abstracts with BM25, and gives the five best to the model, which cites them as [1] to
+     [5]. This is the configuration the project's DBLP-QA study found best. The abstracts come from
+     OpenAlex, some papers have none there, and the question's words are sent to OpenAlex to search."""),
 
     ("Why citation questions cannot be answered", """
      The parquet has an n_cites column, but dblp does not publish citation counts, so it is not a
@@ -171,10 +180,22 @@ CHUNKS = [
 ]
 
 LIMITS = (
+    "dblp has no citations, no full text, no per-paper affiliations, no impact factors, no awards and "
+    "no author demographics (gender, country, institution). Questions that need those cannot be "
+    "answered from this data. dblp has no abstracts either: search_abstracts takes them from OpenAlex "
+    "for the papers it finds, and some papers have none there."
+)
+# what the assistant said before it could read abstracts, and says again with the tool switched off
+LIMITS_WITHOUT_ABSTRACTS = (
     "dblp has no citations, no abstracts, no full text, no per-paper affiliations, no impact "
     "factors, no awards and no author demographics (gender, country, institution). Questions that "
     "need those cannot be answered from this data."
 )
+
+
+def limits():
+    from . import config
+    return LIMITS if config.CONTENT_TOOL else LIMITS_WITHOUT_ABSTRACTS
 
 _TOKEN = re.compile(r"[a-z0-9']+")
 STOP = set("the a an of in on to by is are and or for with from into over under via using this that "

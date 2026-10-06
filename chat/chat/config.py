@@ -66,6 +66,23 @@ OLLAMA_URL = os.environ.get("CHAT_OLLAMA_URL", "http://ollama:11434/v1").rstrip(
 # the first year the search index covers, so the paraphrase test samples the same population
 SEARCH_FIRST_YEAR = int(os.environ.get("SEARCH_FIRST_YEAR", "2010"))
 
+# ---- what papers say (content.py) ---------------------------------------------
+# dblp has titles, not abstracts: questions about a paper's content are answered from abstracts
+# OpenAlex returns, found the way the DBLP-QA study found best. CHAT_CONTENT_TOOL=0 turns the tool
+# off and puts back the old rule that such questions are declined.
+CONTENT_TOOL = os.environ.get("CHAT_CONTENT_TOOL", "1") != "0"
+OPENALEX_URL = "https://api.openalex.org/works"
+OPENALEX_API_KEY = os.environ.get("OPENALEX_API_KEY", "")
+# the free key allows $1 a day: a search costs $0.001, a lookup by DOI $0.0001
+OPENALEX_CALLS_PER_DAY = int(os.environ.get("CHAT_OPENALEX_CALLS_PER_DAY", "900"))
+CONTENT_DEADLINE = float(os.environ.get("CHAT_CONTENT_DEADLINE", "8"))    # inside the 10 s tool limit
+CONTENT_POOL = 50                 # results asked of each search, as in the study
+CONTENT_TOP = 5                   # abstracts given to the model, as in the study
+CONTENT_ABSTRACT_CHARS = 2000
+CONTENT_MAX_CHARS = 16000         # what the model reads of the tool's result (other tools: 6,000)
+CONTENT_CALLS_PER_QUESTION = 2
+CONTENT_CACHE_DAYS = 30
+
 
 def configured() -> bool:
     return bool(API_KEY)

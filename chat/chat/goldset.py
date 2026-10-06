@@ -146,11 +146,23 @@ CASES = [
     dict(q="What has Jürgen Schmidhuber published about LSTM?", any_of=["author_papers", "search_papers"],
          succeed=["author_papers"]),
 
+    # ---- what papers say: dblp has titles only, so these are answered from abstracts. None of them is a
+    # DBLP-QA question - the gold set must not tune the assistant on the benchmark it is measured on.
+    dict(q="What does the paper 'Deep Residual Learning for Image Recognition' propose?",
+         any_of=["search_abstracts"], succeed=["search_abstracts"]),
+    dict(q="What is federated learning?", any_of=["search_abstracts"], succeed=["search_abstracts"]),
+    dict(q="How do graph neural networks deal with over-smoothing?", any_of=["search_abstracts"],
+         succeed=["search_abstracts"]),
+    # the paper is found first, then its abstract read by key - the follow-up names no paper at all
+    dict(turns=["Show me the paper 'Attention is all you need'", "What does it propose?"],
+         any_of=["search_abstracts"], succeed=["search_abstracts"]),
+
     # ---- out of scope: the answer must say the data cannot support it
     dict(q="What is the most cited paper in dblp?", refuses=True),
     dict(q="What is Geoffrey Hinton's h-index?", refuses=True),
     dict(q="Which country publishes the most papers?", refuses=True),
-    dict(q="Show me the abstract of that paper", refuses=True),
+    # dblp has no abstracts, but the abstract search brings them in; the full text stays out of reach
+    dict(q="Show me the full text of 'Attention is all you need'", refuses=True),
     dict(q="Which journal has the highest impact factor?", refuses=True),
     dict(q="How many women publish at NeurIPS?", refuses=True),
     dict(q="What is NeurIPS's acceptance rate?", refuses=True),          # no submission data exists

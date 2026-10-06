@@ -224,7 +224,7 @@ const TOOL_LABEL = {
   paper_detail: "opened the record", predict_venue: "asked the venue model",
   predict_coauthors: "asked the collaboration model", run_sql: "ran a one-off query",
   network_shape: "measured the whole network", central_authors: "ranked authors by centrality",
-  author_centrality: "placed them in the network",
+  author_centrality: "placed them in the network", search_abstracts: "read the abstracts of the closest papers",
 };
 const toolLabel = (name) => TOOL_LABEL[name] || name.replace(/_/g, " ");
 
@@ -286,6 +286,29 @@ function Suggestions({ examples, ask }) {
   );
 }
 
+/** The papers an answer cites as [1]-[5]: title, venue and year, a DOI link, the abstract on request. */
+function Sources({ rows }) {
+  return (
+    <ol className="sources">
+      {rows.map((r) => (
+        <li key={r.key}>
+          <span className="srcn num">[{r.n}]</span>
+          <span className="srcbody">
+            <span className="srctitle">{r.title}</span>
+            <span className="srcmeta">{[r.venue, r.year].filter(Boolean).join(", ")}</span>
+            {r.doi ? (
+              <a className="srcdoi" href={`https://doi.org/${r.doi}`} target="_blank" rel="noreferrer">DOI</a>
+            ) : null}
+            {r.abstract && r.abstract !== "(no abstract available)" ? (
+              <details className="srcabs"><summary>abstract</summary><p>{r.abstract}</p></details>
+            ) : <span className="srcmeta">no abstract</span>}
+          </span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 /** One tool call, collapsed to a single quiet line until asked. */
 function ToolCall({ event, go }) {
   const [open, setOpen] = useState(false);
@@ -303,7 +326,8 @@ function ToolCall({ event, go }) {
           <div className="toolsummary">{event.summary}</div>
           <div className="toolargs mono">{event.name}({JSON.stringify(event.arguments || {})})</div>
           {event.sql ? <pre className="recordxml">{event.sql}</pre> : null}
-          {rows.length && columns.length ? (
+          {event.name === "search_abstracts" && rows.length ? <Sources rows={rows} /> : null}
+          {event.name !== "search_abstracts" && rows.length && columns.length ? (
             <SortableTable rows={rows.slice(0, 8)}
                            columns={columns.map((c) => ({
                              key: c, label: c.replace(/_/g, " "),
@@ -336,6 +360,11 @@ function Turn({ turn, go }) {
           ) : null}
           {busy ? <div className="thinkingline">{turn.status || "thinking"}<span className="dots" /></div> : null}
           {turn.answer ? <div className="answer">{turn.answer}</div> : null}
+          {turn.answer && /\[\d\]/.test(turn.answer) ? (() => {
+            // an answer that cites [n] shows what it cites, under it, without opening the lookup
+            const found = [...turn.tools].reverse().find((t) => t.name === "search_abstracts" && t.rows?.length);
+            return found ? <Sources rows={found.rows} /> : null;
+          })() : null}
           {turn.error ? (
             <div className="cardmsg error" role="alert">
               {turn.error}
@@ -391,8 +420,9 @@ function About({ status }) {
         <p><b>How he answers.</b> Every answer comes from a fresh look at dblp itself: counts,
           rankings and trends are worked out from the records, “papers about …” searches 5.4 million
           titles by meaning as well as words, and predictions come from the models trained on this
-          data. Nothing is answered from the AI’s own memory, and you can open every lookup above an
-          answer to see exactly what it found.</p>
+          data. Questions about what papers say are answered from the abstracts of the closest papers,
+          taken from OpenAlex and cited as [1] to [5]. He is instructed to answer only from what these
+          lookups return, and you can open every lookup above an answer to see exactly what it found.</p>
         {ev ? (
           <p><b>Measured on {ev.cases} questions</b> covering every kind he claims to answer, each naming
             the lookups it must use: {Math.round(100 * ev.tool_choice_accuracy)}% reached for the right

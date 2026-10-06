@@ -23,7 +23,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import agent, budget, config, data, docs, store, tools as T, usage
+from . import agent, budget, config, data, docs, paperids, store, tools as T, usage
 from .llm import Client
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -75,8 +75,17 @@ class State:
         self.client = Client()
         self.http = httpx.Client(timeout=config.UPSTREAM_TIMEOUT)
         self.store_meta = {}
+        self.paper_ids = None
         self.error = None
         self.lock = threading.Lock()
+
+    def attach_paper_ids(self):
+        """The DOI/arXiv index the abstract search maps papers with; built by `chat.cli paper-ids`,
+        and picked up by the watch below when it appears. Without it the search maps by title only."""
+        try:
+            self.paper_ids = paperids.attach(data.pool.connection(), data.pool.meta)
+        except Exception:
+            log.exception("could not attach the paper ids")
 
     def load(self):
         if not data.pool.load():
@@ -86,6 +95,7 @@ class State:
             # ATTACH on the real connection, so every cursor of this instance sees the store
             self.store_meta = store.attach(data.pool.connection(), data.pool.meta)
             self.error = None
+            self.attach_paper_ids()
         except Exception as e:
             self.error = f"leaderboard store unavailable: {e}"
             log.exception("could not attach the chat store")
@@ -103,6 +113,8 @@ class State:
                     if str(current) != str(data.pool.serving_path):
                         log.info("new serving database (%s); reloading", current.name)
                         self.load()
+                    elif self.paper_ids is None and data.pool.ready():
+                        self.attach_paper_ids()
                 except Exception:
                     log.exception("serving-database watch failed")
         threading.Thread(target=loop, name="chat-watch", daemon=True).start()
@@ -175,20 +187,24 @@ def status(_ok=Depends(require_token)):
         "configured": state.client.configured(),
         "ready": state.ready(),
         "error": state.error,
-        "models": {"router": config.MODEL_FAST, "answers": config.MODEL_DEEP,
-                   "provider": config.BASE_URL},
+        # the router writes the answer when it stops calling tools; the deep model only when the
+        # tool rounds or the time budget run out after the second round
+        "models": {"router": config.MODEL_FAST, "answers": config.MODEL_FAST,
+                   "answers_when_tools_run_out": config.MODEL_DEEP, "provider": config.BASE_URL},
         "dump": {"fingerprint": data.pool.fingerprint(),
                  "latest_mdate": data.pool.meta.get("latest_mdate"),
                  "last_full_year": data.pool.last_full_year() if data.pool.ready() else None,
                  "records": data.pool.meta.get("records")},
         "store": state.store_meta,
+        "paper_ids": state.paper_ids,
+        "content_tool": config.CONTENT_TOOL,
         "budget": budget.ledger.snapshot(),
         "limits": {"question_chars": config.MAX_QUESTION_CHARS, "rounds": config.MAX_ROUNDS,
                    "tool_calls": config.MAX_TOOL_CALLS, "seconds": config.TIME_BUDGET_SECONDS,
                    "per_minute": config.RATE_PER_MINUTE},
-        "tools": [{"name": s["name"], "description": s["description"]} for s in T.SPECS],
+        "tools": [{"name": s["name"], "description": s["description"]} for s in T.offered()],
         "documentation_topics": docs.titles(),
-        "cannot_answer": docs.LIMITS,
+        "cannot_answer": docs.limits(),
         "examples": EXAMPLES,
     }
 
@@ -281,7 +297,9 @@ def ask_stream(question, history, refresh=False):
     for event in _run(question, history):
         collected.append(event)
         if event.get("type") == "done":
-            finished = True
+            # an answer built on a degraded search (a source timed out, OpenAlex's allowance spent)
+            # is not kept: the next asker should get the full search
+            finished = event.get("cacheable", True)
         yield _sse(event)
     # what was asked, and what it took - the only record of which tools the catalogue is missing
     usage.record(usage.from_events(question, collected, data.pool.fingerprint()))

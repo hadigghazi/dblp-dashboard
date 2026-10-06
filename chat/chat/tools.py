@@ -79,7 +79,7 @@ def result(summary, columns=None, rows=None, note=None, link=None, **meta):
 
 
 def refusal(why, suggestion=None):
-    out = {"summary": f"Not answerable from this data: {why}", "refused": True, "limits": docs.LIMITS}
+    out = {"summary": f"Not answerable from this data: {why}", "refused": True, "limits": docs.limits()}
     if suggestion:
         out["instead"] = suggestion
     return out
@@ -882,7 +882,9 @@ def search_papers(ctx, q, kind=None, frm=None, to=None, top=8):
                       if dense else f"{len(rows)} papers for “{q}”, word match only "
                                     f"(the embedding index is unavailable).",
                       rows=rows, note="Relevance ranking, not an exhaustive list: a paper missing here is "
-                                      "not evidence it does not exist. Titles are the only text dblp has.",
+                                      "not evidence it does not exist. Titles are the only text dblp has"
+                                      + ("; for what papers say, use search_abstracts." if config.CONTENT_TOOL
+                                         else "."),
                       link={"page": "papers", "q": q}, dense_available=dense)
     except Exception as e:
         log.warning("search service unavailable: %s", e)
@@ -1036,8 +1038,8 @@ def run_sql(ctx, sql, reason=None):
 
 
 # --------------------------------------------------------------------------- the catalogue
-def _fn(name, description, properties, required=(), heavy=False, remote=False):
-    return {"name": name, "description": description, "heavy": heavy, "remote": remote,
+def _fn(name, description, properties, required=(), heavy=False, remote=False, max_chars=None):
+    return {"name": name, "description": description, "heavy": heavy, "remote": remote, "max_chars": max_chars,
             "schema": {"type": "function", "function": {
                 "name": name, "description": description,
                 "parameters": {"type": "object", "properties": properties, "required": list(required),
@@ -1210,20 +1212,51 @@ SPECS += [
 HANDLERS.update({"network_shape": NW.network_shape, "central_authors": NW.central_authors,
                  "author_centrality": NW.author_centrality})
 
+# Same reason as network.py: content.py takes `result` and `refusal` from here.
+from . import content as CT  # noqa: E402
+
+SPECS += [
+    _fn("search_abstracts", "What papers SAY: definitions, methods, findings, motivations ('what is X', "
+        "'how does Y work', 'what does the paper Z propose', 'why is W needed'). dblp has titles only, "
+        "so this finds papers by dblp's title search and OpenAlex's abstract search, ranks their "
+        "abstracts by how well they match, and returns the five best, numbered, to answer from and cite "
+        "as [1]-[5]. Pass the question as the user asked it, self-contained. With `keys` (records a tool "
+        "returned) it gives those papers' abstracts instead. Not for counts, people or venues.",
+        {"question": {"type": "string", "description": "the user's question, in English and self-contained"},
+         "keys": {"type": "array", "items": {"type": "string"}, "maxItems": 5,
+                  "description": "record keys a tool returned (conf/..., journals/...), never built"},
+         "from": YEAR, "to": YEAR}, ["question"], remote=True, max_chars=config.CONTENT_MAX_CHARS),
+]
+# resolved when called, not now: whichever of the two modules is imported first, this one is complete
+HANDLERS["search_abstracts"] = lambda ctx, **kw: CT.search_abstracts(ctx, **kw)
+
 # `from`/`to` are reserved words in Python, so the schema's names are mapped on the way in.
 RENAME = {"from": "frm", "to": "to"}
 
 
-def schemas():
-    return [s["schema"] for s in SPECS]
+def offered(names=None):
+    """The tools a question may use: all of them, or `names`, without any that is switched off."""
+    off = set() if config.CONTENT_TOOL else {"search_abstracts"}
+    return [s for s in SPECS if s["name"] not in off and (names is None or s["name"] in names)]
+
+
+def schemas(names=None):
+    return [s["schema"] for s in offered(names)]
 
 
 def spec(name):
     return next((s for s in SPECS if s["name"] == name), None)
 
 
+def max_chars(name, default):
+    found = spec(name)
+    return (found or {}).get("max_chars") or default
+
+
 def call(ctx, name, args):
     handler = HANDLERS.get(name)
+    if name == "search_abstracts" and not config.CONTENT_TOOL:
+        handler = None
     if handler is None:
         return {"summary": f"No tool named {name!r}.", "refused": True,
                 "available": sorted(HANDLERS)}

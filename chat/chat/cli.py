@@ -2,6 +2,7 @@
 Command line, for the VM.
 
   python -m chat.cli store                      build the leaderboard store for this dump
+  python -m chat.cli paper-ids                  build the DOI/arXiv index the abstract search maps papers with
   python -m chat.cli tools                      list the tool catalogue
   python -m chat.cli ask "who has most papers"  one question, printed as it happens
   python -m chat.cli evaluate [--limit N]       run the gold set, write the report
@@ -20,6 +21,8 @@ Command line, for the VM.
   python -m chat.cli dblpqa grid --models M     the original paper's ten context variants for M, judged
   python -m chat.cli dblpqa bearing             the original paper's RQ1: does a top abstract answer the question?
   python -m chat.cli dblpqa replication         the grid beside the original paper's Table 3, finding by finding
+  python -m chat.cli dblpqa dewey --variant V   Dewey itself answers every question (live, frozen pool, or v0)
+  python -m chat.cli dblpqa dewey-retrieval     Dewey's live abstract search alone: where it puts the source paper
   python -m chat.cli dblpqa --dataset fresh ... any of the above on DBLP-QA-Fresh instead
 
 `ask` is the same code path the web endpoint uses, so a question that works here works there.
@@ -31,7 +34,7 @@ import sys
 
 import httpx
 
-from . import agent, budget, config, data, evaluate as E, qa as Q, searcheval as SE, store, tools as T, usage
+from . import agent, budget, config, data, evaluate as E, paperids, qa as Q, searcheval as SE, store, tools as T, usage
 from .llm import Client
 
 
@@ -40,6 +43,7 @@ def _ready():
     if not data.pool.load():
         sys.exit(data.pool.error)
     store_meta = store.attach(data.pool.connection(), data.pool.meta)
+    paperids.attach(data.pool.connection(), data.pool.meta)
     return agent.Ctx(data.pool, httpx.Client(timeout=config.UPSTREAM_TIMEOUT), store_meta)
 
 
@@ -48,6 +52,18 @@ def cmd_store(_args):
     try:
         path = store.build(con, meta)
         print(f"built {path}")
+    finally:
+        con.close()
+
+
+def cmd_paper_ids(_args):
+    """The DOI/arXiv index the abstract search maps OpenAlex papers to dblp with: one scan of the
+    parquet per dump. The service picks it up within five minutes."""
+    con, meta = data.connect()
+    try:
+        path = paperids.build(con, meta)
+        con.execute(f"ATTACH '{path}' AS x (READ_ONLY)")
+        print(f"built {path}: {dict(con.execute('SELECT k, v FROM x._meta').fetchall())}")
     finally:
         con.close()
 
@@ -138,6 +154,17 @@ def cmd_dblpqa(args):
                        version=args.regrade_version, modes=args.modes)
         return
     models = [m.strip() for m in args.models.split(",") if m.strip()]
+    if args.condition in ("dewey", "dewey-retrieval"):
+        # Dewey itself: the same serving database, store and paper ids as the web endpoint
+        from . import dblpqa_dewey as DW
+        ctx = _ready()
+        if args.condition == "dewey-retrieval":
+            DW.retrieval_check(ctx, rows, allow_incomplete=args.allow_incomplete_pool)
+            return
+        variant = {"live": "dewey", "frozen": "dewey-frozen", "v0": "dewey-v0"}[args.variant]
+        DW.run(ctx, client, rows, sha, variant=variant, judge_model=args.judge,
+               allow_incomplete=args.allow_incomplete_pool)
+        return
     if args.condition in ("grid", "bearing", "replication"):
         from . import dblpqa_replicate as RP
         if args.condition == "bearing":
@@ -278,6 +305,7 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("store", help="build the leaderboard store").set_defaults(fn=cmd_store)
     sub.add_parser("tools", help="list the tool catalogue").set_defaults(fn=cmd_tools)
+    sub.add_parser("paper-ids", help="build the DOI/arXiv index for the abstract search").set_defaults(fn=cmd_paper_ids)
     ask = sub.add_parser("ask", help="ask one question")
     ask.add_argument("question")
     ask.set_defaults(fn=cmd_ask)
@@ -295,13 +323,17 @@ def main():
     ql.set_defaults(fn=cmd_questions)
     dq = sub.add_parser("dblpqa", help="experiments on the DBLP-QA benchmark")
     dq.add_argument("condition", choices=["closed-book", "oracle", "retrieval", "rag", "audit", "regrade", "crossjudge", "report",
-                             "rescore", "fresh-build", "grid", "bearing", "replication"],
+                             "rescore", "fresh-build", "grid", "bearing", "replication", "dewey",
+                             "dewey-retrieval"],
                     help="oracle = each question with the abstract it was written from; retrieval = where "
                          "each ranker puts that paper (no answers); rag = answers from the top --k papers "
                          "of --ranker; rescore = score the unscored answers of --run; grid = the original "
                          "paper's ten context variants for --models; bearing = the paper's RQ1 measure "
                          "(does a top abstract answer the question?); replication = the grid beside the "
                          "paper's Table 3")
+    dq.add_argument("--variant", choices=["live", "frozen", "v0"], default="live",
+                    help="for dewey: live = as deployed; frozen = its abstract search ranks the study's frozen "
+                         "pool; v0 = as it was before the abstract search (declines content questions)")
     dq.add_argument("--strategy", choices=["cd", "single", "ca"], default="cd",
                     help="for rag: the paper's context strategies - cd = top --k abstracts concatenated; "
                          "single = only the --k-th ranked abstract (A1-A5); ca = an answer per top --k "

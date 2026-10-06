@@ -163,7 +163,8 @@ def run(ctx, client, cases=None, limit=None):
         "numbers_grounded_share": round(sum(r["grounding"]["ok"] for r in results) / n, 3),
         "median_seconds": sorted(r["seconds"] for r in results)[len(results) // 2] if results else None,
         "total_cost_usd": round(sum(r["cost_usd"] or 0 for r in results), 4),
-        "models": {"router": config.MODEL_FAST, "answers": config.MODEL_DEEP},
+        "models": {"router": config.MODEL_FAST, "answers": config.MODEL_FAST,
+                   "answers_when_tools_run_out": config.MODEL_DEEP},
         "failures": [{"question": r["question"], "reason": r["reason"], "tools": r["tools"]}
                      for r in results if not r["passed"]],
         "numbers_without_a_source": [{"question": r["question"], "numbers": r["grounding"]["ungrounded"],
