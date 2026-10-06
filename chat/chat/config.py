@@ -93,6 +93,12 @@ CONTENT_CACHE_DAYS = 30
 CONTENT_RULE_VERSION = int(os.environ.get("CHAT_CONTENT_RULE_VERSION", "2"))
 CONTENT_FALLBACK = os.environ.get("CHAT_CONTENT_FALLBACK", "1") != "0"
 CONTENT_WRITER = os.environ.get("CHAT_CONTENT_WRITER", MODEL_DEEP)
+# Version 3: Dewey's own abstract index (abstractindex.py) - the abstracts of dblp's papers from
+# OpenAlex's snapshot, searched with BM25 beside the live searches and the first place an abstract is
+# looked for by key. CHAT_CONTENT_SEARCH=local leaves out every outside service (the index and dblp's
+# own title search only): the closed world the evaluation sets beside RAGScholar's.
+CONTENT_LOCAL_INDEX = os.environ.get("CHAT_CONTENT_LOCAL_INDEX", "1") != "0"
+CONTENT_SEARCH = os.environ.get("CHAT_CONTENT_SEARCH", "live")
 
 
 def configured() -> bool:

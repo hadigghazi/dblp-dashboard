@@ -16,6 +16,11 @@ tool, built from the study's own functions, so the tool is the pipeline that was
   4. BM25 (k1 1.2, b 0.75, idf over the pool) over title and abstract; the top five go to the model,
      numbered, to be cited as [1] to [5].
 
+Version 3 adds Dewey's own abstract index (abstractindex.py): the abstracts of dblp's papers from
+OpenAlex's snapshot, searched with BM25 over the whole index as a fourth first stage, and looked up
+by key before OpenAlex is asked for a candidate's abstract. The search can also be local only - the
+index and dblp's title search, no outside service - which is the closed world RAGScholar had.
+
 Semantic Scholar is not asked: its keyless search refused nearly every request during the study.
 Results are cached per query for 30 days, so asking again costs nothing and returns the same papers.
 OpenAlex calls are counted per UTC day against a cap; past it the tool still answers from dblp's
@@ -32,18 +37,22 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
-from . import config, dblpqa_rag as RAG, paperids
+from . import abstractindex as AI, config, dblpqa_rag as RAG, paperids
 from .tools import refusal, result
 
 log = logging.getLogger("dblp.chat.content")
 
-SOURCES = ("dblp-search", "openalex-search", "openalex-semantic")
+SOURCES = ("dewey-index", "dblp-search", "openalex-search", "openalex-semantic")
+SOURCE_NAMES = {"dewey-index": "Dewey's abstract index", "dblp-search": "dblp's title search",
+                "openalex-search": "OpenAlex", "openalex-semantic": "OpenAlex"}
 NOTE = ("Abstracts come from OpenAlex, not dblp. Answer from them and cite each claim as [n]; if none "
         "addresses the question, say so. A paper missing here is not evidence that none exists.")
-NOTE_V2 = ("Abstracts come from OpenAlex, Semantic Scholar or Crossref, not dblp. Answer from the one that "
-           "addresses the question most directly and cite each claim as [n]. If none addresses it, search "
-           "once more with the question's most distinctive terms. A paper missing here is not evidence that "
-           "none exists.")
+ANSWER_V2 = ("Answer from the one that addresses the question most directly and cite each claim as [n]. If "
+             "none addresses it, search once more with the question's most distinctive terms. A paper missing "
+             "here is not evidence that none exists.")
+NOTE_V2 = "Abstracts come from OpenAlex, Semantic Scholar or Crossref, not dblp. " + ANSWER_V2
+NOTE_V3 = ("Abstracts come from Dewey's own copy of OpenAlex's abstracts of dblp's papers, or from OpenAlex, "
+           "Semantic Scholar or Crossref - not from dblp itself. " + ANSWER_V2)
 S2_BATCH = "https://api.semanticscholar.org/graph/v1/paper/batch"
 CROSSREF = "https://api.crossref.org/works/"
 FALLBACK_TOP = 10          # the best-ranked candidates worth a second abstract source
@@ -212,6 +221,41 @@ def fill_abstracts(http, cur, cands, timeout):
     return True
 
 
+def local_abstracts(cur, cands):
+    """Version 3: abstracts from Dewey's own index for the candidates that came without one - their
+    own record's, else a preprint's or published twin's - before any outside service is asked.
+    Returns how many were found."""
+    need = [k for k, c in cands.items() if not c.get("abstract")]
+    if not need:
+        return 0
+    found = AI.lookup(need)
+    left = [k for k in need if k not in found]
+    twin_of = twins(cur, left) if left else {}
+    if twin_of:
+        found.update(AI.lookup([t for ts in twin_of.values() for t in ts]))
+    filled = 0
+    for key in need:
+        for source in [key] + twin_of.get(key, []):
+            hit = found.get(source)
+            if hit and hit.get("abstract"):
+                cands[key]["abstract"] = hit["abstract"]
+                if source == key:
+                    cands[key]["doi"] = cands[key].get("doi") or hit.get("doi")
+                filled += 1
+                break
+    return filled
+
+
+def wanted_sources():
+    """The first-stage searches of the version in force: the index (version 3, once built) and dblp's
+    title search, and OpenAlex's two searches unless the search is local only."""
+    found = ["dewey-index"] if config.CONTENT_LOCAL_INDEX and AI.available() else []
+    found.append("dblp-search")
+    if config.CONTENT_SEARCH != "local":
+        found += ["openalex-search", "openalex-semantic"]
+    return found
+
+
 def _crossref_abstract(http, doi, timeout):
     r = http.get(CROSSREF + doi, timeout=timeout)
     if r.status_code != 200:
@@ -274,13 +318,19 @@ def retrieve(ctx, query, deadline):
     cur = ctx.cursor()
     status, degraded = {}, None
     stage_end = deadline - 2.0
-    openalex_ok = take_openalex(2)
-    if not openalex_ok:
-        degraded = "OpenAlex's daily allowance is used up: titles from dblp's search only, no abstracts"
+    sources = wanted_sources()
+    local = "dewey-index" in sources
+    asks_openalex = any(s.startswith("openalex") for s in sources)
+    openalex_ok = asks_openalex and take_openalex(2)
+    if asks_openalex and not openalex_ok:
+        degraded = ("OpenAlex's daily allowance is used up: Dewey's own index and dblp's title search only"
+                    if local else "OpenAlex's daily allowance is used up: titles from dblp's search only, no abstracts")
     keyword = RAG.openalex_query(query, semantic=False)
 
     def run(source):
         timeout = max(0.5, stage_end - time.time())
+        if source == "dewey-index":
+            return AI.search(query, config.CONTENT_POOL)
         if source == "dblp-search":
             return _dblp_search(ctx.http, query, timeout)
         if source == "openalex-search":
@@ -289,7 +339,7 @@ def retrieve(ctx, query, deadline):
             raise TimeoutError("no free slot for OpenAlex's semantic search in time")
         return _openalex_works(ctx.http, RAG.openalex_query(query, semantic=True), max(0.5, stage_end - time.time()))
 
-    wanted = [s for s in SOURCES if openalex_ok or s == "dblp-search"]
+    wanted = [s for s in sources if openalex_ok or not s.startswith("openalex")]
     got = {}
     pool = ThreadPoolExecutor(max_workers=len(wanted))
     try:
@@ -304,10 +354,19 @@ def retrieve(ctx, query, deadline):
                 log.warning("abstract search: %s %s", source, status[source])
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
-    for source in SOURCES:
+    for source in sources:
         status.setdefault(source, "skipped")
 
     cands = {}
+    index_hits = got.get("dewey-index") or []
+    if index_hits:
+        # the index can be older than the dump: a record dblp no longer has is never shown
+        known = {k for (k,) in cur.execute("SELECT key FROM s.pubs WHERE key IN (SELECT unnest(?::VARCHAR[]))",
+                                           [[h["key"] for h in index_hits]]).fetchall()}
+        for hit in index_hits:
+            if hit["key"] in known:
+                cands[hit["key"]] = {"title": hit.get("title"), "abstract": hit.get("abstract"),
+                                     "doi": hit.get("doi"), "found_by": ["dewey-index"]}
     for hit in got.get("dblp-search") or []:
         cands.setdefault(hit["key"], {"title": hit.get("title"), "found_by": []})["found_by"].append("dblp-search")
     works = [w for s in ("openalex-search", "openalex-semantic") for w in got.get(s) or []]
@@ -322,12 +381,17 @@ def retrieve(ctx, query, deadline):
                 entry["found_by"].append(source)
             entry["abstract"] = entry.get("abstract") or w.get("abstract")
             entry["doi"] = entry.get("doi") or w.get("doi")
+    if local:
+        try:
+            local_abstracts(cur, cands)
+        except Exception as e:
+            log.warning("abstract lookup in the index failed: %s", e)
     if openalex_ok and time.time() < deadline - 0.5:
         try:
             fill_abstracts(ctx.http, cur, cands, max(0.5, deadline - time.time() - 0.3))
         except Exception as e:
             log.warning("abstract lookup by DOI failed: %s", e)
-    if config.CONTENT_FALLBACK and cands:
+    if config.CONTENT_FALLBACK and cands and config.CONTENT_SEARCH != "local":
         fallback_abstracts(ctx.http, cur, cands, query, deadline)
     return cands, status, degraded
 
@@ -374,6 +438,12 @@ def pool_for(ctx, query, deadline):
     # v2: abstracts from a preprint's or published twin, a 12 s search limit; v3: Semantic Scholar and
     # Crossref abstracts too (content version 2) - pools of one version are never served to another
     request = {"v": 3 if config.CONTENT_FALLBACK else 2, "q": query.lower()}
+    # version 3: a pool from one index (or none) is never served to another, nor a local one to a live one
+    index = AI.opened()[1] if config.CONTENT_LOCAL_INDEX else None
+    if index:
+        request["index"] = index.get("snapshot")
+    if config.CONTENT_SEARCH != "live":
+        request["search"] = config.CONTENT_SEARCH
     hit = _cached(request)
     if hit is not None:
         return hit["cands"], hit["status"], None, True
@@ -407,6 +477,7 @@ def search_abstracts(ctx, question=None, keys=None, frm=None, to=None):
         return _by_keys(ctx, cur, keys, deadline)
 
     frozen = getattr(ctx, "frozen_pool", None)
+    index = AI.opened()[1] if config.CONTENT_LOCAL_INDEX else None
     cands, status, degraded, cached = pool_for(ctx, query, deadline)
     ranking = rank(query, cands)
     info = _records(cur, ranking)
@@ -423,16 +494,25 @@ def search_abstracts(ctx, question=None, keys=None, frm=None, to=None):
                      "abstract": _cut(c.get("abstract"), config.CONTENT_ABSTRACT_CHARS) or "(no abstract available)"})
     with_abstract = sum(1 for c in cands.values() if c.get("abstract"))
     missing = sum(1 for r in rows if r["abstract"] == "(no abstract available)")
+    # the frozen pool came from dblp's title search and OpenAlex (and Semantic Scholar): said as before
+    names = list(dict.fromkeys(SOURCE_NAMES[s] for s in status if s in SOURCE_NAMES)) \
+        or ["dblp's title search", "OpenAlex"]
+    origin = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
     summary = (f"{len(rows)} abstracts for “{query}”, best first: BM25 over the titles and abstracts of "
-               f"{len(cands)} candidates from dblp's title search and OpenAlex"
+               f"{len(cands)} candidates from {origin}"
                + (f" ({missing} of them without an abstract)" if missing else "") + ".")
     if not rows:
         summary = f"No papers found for “{query}”."
-    note = (NOTE_V2 if config.CONTENT_RULE_VERSION >= 2 else NOTE) + (f" Degraded: {degraded}." if degraded else "")
+    if config.CONTENT_RULE_VERSION >= 2:
+        note = NOTE_V3 if "dewey-index" in status else NOTE_V2
+    else:
+        note = NOTE
+    note += f" Degraded: {degraded}." if degraded else ""
     return result(summary, ["n", "title", "year", "venue", "found_by", "key", "doi", "abstract"], rows,
                   note=note, link={"page": "papers", "q": query}, candidates=len(cands),
                   with_abstract=with_abstract, sources=status, degraded=degraded, cached=cached,
-                  frozen=frozen is not None, ms=int(1000 * (time.time() - t0)))
+                  frozen=frozen is not None, index=(index or {}).get("snapshot") if "dewey-index" in status else None,
+                  ms=int(1000 * (time.time() - t0)))
 
 
 def _by_keys(ctx, cur, keys, deadline):
@@ -445,9 +525,12 @@ def _by_keys(ctx, cur, keys, deadline):
                        "use a key a tool returned, or search_abstracts with the question")
     cands = {k: {"title": info[k]["title"], "found_by": ["key"]} for k in keys}
     try:
-        fill_abstracts(ctx.http, cur, cands, max(0.5, deadline - time.time()))
+        if config.CONTENT_LOCAL_INDEX and AI.available():
+            local_abstracts(cur, cands)
+        if config.CONTENT_SEARCH != "local" and any(not c.get("abstract") for c in cands.values()):
+            fill_abstracts(ctx.http, cur, cands, max(0.5, deadline - time.time()))
     except Exception as e:
-        log.warning("abstract lookup by DOI failed: %s", e)
+        log.warning("abstract lookup by key failed: %s", e)
     rows = [{"n": n, "title": info[k]["title"], "year": info[k]["year"], "venue": info[k]["venue"],
              "found_by": "key", "key": k, "doi": cands[k].get("doi"),
              "abstract": _cut(cands[k].get("abstract"), config.CONTENT_ABSTRACT_CHARS) or "(no abstract available)"}

@@ -216,11 +216,14 @@ def cmd_dblpqa(args):
         # Dewey itself: the same serving database, store and paper ids as the web endpoint
         from . import dblpqa_dewey as DW
         ctx = _ready()
+        variants = {"live": "dewey", "frozen": "dewey-frozen", "v0": "dewey-v0", "v2": "dewey-v2",
+                    "v2-frozen": "dewey-v2-frozen", "v3": "dewey-v3", "v3-local": "dewey-v3-local"}
         if args.condition == "dewey-retrieval":
-            DW.retrieval_check(ctx, rows, allow_incomplete=args.allow_incomplete_pool)
+            # without --variant: the search as deployed
+            DW.retrieval_check(ctx, rows, allow_incomplete=args.allow_incomplete_pool,
+                               variant=variants[args.variant] if args.variant else None)
             return
-        variant = {"live": "dewey", "frozen": "dewey-frozen", "v0": "dewey-v0", "v2": "dewey-v2",
-                   "v2-frozen": "dewey-v2-frozen"}[args.variant]
+        variant = variants[args.variant or "live"]
         DW.run(ctx, client, rows, sha, variant=variant, judge_model=args.judge,
                allow_incomplete=args.allow_incomplete_pool)
         return
@@ -270,8 +273,13 @@ def cmd_dblpqa(args):
         contexts = RAG.rag_contexts(rows, pools, rankings, args.ranker, k=args.k)
         notes = {"pool_sha256": report["pool"]["sha256"],
                  "retrieval": {"ranker": args.ranker, "k": args.k, "mode": args.mode}}
+        if args.ranker == RAG.INDEX_RANKER:
+            if "index" not in report:
+                sys.exit("no Dewey index here and no kept search of it (abstract-index fetch, then build)")
+            notes["index"] = report["index"]
         if args.mode == "gated":
-            contexts, notes["gate"] = RAG.gate_contexts(client, rows, pools, contexts, args.gate_model)
+            contexts, notes["gate"] = RAG.gate_contexts(client, rows, pools, contexts, args.gate_model,
+                                                        ranker=args.ranker)
         condition = RAG.condition_name(args.ranker, args.mode, "cd", args.k)
     elif condition == "oracle":
         contexts = DQ.fetch_abstracts(rows)
@@ -406,10 +414,12 @@ def main():
                     help="for structured: Dewey, RAGScholar's pipeline over the records (--models), or the "
                          "question alone (--models)")
     dq.add_argument("--seed", type=int, default=7, help="for structured-build: which questions are drawn")
-    dq.add_argument("--variant", choices=["live", "frozen", "v0", "v2", "v2-frozen"], default="live",
-                    help="for dewey: live = the first content tool (v1), searching live; frozen = v1 ranking the "
-                         "study's frozen pool; v0 = before the abstract search (declines content questions); "
-                         "v2 = the second version (as deployed); v2-frozen = v2 on the frozen pool")
+    dq.add_argument("--variant", choices=["live", "frozen", "v0", "v2", "v2-frozen", "v3", "v3-local"], default=None,
+                    help="for dewey (default live): live = the first content tool (v1), searching live; frozen = "
+                         "v1 ranking the study's frozen pool; v0 = before the abstract search (declines content "
+                         "questions); v2 = the second version; v2-frozen = v2 on the frozen pool; v3 = v2 with "
+                         "Dewey's own abstract index; v3-local = the index and dblp's title search only. For "
+                         "dewey-retrieval: that version's search (default: as deployed)")
     dq.add_argument("--strategy", choices=["cd", "single", "ca"], default="cd",
                     help="for rag: the paper's context strategies - cd = top --k abstracts concatenated; "
                          "single = only the --k-th ranked abstract (A1-A5); ca = an answer per top --k "
@@ -423,7 +433,7 @@ def main():
                     help="for bearing: comma-separated rankers (default: bm25, dense, hybrid and three first stages)")
     dq.add_argument("--ranker", default="bm25",
                     choices=["bm25", "dense", "hybrid", "dblp-search", "s2-search", "openalex-search",
-                             "openalex-semantic"],
+                             "openalex-semantic", "dewey-index"],
                     help="for rag: bm25 is RAGScholar's method, hybrid = bm25 + embeddings fused")
     dq.add_argument("--mode", default="plain", choices=["plain", "permissive", "gated"],
                     help="for rag: permissive = told the abstracts may be off-topic; gated = a relevance "

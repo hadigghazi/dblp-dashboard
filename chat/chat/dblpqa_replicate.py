@@ -159,7 +159,7 @@ def ca_contexts(rows, pools, rankings, ranker, k, model, sampling, pool, runs_di
     contexts = {}
     for row in rows:
         ranking = rankings[ranker].get(row["id"]) or []
-        rank = RAG.source_rank(ranking, set(pools[row["id"]]["aliases"]))
+        rank = RAG.source_rank(ranking, set(RAG.pool_of(pools, row["id"], ranker)["aliases"]))
         answers = [recs[row["id"]]["answer"] for recs in per_rank if row["id"] in recs]
         contexts[row["id"]] = {"abstract": "\n\n".join(f"[{i}] {a}" for i, a in enumerate(answers, 1))
                                or "(no answers)", "source": f"{ranker}@ca{k}", "retrieved": ranking[:k],
@@ -328,8 +328,11 @@ def run_bearing(client, rows, rankers=BEARING_RANKERS, judge_model="gpt-4.1", k=
                   "controls": controls, "rankers": {}, "paper": PAPER_RQ1}
         for name in rankers:
             firsts, per_q = [], {}
+            if name not in rankings:
+                out(f"{name}: no ranking (Dewey's index not built?) - left out")
+                continue
             for row in rows:
-                cands = pools[row["id"]]["candidates"]
+                cands = RAG.pool_of(pools, row["id"], name)["candidates"]
                 keys = (rankings[name].get(row["id"]) or [])[:k]
                 first = first_bearing(judge, row, cands, keys)
                 firsts.append(first)

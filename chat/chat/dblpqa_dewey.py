@@ -12,7 +12,11 @@ study's runs. Three variants:
                 differs is the agent - whether it searches at all, the query it sends, its prompt, and
                 which of its models writes the answer;
   dewey-v0      Dewey before it could read abstracts: the tool switched off and the old rule back,
-                under which such questions are declined.
+                under which such questions are declined;
+  dewey-v2      the second version (rule 2, Semantic Scholar and Crossref abstracts, gpt-4.1 writing);
+  dewey-v3      the third: v2 with Dewey's own abstract index searched beside the live searches;
+  dewey-v3-local  v3 with no outside service at all - the index and dblp's own title search - the
+                closed world RAGScholar had, rebuilt from open data, and reproducible.
 
 Every record keeps what the agent did: the tools it called, the query it sent, the papers it was
 given, whether the source paper was among them, the [n] it cited, which model wrote the answer, and
@@ -31,20 +35,25 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import agent, budget, config, content, dblpqa as DQ, dblpqa_rag as RAG, dblpqa_replicate as RP
+from . import abstractindex as AI, agent, budget, config, content, dblpqa as DQ, dblpqa_rag as RAG, \
+    dblpqa_replicate as RP
 from .llm import LLMError
 
 log = logging.getLogger("dblp.chat.dblpqa_dewey")
 
-VARIANTS = ("dewey", "dewey-frozen", "dewey-v0", "dewey-v2", "dewey-v2-frozen")
+VARIANTS = ("dewey", "dewey-frozen", "dewey-v0", "dewey-v2", "dewey-v2-frozen", "dewey-v3", "dewey-v3-local")
 MODEL = "dewey"
 # What each variant is: its content path's settings, applied for the run and restored after it, so any
 # version can be measured from one build. "dewey" is the first content tool (version 1); "dewey-v2" the
 # second, built from where the first lost points.
-V1 = {"CONTENT_TOOL": True, "CONTENT_RULE_VERSION": 1, "CONTENT_WRITER": "", "CONTENT_FALLBACK": False}
-V2 = {"CONTENT_TOOL": True, "CONTENT_RULE_VERSION": 2, "CONTENT_WRITER": "gpt-4.1", "CONTENT_FALLBACK": True}
+V1 = {"CONTENT_TOOL": True, "CONTENT_RULE_VERSION": 1, "CONTENT_WRITER": "", "CONTENT_FALLBACK": False,
+      "CONTENT_LOCAL_INDEX": False, "CONTENT_SEARCH": "live"}
+V2 = {"CONTENT_TOOL": True, "CONTENT_RULE_VERSION": 2, "CONTENT_WRITER": "gpt-4.1", "CONTENT_FALLBACK": True,
+      "CONTENT_LOCAL_INDEX": False, "CONTENT_SEARCH": "live"}
+V3 = dict(V2, CONTENT_LOCAL_INDEX=True)
 SETTINGS = {"dewey": V1, "dewey-frozen": V1, "dewey-v0": dict(V1, CONTENT_TOOL=False), "dewey-v2": V2,
-            "dewey-v2-frozen": V2}
+            "dewey-v2-frozen": V2, "dewey-v3": V3,
+            "dewey-v3-local": dict(V3, CONTENT_SEARCH="local", CONTENT_FALLBACK=False)}
 CITE = re.compile(r"\[(\d+)\]")
 # what each Dewey run is set beside: (label, condition, model, sampling, on the same pool)
 BASELINES = [
@@ -61,6 +70,9 @@ BASELINES = [
     ("Dewey before the abstract search", "dewey-v0", MODEL, "ours", False),
     ("Dewey v2", "dewey-v2", MODEL, "ours", False),
     ("Dewey v2 on the frozen pool", "dewey-v2-frozen", MODEL, "ours", True),
+    ("plain RAG over Dewey's index, gpt-4.1-mini", "rag-dewey-index", "gpt-4.1-mini", "ours", True),
+    ("Dewey v3", "dewey-v3", MODEL, "ours", False),
+    ("Dewey v3, local only", "dewey-v3-local", MODEL, "ours", False),
 ]
 
 
@@ -192,9 +204,16 @@ def _answer(ctx, client, question, ledger, payloads):
     return done
 
 
+def _needs_index(settings):
+    if settings.get("CONTENT_LOCAL_INDEX") and not AI.available():
+        raise SystemExit("this variant searches Dewey's own abstract index, and none is built here "
+                         "(abstract-index fetch, then build)")
+
+
 def run(ctx, client, rows, sha, variant="dewey", judge_model="gpt-4.1", allow_incomplete=False, out=print):
     if variant not in VARIANTS:
         raise ValueError(f"unknown variant {variant!r}")
+    _needs_index(SETTINGS[variant])
     pools, _rankings, report = RAG.prepare(rows, frozen=True, allow_incomplete=allow_incomplete,
                                            out=lambda *_: None)
     pool = report["pool"]["sha256"]
@@ -272,7 +291,9 @@ def run(ctx, client, rows, sha, variant="dewey", judge_model="gpt-4.1", allow_in
                   "escalate_after_rounds": config.ESCALATE_AFTER_ROUNDS, "max_rounds": config.MAX_ROUNDS,
                   "max_tool_calls": config.MAX_TOOL_CALLS, "time_budget": config.TIME_BUDGET_SECONDS,
                   "content_top": config.CONTENT_TOP, "content_pool": config.CONTENT_POOL,
-                  **{name.lower(): value for name, value in settings.items()}},
+                  **{name.lower(): value for name, value in settings.items()},
+                  "abstract_index": {k: (AI.info() or {}).get(k) for k in ("snapshot", "documents")}
+                  if settings.get("CONTENT_LOCAL_INDEX") else None},
         "judge_cost_usd": meter.cost(), "seconds": round(time.time() - started, 1),
     }
     (out_dir / "summary.json").write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
@@ -280,9 +301,23 @@ def run(ctx, client, rows, sha, variant="dewey", judge_model="gpt-4.1", allow_in
     return payload
 
 
-def retrieval_check(ctx, rows, allow_incomplete=False, out=print):
+def retrieval_check(ctx, rows, allow_incomplete=False, variant=None, out=print):
     """The live abstract search on every question as written, without a model: where it puts the
-    source paper (the study's rule), how many candidates and abstracts it has, how long it takes."""
+    source paper (the study's rule), how many candidates and abstracts it has, how long it takes.
+    With a variant, that version's search (its settings for the run, restored after it)."""
+    settings = SETTINGS[variant] if variant else {}
+    _needs_index(settings)
+    was = {name: getattr(config, name) for name in settings}
+    for name, value in settings.items():
+        setattr(config, name, value)
+    try:
+        return _retrieval_check(ctx, rows, allow_incomplete, variant, out)
+    finally:
+        for name, value in was.items():
+            setattr(config, name, value)
+
+
+def _retrieval_check(ctx, rows, allow_incomplete, variant, out):
     pools, _rankings, report = RAG.prepare(rows, frozen=True, allow_incomplete=allow_incomplete,
                                            out=lambda *_: None)
     oracle = DQ.fetch_abstracts(rows, out=lambda *_: None)
@@ -316,8 +351,13 @@ def retrieval_check(ctx, rows, allow_incomplete=False, out=print):
               "share_with_abstract": round(sum(q["with_abstract"] for q in per_q.values())
                                            / max(1, sum(q["candidates"] for q in per_q.values())), 3),
               "live_seconds": {"median": times[len(times) // 2] if times else None,
-                               "p90": times[int(0.9 * (len(times) - 1))] if times else None, "searched": len(times)}}
-    (DQ.study_dir() / "dewey-retrieval.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+                               "p90": times[int(0.9 * (len(times) - 1))] if times else None, "searched": len(times)},
+              "variant": variant or "as deployed",
+              "settings": {name.lower(): getattr(config, name) for name in
+                           ("CONTENT_RULE_VERSION", "CONTENT_FALLBACK", "CONTENT_LOCAL_INDEX", "CONTENT_SEARCH")},
+              "dewey_index": report["rankers"].get(RAG.INDEX_RANKER, {}).get("recall@5")}
+    name = f"dewey-retrieval-{variant}.json" if variant else "dewey-retrieval.json"
+    (DQ.study_dir() / name).write_text(json.dumps(result, indent=2), encoding="utf-8")
     m, f = result["metrics"], result["frozen_pipeline"]
     out(f"Dewey's live abstract search, questions as written: R@1 {m['recall@1']:.2f}, R@5 {m['recall@5']:.2f}, "
         f"found {m['ranked_at_all']:.2f} (frozen pipeline: {f['recall@1']:.2f} / {f['recall@5']:.2f} / "

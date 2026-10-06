@@ -39,6 +39,13 @@ candidates.
 The four first-stage orders are scored as well. Pool statistics stand in for corpus statistics in
 BM25's idf, the standard compromise when re-ranking a pool, stated wherever the results are.
 
+**Dewey's index** (`dewey-index`) is the closed world rebuilt from open data (abstractindex.py): BM25
+over the abstracts of every dblp paper OpenAlex has one for, with whole-index statistics as
+RAGScholar's Lucene index had. It is not a re-ranker of the pool but a retriever of its own: its top
+50 for each question are kept beside the pool (dewey-index-pools.json, frozen like the pool, never
+mixed into it, so every earlier ranking and fingerprint stands), and the source paper is recognised
+in them by the same rule.
+
 **Which paper is "the source".** dblp often holds a preprint and its published version under two keys
 with one title, and the benchmark names one of them. A candidate counts as the source if it has the
 benchmark's key, Semantic Scholar's dblp key for the benchmark's paper, or the same normalised title.
@@ -84,6 +91,8 @@ RERANKERS = ("bm25", "dense", "hybrid")
 FIRST_STAGE = {"dblp-search": "dblp_rank", "s2-search": "s2_rank",
                "openalex-search": "oa_rank", "openalex-semantic": "oas_rank"}
 RANKERS = RERANKERS + tuple(FIRST_STAGE)
+INDEX_RANKER = "dewey-index"   # Dewey's own abstract index: its own candidates, kept beside the pool
+INDEX_POOL = 50
 MODES = ("plain", "permissive", "gated")
 TOP_K = 5
 S2_SEARCH = "https://api.semanticscholar.org/graph/v1/paper/search"
@@ -644,9 +653,23 @@ def print_retrieval(report, out=print):
         out(f"{name:18s} {m['recall@1']:6.2f} {m['recall@3']:6.2f} {m['recall@5']:6.2f} "
             f"{m['recall@10']:6.2f} {m['mrr@10']:7.3f} {m['ranked_at_all']:6.2f}")
     out(f"(found = the source paper anywhere in that ranker's list; embeddings ${report.get('embedding_cost_usd', 0)})")
+    index = report.get("index")
+    if index:
+        share = index["source_in_index"]
+        out(f"dewey-index = BM25 over Dewey's own index ({index.get('documents') or 0:,} abstracts, OpenAlex snapshot "
+            f"{index['snapshot']}), its own top {INDEX_POOL}; the source paper has an abstract in it for "
+            f"{'?' if share is None else f'{share:.0%}'} of questions")
 
 
 # --------------------------------------------------------------------------- contexts
+
+def pool_of(pools, qid, ranker):
+    """What a ranker chose from: the question's frozen pool, or for Dewey's index its own top 50."""
+    pool = pools[qid]
+    if ranker == INDEX_RANKER:
+        return pool.get("index") or {"candidates": {}, "aliases": pool.get("aliases") or []}
+    return pool
+
 
 def _blocks(cands, keys):
     return "\n\n".join(f"[{i}] {cands[key].get('title') or ''}\n{cands[key].get('abstract') or '(no abstract available)'}"
@@ -672,9 +695,10 @@ def rag_contexts(rows, pools, rankings, ranker, k=TOP_K):
     contexts = {}
     for row in rows:
         ranking = rankings[ranker].get(row["id"]) or []
-        cands = pools[row["id"]]["candidates"]
+        pool = pool_of(pools, row["id"], ranker)
+        cands = pool["candidates"]
         keys = ranking[:k]
-        rank = source_rank(ranking, set(pools[row["id"]]["aliases"]))
+        rank = source_rank(ranking, set(pool["aliases"]))
         contexts[row["id"]] = {"abstract": _blocks(cands, keys) or "(no papers were retrieved)",
                                "source": f"{ranker}@{k}", "retrieved": keys, "source_rank": rank,
                                "source_in_context": rank is not None and rank <= k}
@@ -686,9 +710,10 @@ def single_contexts(rows, pools, rankings, ranker, j):
     contexts = {}
     for row in rows:
         ranking = rankings[ranker].get(row["id"]) or []
-        cands = pools[row["id"]]["candidates"]
+        pool = pool_of(pools, row["id"], ranker)
+        cands = pool["candidates"]
         keys = ranking[j - 1:j]
-        rank = source_rank(ranking, set(pools[row["id"]]["aliases"]))
+        rank = source_rank(ranking, set(pool["aliases"]))
         contexts[row["id"]] = {"abstract": _blocks(cands, keys) or "(no paper was retrieved at this rank)",
                                "source": f"{ranker}@a{j}", "retrieved": keys, "source_rank": rank,
                                "source_in_context": rank == j}
@@ -709,7 +734,7 @@ def parse_gate(text, n):
     return kept
 
 
-def gate_contexts(client, rows, pools, contexts, gate_model=GATE_MODEL, cache_dir=None, out=print):
+def gate_contexts(client, rows, pools, contexts, gate_model=GATE_MODEL, cache_dir=None, out=print, ranker=None):
     """Keep only the retrieved abstracts the gate says address the question; with none kept the
     context is None and the answer is closed-book. Verdicts are cached by question, retrieved papers
     and gate, so every answer model gets the same filtered context and none is paid for twice."""
@@ -720,7 +745,8 @@ def gate_contexts(client, rows, pools, contexts, gate_model=GATE_MODEL, cache_di
     for row in rows:
         qid, ctx = row["id"], contexts[row["id"]]
         keys = ctx["retrieved"]
-        cands, aliases = pools[qid]["candidates"], set(pools[qid]["aliases"])
+        pool = pool_of(pools, qid, ranker)
+        cands, aliases = pool["candidates"], set(pool["aliases"])
         ck = hashlib.sha1(f"{GATE_VERSION}|{gate_model}|{row['question']}|{'|'.join(keys)}".encode()).hexdigest()
         if keys and ck not in cache:
             step = client.complete([{"role": "system", "content": GATE_SYSTEM},
@@ -750,6 +776,64 @@ def gate_contexts(client, rows, pools, contexts, gate_model=GATE_MODEL, cache_di
     return gated, info
 
 
+def index_pools(rows, pools, oracle, cache_dir, out=print):
+    """{question id: {"candidates": {key: {title, abstract, doi, dx_rank}}, "aliases": [...]}}: the top
+    50 of Dewey's abstract index for each question as written. Searched once per index snapshot and
+    kept (dewey-index-pools.json), so later runs read them as they read the pool; None without an index
+    and nothing kept. As in the pool, the source paper is recognised by key or by title, and shown with
+    the abstract the oracle condition used."""
+    from . import abstractindex as AI
+    path = Path(cache_dir) / "dewey-index-pools.json"
+    kept = _load(path)
+    meta = AI.info()
+    if meta and kept.get("snapshot") != meta["snapshot"]:
+        kept = {"snapshot": meta["snapshot"], "documents": meta["documents"], "questions": {}, "in_index": {}}
+    if not kept.get("snapshot"):
+        return None
+    todo = [r for r in rows if r["id"] not in kept["questions"]]
+    if todo and not meta:
+        out(f"  Dewey's index: {len(todo)} questions were never searched and the index is not here; "
+            f"they get no candidates")
+    elif todo:
+        for row in todo:
+            hits = AI.search(row["question"], INDEX_POOL)
+            kept["questions"][row["id"]] = [{k: h[k] for k in ("key", "title", "abstract", "doi", "score")}
+                                            for h in hits]
+            aliases = set((pools.get(row["id"]) or {}).get("aliases") or [row["dblp_key"]])
+            kept["in_index"][row["id"]] = bool(AI.lookup(sorted(aliases)))
+        path.write_text(json.dumps(kept, ensure_ascii=False), encoding="utf-8")
+    found = {}
+    for row in rows:
+        gold = (oracle or {}).get(row["id"]) or {}
+        title = norm_title(gold.get("title"))
+        alias = set((pools.get(row["id"]) or {}).get("aliases") or [row["dblp_key"]])
+        cands = {}
+        for rank, hit in enumerate(kept["questions"].get(row["id"]) or [], 1):
+            entry = {"title": hit["title"], "abstract": hit["abstract"], "doi": hit["doi"], "dx_rank": rank}
+            if hit["key"] in alias or (title and norm_title(hit["title"]) == title):
+                alias.add(hit["key"])
+                entry["abstract"] = gold.get("abstract") or entry["abstract"]
+            cands.setdefault(hit["key"], entry)
+        found[row["id"]] = {"candidates": cands, "aliases": sorted(alias),
+                            "in_index": kept.get("in_index", {}).get(row["id"])}
+    found["_meta"] = {"snapshot": kept["snapshot"], "documents": kept.get("documents")}
+    return found
+
+
+def _add_index(rows, pools, rankings, report, ipools):
+    """Dewey's index as a ranker beside the pool's: its ranking, its retrieval metrics, its pool."""
+    meta = ipools.pop("_meta")
+    rankings[INDEX_RANKER] = {qid: sorted(p["candidates"], key=lambda k: p["candidates"][k]["dx_rank"])
+                              for qid, p in ipools.items()}
+    ranks = [source_rank(rankings[INDEX_RANKER].get(r["id"]) or [], set(ipools[r["id"]]["aliases"])) for r in rows]
+    report["rankers"][INDEX_RANKER] = dict(retrieval_metrics(ranks), ranks={r["id"]: rk for r, rk in zip(rows, ranks)})
+    known = [ipools[r["id"]]["in_index"] for r in rows if ipools[r["id"]]["in_index"] is not None]
+    report["index"] = dict(meta, sha256=pool_sha(ipools, rows),
+                           source_in_index=round(sum(known) / len(known), 3) if known else None)
+    for qid, p in ipools.items():
+        pools[qid]["index"] = p
+
+
 def prepare(rows, out=print, cache_dir=None, http=None, embeddings=None, frozen=False, allow_incomplete=False):
     """Pool, abstracts, embeddings and every ranking; returns (pools, rankings, report). `frozen`
     uses the pool as it is - no searching - and refuses one with a missing search."""
@@ -769,6 +853,9 @@ def prepare(rows, out=print, cache_dir=None, http=None, embeddings=None, frozen=
     emb = embeddings or Embeddings(cache_dir / "embeddings.json")
     rankings = rank_pools(rows, pools, emb, out)
     report = evaluate_retrieval(rows, pools, rankings)
+    ipools = index_pools(rows, pools, oracle, cache_dir, out)
+    if ipools:
+        _add_index(rows, pools, rankings, report, ipools)
     report["embedding_cost_usd"] = emb.cost()
     report["settings"] = {"pool": {"dblp-search": POOL_DBLP, "s2-search": POOL_S2, "openalex-search": POOL_OA,
                                    "openalex-semantic": POOL_OA},

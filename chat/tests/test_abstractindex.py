@@ -6,9 +6,10 @@ search ranks with BM25 over the whole index.
 import json
 
 import duckdb
+import httpx
 import pytest
 
-from chat import abstractindex as AI, config, data, paperids
+from chat import abstractindex as AI, agent, config, content, data, dblpqa_rag as RAG, paperids
 
 LONG = {
     "10.1109/7": "Graph neural networks forecast traffic flow on road networks from roadside sensor data, "
@@ -115,3 +116,70 @@ def test_abstracts_lose_markup_and_a_leading_label():
     assert AI.clean("<jats:p>Abstract: We study graphs.</jats:p>") == "We study graphs."
     assert AI.clean("ABSTRACT We study graphs.") == "We study graphs."
     assert AI.clean("Abstraction layers are studied.") == "Abstraction layers are studied."
+
+
+@pytest.fixture
+def built(snapshot):
+    con, files = snapshot
+    AI.fetch(con, files=files, date="2099-01-01", batch=1, out=lambda *_: None)
+    AI.build(con, out=lambda *_: None)
+    return snapshot
+
+
+QUESTION = "How are traffic flows on road networks forecast from sensor data?"
+
+
+def test_v3_searches_the_index_and_reads_dblps_own_hits_from_it(built, loaded, monkeypatch):
+    calls = []
+
+    def handler(request):
+        calls.append(str(request.url))
+        if request.url.host == "searchapi":
+            return httpx.Response(200, json={"results": [{"key": "conf/aaa/p6", "title": "Graph learning at scale"},
+                                                         {"key": "journals/bbb/p8", "title": "Graph embeddings for retrieval"}]})
+        return httpx.Response(500)
+
+    monkeypatch.setattr(config, "SEARCH_URL", "http://searchapi")
+    monkeypatch.setattr(config, "CONTENT_RULE_VERSION", 2)
+    monkeypatch.setattr(config, "CONTENT_LOCAL_INDEX", False)
+    assert content.wanted_sources() == ["dblp-search", "openalex-search", "openalex-semantic"], "v1 and v2: no index"
+    monkeypatch.setattr(config, "CONTENT_LOCAL_INDEX", True)
+    monkeypatch.setattr(config, "CONTENT_SEARCH", "live")
+    assert content.wanted_sources() == ["dewey-index", "dblp-search", "openalex-search", "openalex-semantic"]
+    monkeypatch.setattr(config, "CONTENT_SEARCH", "local")
+    monkeypatch.setattr(config, "CONTENT_FALLBACK", False)
+    ctx = agent.Ctx(data.pool, httpx.Client(transport=httpx.MockTransport(handler)), loaded["store_meta"])
+    out = content.search_abstracts(ctx, question=QUESTION)
+    assert out["meta"]["sources"] == {"dewey-index": "ok", "dblp-search": "ok"} and out["meta"]["index"] == "2099-01-01"
+    assert out["rows"][0]["key"] == "journals/bbb/p7" and out["rows"][0]["found_by"] == "dewey-index"
+    rows = {r["key"]: r for r in out["rows"]}
+    # dblp's title search found these two; their abstracts come from the index, not from OpenAlex
+    assert rows["conf/aaa/p6"]["abstract"].startswith("We train graph learning")
+    assert rows["journals/bbb/p8"]["found_by"] == "dblp-search" and "citation" in rows["journals/bbb/p8"]["abstract"]
+    assert not [c for c in calls if "searchapi" not in c], "local only: no outside service is asked"
+    assert out["note"].startswith("Abstracts come from Dewey's own copy")
+    assert "from Dewey's abstract index and dblp's title search" in out["summary"]
+
+
+def test_the_index_is_a_ranker_of_its_own_beside_the_frozen_pool(built, tmp_path, monkeypatch):
+    rows = [{"id": "q1", "question": QUESTION, "dblp_key": "journals/bbb/p7", "answer": "with graph neural networks"}]
+    pools = {"q1": {"candidates": {"conf/aaa/p6": {"title": "Graph learning at scale", "dblp_rank": 1}},
+                    "aliases": ["journals/bbb/p7"]}}
+    oracle = {"q1": {"title": "Graph neural networks for traffic", "abstract": "THE ABSTRACT THE QUESTION WAS WRITTEN FROM"}}
+    before = RAG.pool_sha(pools, rows)
+    found = RAG.index_pools(rows, pools, oracle, tmp_path)
+    assert found["q1"]["in_index"] and found["_meta"]["snapshot"] == "2099-01-01"
+    # the source is shown with the oracle's abstract, as in the pool
+    assert found["q1"]["candidates"]["journals/bbb/p7"]["abstract"].startswith("THE ABSTRACT")
+    rankings, report = {}, {"rankers": {}}
+    RAG._add_index(rows, pools, rankings, report, found)
+    assert rankings["dewey-index"]["q1"][0] == "journals/bbb/p7"
+    assert report["rankers"]["dewey-index"]["recall@1"] == 1.0 and report["index"]["source_in_index"] == 1.0
+    assert RAG.pool_sha(pools, rows) == before, "the pool and its fingerprint are untouched"
+    ctx = RAG.rag_contexts(rows, pools, rankings, "dewey-index", k=5)["q1"]
+    assert ctx["source_in_context"] and "THE ABSTRACT" in ctx["abstract"]
+    # kept: with the index gone, the same candidates come back from the file
+    monkeypatch.setattr(config, "MODELS_DIR", tmp_path / "elsewhere")
+    AI.forget()
+    again = RAG.index_pools(rows, {"q1": dict(pools["q1"])}, oracle, tmp_path)
+    assert list(again["q1"]["candidates"]) == list(found["q1"]["candidates"])
