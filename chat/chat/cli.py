@@ -95,8 +95,8 @@ def cmd_abstract_index(args):
         if not paperids.attach(con, meta):
             sys.exit("no paper ids for this dump yet: run `paper-ids` first")
         if args.action == "fetch":
-            AI.fetch(con, httpx.Client(timeout=120, follow_redirects=True), threads=args.threads or 16,
-                     batch=args.batch, limit=args.limit)
+            AI.fetch(con, httpx.Client(timeout=120, follow_redirects=True), threads=args.threads or 4,
+                     batch=args.batch, limit=args.limit, memory=args.memory)
         else:
             AI.build(con, partial=args.partial, threads=args.threads or 4)
     finally:
@@ -376,8 +376,9 @@ def main():
     ai = sub.add_parser("abstract-index", help="Dewey's own index of the abstracts of dblp's papers")
     ai.add_argument("action", choices=["fetch", "build", "status", "search"])
     ai.add_argument("query", nargs="*", help="for search: the words to look for")
-    ai.add_argument("--threads", type=int, default=None, help="DuckDB threads for fetch (16), writers for build (4)")
-    ai.add_argument("--batch", type=int, default=20, help="for fetch: snapshot files per part")
+    ai.add_argument("--threads", type=int, default=None, help="DuckDB threads for fetch, writers for build (4 each)")
+    ai.add_argument("--batch", type=int, default=20, help="for fetch: snapshot files per part (keep it to resume)")
+    ai.add_argument("--memory", default="1500MB", help="for fetch: DuckDB's memory limit")
     ai.add_argument("--limit", type=int, default=None, help="for fetch: the first N batches only, as a trial")
     ai.add_argument("--partial", action="store_true", help="for build: index an unfinished fetch")
     ai.set_defaults(fn=cmd_abstract_index)

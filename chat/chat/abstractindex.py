@@ -90,8 +90,10 @@ def snapshot(http):
                               for f in works["files"]]
 
 
-def _remote(con, threads):
-    """httpfs for reading the snapshot in place; the build side of the DOI match pinned to dblp's DOIs."""
+def _remote(con, threads, memory):
+    """httpfs for reading the snapshot in place, kept small: the VM serves the site while this runs.
+    A first fetch with 16 threads and DuckDB's default remote-file cache took the whole machine's
+    memory (it has no swap) and stopped the site until the kernel killed it."""
     ext = config.MODELS_DIR / "duckdb-extensions"
     ext.mkdir(parents=True, exist_ok=True)
     con.execute(f"SET extension_directory = '{ext}'")
@@ -100,6 +102,11 @@ def _remote(con, threads):
     con.execute("SET http_retries = 8")
     con.execute("SET http_retry_wait_ms = 1000")
     con.execute(f"SET threads = {int(threads)}")
+    con.execute(f"SET memory_limit = '{memory}'")
+    try:
+        con.execute("SET enable_external_file_cache = false")    # remote bytes are read once
+    except Exception:
+        pass
 
 
 def _pin_build_side(con):
@@ -124,7 +131,7 @@ def _batch_sql(urls, target=None):
     return select if target is None else f"COPY ({select}) TO '{target}' (FORMAT parquet, COMPRESSION zstd)"
 
 
-def fetch(con, http=None, files=None, date=None, threads=16, batch=20, limit=None, out=print):
+def fetch(con, http=None, files=None, date=None, threads=4, batch=20, limit=None, memory="1500MB", out=print):
     """Stream the snapshot's DOI and abstract columns, keeping the works dblp links to; returns the
     fetch's summary. `con` has the paper ids attached (x). Batches already written are skipped."""
     if files is None:
@@ -135,7 +142,7 @@ def fetch(con, http=None, files=None, date=None, threads=16, batch=20, limit=Non
     folder = parts_dir(date)
     folder.mkdir(parents=True, exist_ok=True)
     if any(u.startswith("http") for u, _, _ in files):
-        _remote(con, threads)
+        _remote(con, threads, memory)
     _pin_build_side(con)
     con.execute(WANTED)
     wanted = con.execute("SELECT count(*) FROM wanted").fetchone()[0]

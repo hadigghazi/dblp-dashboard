@@ -140,6 +140,11 @@ services:
     image: ghcr.io/hadigghazi/dblp-dashboard-chat:latest
     pull_policy: missing
     user: "${DATA_UID:-1000}:${DATA_GID:-1000}"
+    # a hard memory cap for every task run from here (vm-task's `memory`, default 6g): the VM has no
+    # swap, so a task that outgrows the free memory starves the whole site - on 2026-10-06 one did, for
+    # twenty minutes. Capped, only that container is killed.
+    mem_limit: ${CHAT_TASK_MEMORY:-6g}
+    memswap_limit: ${CHAT_TASK_MEMORY:-6g}
     environment:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}

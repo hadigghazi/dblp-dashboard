@@ -43,6 +43,10 @@ on:
         description: "fetch: path under ~/dblp-dashboard/models (globs allowed, no '..')"
         required: false
         default: ""
+      memory:
+        description: "start: memory cap for each step's container, e.g. 3500m or 8g (default 6g)"
+        required: false
+        default: ""
 
 concurrency: vm-task-${{ github.event.inputs.action }}-${{ github.event.inputs.name }}
 
@@ -59,6 +63,7 @@ jobs:
       AFTER: ${{ github.event.inputs.after }}
       LINES: ${{ github.event.inputs.lines }}
       FETCH_PATH: ${{ github.event.inputs.path }}
+      MEMORY: ${{ github.event.inputs.memory }}
     steps:
       - name: Check the inputs
         run: |
@@ -83,6 +88,7 @@ jobs:
             done
           fi
           if [ "$ACTION" = log ]; then [[ "$LINES" =~ ^[0-9]{1,5}$ ]] || { echo "bad lines"; exit 1; }; fi
+          if [ -n "$MEMORY" ]; then [[ "$MEMORY" =~ ^[0-9]{1,5}[mg]$ ]] || { echo "bad memory: '$MEMORY'"; exit 1; }; fi
           if [ "$ACTION" = fetch ]; then
             [[ "$FETCH_PATH" =~ ^[A-Za-z0-9_.*/-]+$ ]] && [[ "$FETCH_PATH" != *..* ]] \
               || { echo "bad path: '$FETCH_PATH'"; exit 1; }
@@ -108,6 +114,9 @@ jobs:
             echo "echo \$\$ > ~/vm-tasks/$NAME.pid"
             echo 'trap '"'"'echo "== exit $? at $(date -u +%FT%TZ)"'"'"' EXIT'
             echo 'cd ~/dblp-dashboard'
+            # every step's container is capped (docker-compose.prod.yml reads this): a runaway task is
+            # killed alone instead of starving the site
+            echo "export CHAT_TASK_MEMORY=${MEMORY:-6g}"
             if [ -n "$AFTER" ]; then
               echo "echo \"== waiting for task $AFTER\""
               echo "while [ -f ~/vm-tasks/$AFTER.pid ] && kill -0 \"\$(cat ~/vm-tasks/$AFTER.pid)\" 2>/dev/null; do sleep 60; done"
