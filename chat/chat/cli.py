@@ -23,6 +23,9 @@ Command line, for the VM.
   python -m chat.cli dblpqa replication         the grid beside the original paper's Table 3, finding by finding
   python -m chat.cli dblpqa dewey --variant V   Dewey itself answers every question (live, frozen pool, or v0)
   python -m chat.cli dblpqa dewey-retrieval     Dewey's live abstract search alone: where it puts the source paper
+  python -m chat.cli dblpqa structured-build    questions about dblp's records, answers by SQL over the parquet
+  python -m chat.cli dblpqa structured --arm A  Dewey, RAGScholar's pipeline or no retrieval on them (no judge)
+  python -m chat.cli dblpqa structured-compare  the arms side by side, Dewey against each
   python -m chat.cli dblpqa --dataset fresh ... any of the above on DBLP-QA-Fresh instead
 
 `ask` is the same code path the web endpoint uses, so a question that works here works there.
@@ -129,6 +132,19 @@ def cmd_dblpqa(args):
         return
     if args.condition == "report":
         DQ.report(args.run)
+        return
+    if args.condition in ("structured-build", "structured", "structured-compare"):
+        # dblp's records rather than DBLP-QA's questions: its own question set and folder
+        from . import dblpqa_structured as ST
+        if args.condition == "structured-build":
+            ST.build(seed=args.seed)
+        elif args.condition == "structured-compare":
+            ST.compare()
+        else:
+            ctx = _ready()
+            arms_models = ["dewey"] if args.arm == "dewey" else [m.strip() for m in args.models.split(",") if m.strip()]
+            for model in arms_models:
+                ST.run(ctx, client, args.arm, model=model, limit=args.limit)
         return
     if args.condition == "rescore":
         if not args.run:
@@ -324,13 +340,17 @@ def main():
     dq = sub.add_parser("dblpqa", help="experiments on the DBLP-QA benchmark")
     dq.add_argument("condition", choices=["closed-book", "oracle", "retrieval", "rag", "audit", "regrade", "crossjudge", "report",
                              "rescore", "fresh-build", "grid", "bearing", "replication", "dewey",
-                             "dewey-retrieval"],
+                             "dewey-retrieval", "structured-build", "structured", "structured-compare"],
                     help="oracle = each question with the abstract it was written from; retrieval = where "
                          "each ranker puts that paper (no answers); rag = answers from the top --k papers "
                          "of --ranker; rescore = score the unscored answers of --run; grid = the original "
                          "paper's ten context variants for --models; bearing = the paper's RQ1 measure "
                          "(does a top abstract answer the question?); replication = the grid beside the "
                          "paper's Table 3")
+    dq.add_argument("--arm", choices=["dewey", "rag", "closed"], default="dewey",
+                    help="for structured: Dewey, RAGScholar's pipeline over the records (--models), or the "
+                         "question alone (--models)")
+    dq.add_argument("--seed", type=int, default=7, help="for structured-build: which questions are drawn")
     dq.add_argument("--variant", choices=["live", "frozen", "v0"], default="live",
                     help="for dewey: live = as deployed; frozen = its abstract search ranks the study's frozen "
                          "pool; v0 = as it was before the abstract search (declines content questions)")
