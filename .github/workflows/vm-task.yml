@@ -113,11 +113,14 @@ jobs:
             fi
             echo 'echo "== started $(date -u +%FT%TZ)"'
             IFS=';' read -ra parts <<< "$STEPS"
+            i=0
             for p in "${parts[@]}"; do
               p="$(echo "$p" | xargs)"
               [ -z "$p" ] && continue
+              i=$((i + 1))
               echo "echo \"== step: $p\""
-              echo "docker compose -f docker-compose.prod.yml run --rm -T chat python -m chat.cli $p"
+              # named after the task, so `stop` can find this task's containers and no one else's
+              echo "docker compose -f docker-compose.prod.yml run --rm -T --name vmtask-$NAME-$i-\$\$ chat python -m chat.cli $p"
             done
           } > task.sh
           cat task.sh
@@ -140,7 +143,7 @@ jobs:
             echo "== tasks"
             for pid in $(ls -t *.pid 2>/dev/null); do
               n="${pid%.pid}"
-              if kill -0 "$(cat "$pid")" 2>/dev/null; then state=running; else state=finished; fi
+              if kill -0 "$(cat "$pid")" 2>/dev/null; then state="running (pid $(cat "$pid"))"; else state=finished; fi
               echo "-- $n: $state, log updated $(date -u -r "$n.log" +%FT%TZ 2>/dev/null)"
               tail -n 3 "$n.log" 2>/dev/null | sed 's/^/     /'
             done
@@ -158,7 +161,18 @@ jobs:
       - name: Stop
         if: env.ACTION == 'stop'
         run: |
-          ssh -i ~/.ssh/deploy_key "$VM" "pid=\$(cat ~/vm-tasks/$NAME.pid 2>/dev/null) && kill -- -\$pid 2>/dev/null; sleep 2; kill -0 \$pid 2>/dev/null && echo still running || echo stopped; docker ps --filter name=chat-run --format '{{.Names}}' | xargs -r docker stop"
+          # the task's whole process group, then - only if it will not go - by force; then this task's
+          # own containers (named vmtask-<name>-...), never anybody else's
+          ssh -i ~/.ssh/deploy_key "$VM" bash -s -- "$NAME" <<'EOF'
+            name="$1"
+            pid=$(cat ~/vm-tasks/$name.pid 2>/dev/null) || { echo "no such task"; exit 0; }
+            ps -o pid,pgid,sid,stat,etime,cmd -g "$(ps -o sid= -p "$pid" | tr -d ' ')" 2>/dev/null | head -20
+            pkill -TERM -s "$(ps -o sid= -p "$pid" | tr -d ' ')" 2>/dev/null
+            sleep 3
+            if kill -0 "$pid" 2>/dev/null; then pkill -KILL -s "$(ps -o sid= -p "$pid" | tr -d ' ')" 2>/dev/null; sleep 1; fi
+            kill -0 "$pid" 2>/dev/null && echo "still running" || echo "stopped"
+            docker ps --filter "name=vmtask-$name-" --format '{{.Names}}' | xargs -r docker stop
+          EOF
 
       - name: Pull an Ollama model
         if: env.ACTION == 'ollama-pull'
