@@ -98,6 +98,13 @@ def test_scoring_needs_the_reference_and_nothing_else():
     assert ST.score(venue, "It appeared at SIGMOD Conference 2020.")
     assert ST.score(venue, "Published at SIGMOD in 2020."), "the series name counts as the venue"
     assert not ST.score(venue, "It appeared at SIGMOD in 2019.")
+    journal = {"type": "venue_year", "ref": {"year": 2005, "venues": ["Int. J. Medical Informatics", "ijmi"]}}
+    assert ST.score(journal, "It was published in the International Journal of Medical Informatics in 2005.")
+    assert ST.score(journal, "Int. J. Medical Informatics, 2005.")
+    assert not ST.score(journal, "It was published in Medical Informatics Europe in 2005.")
+    short = {"type": "venue_year", "ref": {"year": 2023, "venues": ["Pattern Recognit.", "pr"]}}
+    assert ST.score(short, "Pattern Recognition, 2023.")
+    assert not ST.score(short, "In the proceedings of CVPR 2023."), "a two-letter code is not found inside words"
     authors = {"type": "authors", "ref": {"names": ["Jürgen Schmidhuber", "Sepp Hochreiter", "John Smith Jr."]}}
     assert ST.score(authors, "By Jurgen Schmidhuber, Sepp Hochreiter and John Smith.")
     assert not ST.score(authors, "By Jürgen Schmidhuber and John Smith.")
@@ -105,6 +112,8 @@ def test_scoring_needs_the_reference_and_nothing_else():
     assert ST.score(count, "dblp lists 1,234 publications.") and not ST.score(count, "about 1,200")
     top = {"type": "venue_top_author", "ref": {"names": ["Wei Wang 0003"]}}
     assert ST.score(top, "Wei Wang (0003) has the most.") and not ST.score(top, "Wei Zhang has the most.")
+    initials = {"type": "venue_top_author", "ref": {"names": ["Sajal K. Das 0001"]}}
+    assert ST.score(initials, "Sajal Das has published the most.") and not ST.score(initials, "Sajal Kumar has.")
 
 
 class Knows:

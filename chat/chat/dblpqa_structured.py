@@ -83,6 +83,24 @@ def numbers(text):
     return {int(x.replace(",", "")) for x in re.findall(r"\d[\d,]*", text or "") if x.replace(",", "").isdigit()}
 
 
+def words(text):
+    return re.findall(r"[a-z0-9]+", fold(text))
+
+
+def abbreviation_in(venue, answer):
+    """dblp writes venues abbreviated ("Int. J. Medical Informatics", "Comput. Electr. Eng."): the venue
+    is named when each of its words begins a word of the answer, in order - so "International Journal
+    of Medical Informatics" names it, and so does the abbreviation itself."""
+    said, at = words(answer), 0
+    for token in words(venue):
+        while at < len(said) and not said[at].startswith(token):
+            at += 1
+        if at == len(said):
+            return False
+        at += 1
+    return bool(words(venue))
+
+
 def score(question, answer):
     """True when the answer states the reference: its number, or its names."""
     ref, kind = question["ref"], question["type"]
@@ -90,12 +108,16 @@ def score(question, answer):
         return ref["number"] in numbers(answer)
     low = fold(answer)
     if kind == "venue_year":
-        return str(ref["year"]) in (answer or "") and any(compact(v) and compact(v) in compact(answer)
-                                                         for v in ref["venues"])
+        venue, series = ref["venues"][0], ref["venues"][-1]
+        # the series' short name ("iwqos") counts as a whole word only, and only if it is not a
+        # two-letter code that would be found inside any other word
+        named = abbreviation_in(venue, answer) or (len(series) >= 3 and series.lower() in words(answer))
+        return str(ref["year"]) in (answer or "") and named
     if kind == "authors":
         return all(surname(n) in low for n in ref["names"])
     if kind == "venue_top_author":
-        return all(token in low for token in fold(base_name(ref["names"][0])).split())
+        # initials ("K.") may be left out or written differently; the names may not
+        return all(w in words(answer) for w in words(base_name(ref["names"][0])) if len(w) > 1)
     raise ValueError(f"unknown question type {kind}")
 
 
