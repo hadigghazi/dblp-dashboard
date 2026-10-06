@@ -123,7 +123,7 @@ services:
       # the abstract search (questions about what papers say): OpenAlex's free key, and a daily cap on
       # its calls that keeps within that key's allowance
       OPENALEX_API_KEY: ${OPENALEX_API_KEY:-}
-      CHAT_OPENALEX_CALLS_PER_DAY: ${CHAT_OPENALEX_CALLS_PER_DAY:-1200}
+      CHAT_OPENALEX_CALLS_PER_DAY: ${CHAT_OPENALEX_CALLS_PER_DAY:-1400}
       DUCKDB_MEMORY: ${CHAT_DUCKDB_MEMORY:-2GB}
       DUCKDB_THREADS: ${CHAT_DUCKDB_THREADS:-2}
       CHAT_TMP_DIR: /tmp/duckdb

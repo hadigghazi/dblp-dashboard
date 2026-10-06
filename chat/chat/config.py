@@ -74,7 +74,7 @@ CONTENT_TOOL = os.environ.get("CHAT_CONTENT_TOOL", "1") != "0"
 OPENALEX_URL = "https://api.openalex.org/works"
 OPENALEX_API_KEY = os.environ.get("OPENALEX_API_KEY", "")
 # the free key allows $1 a day: a search costs $0.001, a lookup by DOI $0.0001
-OPENALEX_CALLS_PER_DAY = int(os.environ.get("CHAT_OPENALEX_CALLS_PER_DAY", "1200"))
+OPENALEX_CALLS_PER_DAY = int(os.environ.get("CHAT_OPENALEX_CALLS_PER_DAY", "1400"))
 # OpenAlex's semantic search sometimes takes ten seconds: the abstract search gets a longer limit than
 # other tools, and still answers in about five when the services are quick
 CONTENT_DEADLINE = float(os.environ.get("CHAT_CONTENT_DEADLINE", "14"))

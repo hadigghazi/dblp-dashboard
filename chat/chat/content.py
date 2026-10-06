@@ -304,7 +304,8 @@ def pool_for(ctx, query, deadline):
                      "found_by": ["frozen pool"]}
                  for k, e in (frozen.get("candidates") or {}).items()}
         return cands, {"frozen pool": "ok"}, None, False
-    request = {"v": 1, "q": query.lower()}
+    # v2: abstracts from a preprint's or published twin, a 12 s search limit - pools from before are not reused
+    request = {"v": 2, "q": query.lower()}
     hit = _cached(request)
     if hit is not None:
         return hit["cands"], hit["status"], None, True
