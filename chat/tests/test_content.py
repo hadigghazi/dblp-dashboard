@@ -181,7 +181,7 @@ def test_the_switch_puts_the_old_rule_back(ctx, monkeypatch):
     names = lambda: [s["function"]["name"] for s in T.schemas()]
     assert "search_abstracts" in names()
     prompt = agent.system_prompt(ctx)
-    assert "9. Questions about what papers say" in prompt and "neither dblp nor the abstracts" in prompt
+    assert "9. Questions about what research says" in prompt and "neither dblp nor the abstracts" in prompt
     monkeypatch.setattr(config, "CONTENT_TOOL", False)
     assert "search_abstracts" not in names()
     old = agent.system_prompt(ctx)
