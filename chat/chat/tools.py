@@ -1038,8 +1038,9 @@ def run_sql(ctx, sql, reason=None):
 
 
 # --------------------------------------------------------------------------- the catalogue
-def _fn(name, description, properties, required=(), heavy=False, remote=False, max_chars=None):
+def _fn(name, description, properties, required=(), heavy=False, remote=False, max_chars=None, timeout=None):
     return {"name": name, "description": description, "heavy": heavy, "remote": remote, "max_chars": max_chars,
+            "timeout": timeout,
             "schema": {"type": "function", "function": {
                 "name": name, "description": description,
                 "parameters": {"type": "object", "properties": properties, "required": list(required),
@@ -1146,7 +1147,9 @@ SPECS = [
          "min_titles": {"type": "integer"}}),
 
     _fn("search_papers", "Find papers by topic or by a remembered title, ranked by meaning and words "
-        "together (hybrid search). Use for 'papers about ...' and 'what is the paper that ...'.",
+        "together (hybrid search). Use for 'papers about ...' and 'what is the paper that ...'. For one "
+        "author's papers, on a topic or not, use author_papers (title_contains for the topic): this "
+        "search does not know who wrote what.",
         {"q": {"type": "string"}, "kind": KIND, "from": YEAR, "to": YEAR, "top": {"type": "integer"}},
         ["q"], remote=True),
     _fn("paper_detail", "One record in full: venue, year, authors with how firmly each is identified, "
@@ -1225,7 +1228,8 @@ SPECS += [
         {"question": {"type": "string", "description": "the user's question, in English and self-contained"},
          "keys": {"type": "array", "items": {"type": "string"}, "maxItems": 5,
                   "description": "record keys a tool returned (conf/..., journals/...), never built"},
-         "from": YEAR, "to": YEAR}, ["question"], remote=True, max_chars=config.CONTENT_MAX_CHARS),
+         "from": YEAR, "to": YEAR}, ["question"], remote=True, max_chars=config.CONTENT_MAX_CHARS,
+        timeout=config.CONTENT_TOOL_TIMEOUT),
 ]
 # resolved when called, not now: whichever of the two modules is imported first, this one is complete
 HANDLERS["search_abstracts"] = lambda ctx, **kw: CT.search_abstracts(ctx, **kw)
@@ -1251,6 +1255,11 @@ def spec(name):
 def max_chars(name, default):
     found = spec(name)
     return (found or {}).get("max_chars") or default
+
+
+def timeout_for(name, default):
+    found = spec(name)
+    return (found or {}).get("timeout") or default
 
 
 def call(ctx, name, args):

@@ -79,8 +79,9 @@ STYLE
 - If you had to choose an interpretation (a person, a venue, a window), say which in a short clause.
 - Never write a dblp key (homepages/..., journals/..., conf/...) or a bracketed list of pages in the
   answer, unless the user typed a key: the interface links every page, and the list used for
-  follow-ups is attached automatically. Name a person by name, adding the number (Wei Wang 0003) or
-  the affiliation when two share a name.
+  follow-ups is attached automatically. A key is for passing to a tool, never for the reader. Name a
+  person by name, adding the number (Wei Wang 0003) or the affiliation when two share a name. (The
+  [1] to [5] that cite abstracts are not keys: those are wanted.)
 """
 
 
@@ -116,8 +117,9 @@ MISSING_WITHOUT_ABSTRACTS = ("dblp does not have (citations, abstracts, affiliat
 CONTENT_RULE = """9. Questions about what papers say - what a method or idea is, how something works, what a paper
    proposes, finds or argues, why something is needed - are answered with search_abstracts. Pass the
    question as the user asked it, made self-contained (resolve "it" or "that paper" from earlier
-   turns; pass `keys` when the papers are already known). Answer from the returned abstracts and cite
-   each claim with its number, [1] to [5]. If none of them addresses the question, say so in one
+   turns; pass `keys` when the papers are already known). Answer from the returned abstracts, and end
+   every sentence that uses one with its number in brackets, like [2] or [1][3]. If none of them
+   addresses the question, say so in one
    clause; you may then add one or two sentences of general background, saying that it is general
    background, with no numbers and no citations. Never attribute to an abstract what it does not say.
 """
@@ -153,8 +155,8 @@ def _trim(payload, cap=MAX_RESULT_CHARS):
 def run_tools(ctx, calls, emit, budget_left, collect=None):
     """Execute tool calls in parallel; returns the tool messages for the next model call."""
     messages = []
-    # how long a tool may take, for one that can stop itself in time (the abstract search)
-    ctx.time_left = max(0.5, min(config.TOOL_TIMEOUT, budget_left()))
+    # how long the answer has left, for a tool that can stop itself in time (the abstract search)
+    ctx.time_left = max(0.5, budget_left())
     # not a `with` block: leaving one waits for every thread, so a tool that was given up on would
     # still hold the answer until it finished
     pool = ThreadPoolExecutor(max_workers=min(4, max(1, len(calls))))
@@ -164,7 +166,7 @@ def run_tools(ctx, calls, emit, budget_left, collect=None):
             emit({"type": "tool_start", "name": call["name"], "arguments": call["arguments"]})
             started[pool.submit(T.call, ctx, call["name"], call["arguments"])] = (call, time.time())
         for future, (call, t0) in list(started.items()):
-            timeout = max(0.5, min(config.TOOL_TIMEOUT, budget_left()))
+            timeout = max(0.5, min(T.timeout_for(call["name"], config.TOOL_TIMEOUT), budget_left()))
             try:
                 out = future.result(timeout=timeout)
             except FutureTimeout:
