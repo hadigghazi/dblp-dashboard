@@ -105,6 +105,7 @@ jobs:
           # interpreted by a shell on the VM: every step was checked to be plain words above
           {
             echo 'set -e'
+            echo "echo \$\$ > ~/vm-tasks/$NAME.pid"
             echo 'trap '"'"'echo "== exit $? at $(date -u +%FT%TZ)"'"'"' EXIT'
             echo 'cd ~/dblp-dashboard'
             if [ -n "$AFTER" ]; then
@@ -129,7 +130,7 @@ jobs:
             echo "task $NAME is still running - stop it first or pick another name"; exit 1
           fi
           scp -i ~/.ssh/deploy_key task.sh "$VM:vm-tasks/$NAME.sh"
-          ssh -i ~/.ssh/deploy_key "$VM" "cd ~/vm-tasks && nohup setsid sh $NAME.sh > $NAME.log 2>&1 < /dev/null & echo \$! > ~/vm-tasks/$NAME.pid; sleep 5; tail -n 20 ~/vm-tasks/$NAME.log"
+          ssh -i ~/.ssh/deploy_key "$VM" "cd ~/vm-tasks && rm -f $NAME.pid && (nohup setsid sh $NAME.sh > $NAME.log 2>&1 < /dev/null &); sleep 5; tail -n 20 ~/vm-tasks/$NAME.log"
 
       - name: Log
         if: env.ACTION == 'log'
@@ -143,7 +144,8 @@ jobs:
             echo "== tasks"
             for pid in $(ls -t *.pid 2>/dev/null); do
               n="${pid%.pid}"
-              if kill -0 "$(cat "$pid")" 2>/dev/null; then state="running (pid $(cat "$pid"))"; else state=finished; fi
+              if kill -0 "$(cat "$pid")" 2>/dev/null || pgrep -f "^sh $n.sh\$" > /dev/null; then
+                state="running"; else state=finished; fi
               echo "-- $n: $state, log updated $(date -u -r "$n.log" +%FT%TZ 2>/dev/null)"
               tail -n 3 "$n.log" 2>/dev/null | sed 's/^/     /'
             done
@@ -165,12 +167,19 @@ jobs:
           # own containers (named vmtask-<name>-...), never anybody else's
           ssh -i ~/.ssh/deploy_key "$VM" bash -s -- "$NAME" <<'EOF'
             name="$1"
-            pid=$(cat ~/vm-tasks/$name.pid 2>/dev/null) || { echo "no such task"; exit 0; }
-            ps -o pid,pgid,sid,stat,etime,cmd -g "$(ps -o sid= -p "$pid" | tr -d ' ')" 2>/dev/null | head -20
-            pkill -TERM -s "$(ps -o sid= -p "$pid" | tr -d ' ')" 2>/dev/null
+            # the task's script runs in a session of its own (setsid): end that session. Tasks started
+            # before the script recorded its own pid are found by their script's name instead.
+            sessions=$( { cat ~/vm-tasks/$name.pid 2>/dev/null; pgrep -f "^sh $name.sh\$"; } | sort -u)
+            [ -n "$sessions" ] || { echo "nothing running for $name"; }
+            for sid in $sessions; do
+              ps -o pid,pgid,sid,stat,etime,cmd -s "$sid" 2>/dev/null | head -20
+              pkill -TERM -s "$sid" 2>/dev/null
+            done
             sleep 3
-            if kill -0 "$pid" 2>/dev/null; then pkill -KILL -s "$(ps -o sid= -p "$pid" | tr -d ' ')" 2>/dev/null; sleep 1; fi
-            kill -0 "$pid" 2>/dev/null && echo "still running" || echo "stopped"
+            for sid in $sessions; do pkill -KILL -s "$sid" 2>/dev/null; done
+            sleep 1
+            left=$(pgrep -f "^sh $name.sh\$")
+            [ -z "$left" ] && echo "stopped" || echo "still running: $left"
             docker ps --filter "name=vmtask-$name-" --format '{{.Names}}' | xargs -r docker stop
           EOF
 
