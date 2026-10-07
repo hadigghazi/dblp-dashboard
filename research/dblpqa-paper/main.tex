@@ -30,6 +30,8 @@
 \newcommand{\ci}[2]{{\scriptsize[#1,\,#2]}}
 \newcommand{\dq}{DBLP-QA}
 \newcommand{\fresh}{DBLP-QA-Fresh}
+\newcommand{\freshb}{DBLP-QA-Fresh-2}
+\newcommand{\test}{DBLP-QA-Test}
 
 \begin{document}
 
@@ -43,23 +45,23 @@ hadigghazi@gmail.com}}
 \maketitle
 
 \begin{abstract}
-RAGScholar answers questions about computer-science papers by retrieving abstracts with BM25 and
-reading them with a small language model; its benchmark, DBLP-QA, was graded by hand. We build Dewey, an
-assistant that answers questions about dblp by calling tools over the whole dump, and evaluate both
-automatically: a language-model judge applies the benchmark's 0--2 scale only after passing control
-checks, and a second judge from another model family re-grades the main results. First, we re-run every
-experiment of the original study. Given the right abstract, every model scores at least 1.96 of 2 under
-the primary judge, so what decides the score is finding the paper: today's public search services put it
-among the top five for 58\% of \dq{} questions and for 89\% of 100 new questions about 2025--2026 papers,
-and the gain from retrieval follows that rate. Several of the original findings hold under automatic
-grading; \pending{which do not}. Second, we give Dewey this retrieval as one of its tools. On
-RAGScholar's own questions, Dewey scores \pending{X} against \pending{Y} for RAGScholar's best
-configuration re-implemented on the same candidates and graded by the same judge, and matches a fixed
-pipeline that uses its own model \pending{confirm}. On 70 questions about dblp's records, such as who
-wrote a paper, how many papers a venue published in a year or how many people share a name, checked
-against values computed from the dump without any judge, Dewey answers \pending{N} and a RAGScholar-style
-pipeline \pending{M}. Retrieving the wrong papers seems to cost points only when answers are graded
-against a single reference answer.
+RAGScholar answers questions about computer-science papers by retrieving abstracts with BM25 from a
+closed index of 4.6 million abstracts and reading them with a small language model; its benchmark,
+DBLP-QA, was graded by hand, and its index can no longer be rebuilt. We present Dewey, an open assistant
+that answers questions about dblp by calling tools over the whole dump, including its own BM25 index of
+5.49 million abstracts of dblp's papers built from OpenAlex's open snapshot, and evaluate it against
+RAGScholar automatically: a language-model judge applies the benchmark's 0--2 scale only after passing
+control checks, and a second judge from another model family re-grades the main results. Re-running the
+original study's ten context variants reproduces its ordering (rank correlation 0.92 for Mistral-7B), and
+shows that generation is solved: given the right abstract every model scores at least 1.96, so what
+decides the score is finding the paper. On 100 new questions about 2025--2026 papers, built after Dewey's
+design was frozen, Dewey scores 1.74 against 0.89 without retrieval, matches RAGScholar's best
+configuration even when that configuration reads candidates gathered offline from four search services
+(1.74 against 1.73), and beats it on the same open index (1.74 against 1.63, $p=0.013$). On 70 questions
+about dblp's records, such as how many papers a venue published in a year or how many people share a
+name, scored against values computed from the dump without any judge, Dewey answers 64 correctly and a
+RAGScholar-style pipeline 20. Retrieving the wrong papers seems to cost points only when answers are
+graded against a single reference answer.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -100,26 +102,29 @@ changes. Our research questions are:
 \item \textbf{RQ1:} What do current models score without retrieval and given the source abstract, and
   where does their prior knowledge come from?
 \item \textbf{RQ2:} How often can the source paper, or any abstract that answers the question, be
-  retrieved in an open-world setting today?
+  retrieved today, from public search services and from an index rebuilt from open data?
 \item \textbf{RQ3:} Do the original study's findings about context construction and model choice hold
   under automatic grading?
-\item \textbf{RQ4:} How does Dewey, given RAGScholar's retrieval as a tool, compare with RAGScholar on
-  RAGScholar's own questions?
+\item \textbf{RQ4:} How does Dewey compare with RAGScholar on RAGScholar's own kind of question, on
+  questions held out from Dewey's design?
 \item \textbf{RQ5:} How do the two compare on questions about dblp's records?
 \item \textbf{RQ6:} How robust are these conclusions to the grading protocol and the judge?
 \end{itemize}
 
-Our contributions are: (i)~Dewey, a tool-calling assistant over the dblp dump with a content tool built
-from this study's findings, and its own evaluation (Section~\ref{sec:dewey}); (ii)~an automatic
-re-run of every experiment of the original study, with a judge gated by controls, a second judge from
-another family and paired statistics, which tests its findings one by one; (iii)~\fresh{}, 100 questions
-built the same way, automatically, about papers published after the models' training cutoffs;
-(iv)~an open-world reconstruction of retrieval from public services, with frozen candidate pools, and
-evidence that retrieval success, not generation, now decides performance; (v)~a head-to-head comparison
-of Dewey with a re-implementation of RAGScholar's pipeline, on its questions and on 70 questions about
-dblp's records scored without a judge; and (vi)~evidence that what retrieving the wrong papers appears to
-cost depends on both the grading protocol and the judge. Everything runs on one CPU virtual machine; all
-API calls together cost \pending{total} US dollars.
+Our contributions are: (i)~Dewey, a tool-calling assistant over the dblp dump whose content tool is
+built from this study's findings, and its own evaluation (Section~\ref{sec:dewey}); (ii)~an open
+replacement for RAGScholar's closed index: BM25 over the 5.49 million abstracts of dblp's papers that
+OpenAlex's snapshot holds, built in under two hours on one machine, which holds the source abstract of
+90\% of \dq{}'s questions; (iii)~an automatic re-run of every experiment of the original study, with a
+judge gated by controls, a second judge from another family and paired statistics, which tests its
+findings one by one; (iv)~three sets of 100 questions built the same way, automatically, about papers
+published after the models' training cutoffs, two used during development and one held out until
+Dewey's design was frozen; (v)~evidence that retrieval success, not generation, now decides performance;
+(vi)~a head-to-head comparison of Dewey with re-implementations of RAGScholar's pipeline, on its kind of
+question and on 70 questions about dblp's records scored without a judge; and (vii)~evidence that what
+retrieving the wrong papers appears to cost depends on both the grading protocol and the judge.
+Everything runs on one CPU virtual machine; all API calls together cost about \pending{total} US
+dollars.
 
 %% ===================================================================================================
 \section{Related Work}
@@ -165,10 +170,10 @@ data~\cite{sainz2023contamination}; a set built from papers newer than the model
 \node[box, below=6mm of r] (t) {\textbf{28 tools over the dblp dump}\\names to keys $\cdot$ profiles, papers,
   co-authors $\cdot$ counts, rankings, trends $\cdot$ co-author network $\cdot$ title search
   $\cdot$ learned co-author and venue models $\cdot$ read-only SQL};
-\node[box, below=of t] (a) {Answer by gpt-4.1-mini, or by \textbf{gpt-4.1} when the tool rounds run
-  out; every lookup shown with its query, table and note};
-\node[new, right=3.5mm of t] (s) {\textbf{search\_abstracts}: dblp title search and OpenAlex
-  search, BM25 over title and abstract, top five cited as [1]--[5]};
+\node[box, below=of t] (a) {Answer by gpt-4.1-mini, or by \textbf{gpt-4.1} when it rests on abstracts
+  or the tool rounds run out; every lookup shown with its query, table and note};
+\node[new, right=3.5mm of t] (s) {\textbf{search\_abstracts}: Dewey's index of 5.49M abstracts, dblp
+  title search and OpenAlex search, fused; top five cited as [1]--[5]};
 \draw[arr] (q) -- (r);
 \draw[arr] ([xshift=-7mm]r.south) -- node[left, font=\tiny, text=inkmuted] {calls} ([xshift=-7mm]t.north);
 \draw[arr] ([xshift=7mm]t.north) -- node[right, font=\tiny, text=inkmuted] {results} ([xshift=7mm]r.south);
@@ -183,8 +188,8 @@ study's findings (Section~\ref{sec:content}).}
 Dewey is the assistant of dblp Explorer, a public website for exploring the dblp dump (Fig.~\ref{fig:dewey}).
 It is a tool-calling agent rather than a document-retrieval pipeline. gpt-4.1-mini reads the question
 and the earlier turns, and calls tools, at most three rounds and eight calls within 25 seconds; once it
-stops calling tools it writes the answer itself, and gpt-4.1 writes it instead when the tool rounds or
-the time budget run out after the second round. Of its 28 tools, 22 query the dump through DuckDB: they
+stops calling tools it writes the answer itself, and gpt-4.1 writes it instead when the answer rests on
+retrieved abstracts, or when the tool rounds or the time budget run out after the second round. Of its 28 tools, 22 query the dump through DuckDB: they
 resolve author and venue names to dblp keys, tolerating misspellings and names written in other scripts;
 return profiles, paper lists, co-authors, counts, rankings and time series; place authors in the
 co-authorship network by four centrality measures; and run read-only SQL. The others call the project's
@@ -238,44 +243,66 @@ reached only by an exact-word fallback.
 \subsection{The content tool}
 \label{sec:content}
 
-Until this study Dewey declined questions about what papers say, since dblp holds titles, not abstracts.
-Its content tool, \emph{search\_abstracts}, is the retrieval this study found best
-(Section~\ref{sec:rq2}), built from the same code: three searches run in parallel (Dewey's title search,
-top 50; OpenAlex~\cite{priem2022openalex} keyword search with the question's words OR-ed, top 50; and
-OpenAlex semantic search over titles and abstracts, top 50); OpenAlex works are kept only where dblp has
-the paper, mapped by DOI, arXiv identifier or exact normalised title through an index built once per
-dump (7.37 million DOIs and 410{,}000 arXiv identifiers, built in 42 seconds); papers without an abstract
-get one by DOI, or from their preprint or published twin; and BM25 over title and abstract ranks the
-pool. The five best are returned, numbered, and the prompt asks Dewey to answer from them, end every
-sentence that uses one with its number, say when none addresses the question, and only then add general
-background, marked as such. Results are cached per query, OpenAlex calls are capped per day within its
-free allowance, and a source that is slow is cut off at 12 seconds and reported as degraded. A switch
-restores the old behaviour, which the evaluation uses as a baseline.
+dblp holds titles, not abstracts, so a question about what a paper says needs another source. Dewey's
+content tool, \emph{search\_abstracts}, is the retrieval this study found best (Section~\ref{sec:rq2}),
+built from the same code, with Dewey's own abstract index added to it. Four searches run in parallel:
+the index (below), top 50; Dewey's title search, top 50; OpenAlex~\cite{priem2022openalex} keyword
+search with the question's words OR-ed, top 50; and OpenAlex semantic search over titles and abstracts,
+top 50. OpenAlex works are kept only where dblp has the paper, mapped by DOI, arXiv identifier or exact
+normalised title through an index built once per dump (7.37 million DOIs and 410{,}000 arXiv identifiers,
+built in 42 seconds). A candidate without an abstract gets one from the index, from its preprint or
+published twin, from OpenAlex by DOI, or, for the ten best, from Semantic Scholar or Crossref. BM25 over
+title and abstract ranks the pool, and reciprocal rank fusion ($k=60$) combines that ranking with the
+index's own; a candidate the index does not hold, typically a paper newer than its snapshot, takes its
+pool rank in place of the index rank it cannot have, so recency is never a penalty. The five best are
+returned, numbered. Dewey's rules ask it never to declare a research question outside the data before
+searching, to search once more with the question's most distinctive terms when no abstract addresses it,
+to answer from the abstract that addresses the question most directly, to end every sentence that uses
+an abstract with its number, and only then to add general background, marked as such. Results are cached
+per query, OpenAlex calls are capped per day within its free allowance, and a slow source is cut off and
+reported as degraded; the index alone answers in about 75 milliseconds.
+
+\textbf{Dewey's abstract index.} RAGScholar's index held 4.6 million Semantic Scholar abstracts and can
+no longer be rebuilt~\cite{neekhra2026ragscholar}. OpenAlex publishes its whole database each quarter as
+open (CC0) parquet files. Dewey's index reads the snapshot of 23 September 2026 where it lies, over
+HTTPS, fetching only the DOI and abstract columns of its 476 million works, about 30\% of its 707 GB,
+and keeps the works whose DOI one of dblp's records links to, arXiv preprints included by their DOI:
+5{,}586{,}690 works of 7.78 million dblp DOIs, in 45 minutes. Each abstract is rebuilt from OpenAlex's
+inverted index, filed under its dblp record with dblp's title, and indexed with BM25 ($k_1=1.2$,
+$b=0.75$, whole-index statistics, the study's own tokenisation) in Tantivy; dropping abstracts under 20
+words leaves 5{,}492{,}552, built in 30 minutes. It holds the source abstract of 90\% of \dq{}'s questions
+and 90--93\% of the newer sets' (Section~\ref{sec:rq2}). Papers newer than the snapshot are still found
+by the live searches.
+
+\textbf{Development.} The tool's rules, its use of the index and the fusion were designed on \dq{},
+\fresh{} and \freshb{}; \test{} was built after the design was frozen and used once
+(Section~\ref{sec:benchmarks}).
 
 \subsection{Dewey's own evaluation}
 \label{sec:deweyeval}
 
 Three test suites check Dewey before the comparisons below.
 
-\textbf{Gold set.} \pending{72} questions, each naming the tools that must be called (and, where it
+\textbf{Gold set.} 72 questions, each naming the tools that must be called (and, where it
 matters, their arguments and that they succeeded), cover lookups, superlatives, counts, trends,
 multi-hop questions, namesakes, predictions, the co-authorship network, follow-ups, a question in Arabic,
-questions about paper content and \pending{10} questions outside the data that must be declined. On its
-latest run Dewey called the right tools for \pending{x of y} in-scope questions and declined all
-\pending{10} out-of-scope ones; an offline lint, which looks for every number of an answer among the tool
+questions about paper content and 10 questions outside the data that must be declined. On its
+latest run, with the final content tool, Dewey called the right tools for 61 of 62 in-scope questions
+and declined 9 of the 10 out-of-scope ones (asked which authors work at Google, it looked names up and
+answered instead of saying that dblp records no employers); an offline lint, which looks for every number of an answer among the tool
 results, the call arguments and the question, allowing rounding and skipping years and counts up to 24,
-found no number without a source. The median answer took \pending{2.6} seconds and the run cost
-\pending{US\$0.3}. These are process checks written by the developer, not answer accuracy.
+found no number without a source. The median answer took 2.85 seconds and the run cost
+US\$0.40. These are process checks written by the developer, not answer accuracy.
 
-\textbf{Dashboard checks.} \pending{24} checks run the tools without a model and compare their numbers with
+\textbf{Dashboard checks.} 24 checks run the tools without a model and compare their numbers with
 the dashboard's own endpoints (author and venue profiles, namesake counts, yearly series), test
 invariants (a total does not change with the row cap; filters only narrow; kinds sum to the total; bins
 are never people) and behaviour (every tool answers within four seconds, bad input is refused, ten SQL
-injection attempts are refused); \pending{24/24} pass.
+injection attempts are refused); all 24 pass.
 
-\textbf{Instructor scenarios.} \pending{27} questions about one person who shares a name with another
+\textbf{Instructor scenarios.} 27 questions about one person who shares a name with another
 dblp author, asked the ways a user would ask them (by affiliation, misspelled, surname only, in Arabic,
-as follow-ups); a scenario also fails if any lookup used the namesake. \pending{26/27} pass.
+as follow-ups); a scenario also fails if any lookup used the namesake. 26 of 27 pass.
 
 \textbf{Search.} Asked for a paper with one distinctive title word replaced by a synonym (666 queries),
 the hybrid search returns it first for 99\%. Asked with a description that avoids the title's
@@ -288,6 +315,7 @@ ten and embeddings find 16\%, the weakness of BM25 that the original study names
 \section{Evaluation Method}
 
 \subsection{Benchmarks}
+\label{sec:benchmarks}
 
 \textbf{\dq{}} has 50 questions, each with a 1--3 sentence reference answer, the dblp key of its source
 paper and its Semantic Scholar corpus id. We fetch source abstracts from Semantic
@@ -301,6 +329,11 @@ pairs as style examples. A question is kept only if gpt-4.1-mini's answer from t
 the 102 questions that reached this check, 100 were kept, so counting the two removed questions as wrong
 would lower no model's oracle mean below 1.92. No question is filtered on closed-book answers, which would
 make the models fail by construction. The build cost US\$0.36.
+
+\textbf{\freshb{} and \test{}} are built the same way, each with its own seed and none from another
+set's papers. \freshb{} was used, like \dq{} and \fresh{}, while Dewey was being designed. \test{} was
+built only after Dewey's design was frozen, and every system was run on it once; it is the set on which
+Dewey is compared with RAGScholar.
 
 \textbf{Record questions.}
 \label{sec:structured}
@@ -329,15 +362,17 @@ On \dq{} and \fresh{}:
 \item \textbf{Selective RAG:} Top-5-CD with a \emph{permissive} prompt (the abstracts may not be
   relevant; if none addresses the question, answer from what you know), or \emph{gated} (a separate
   gpt-4.1-mini call keeps only the abstracts that address the question; with none kept, closed-book).
-\item \textbf{Dewey}, given each question as a user would type it: \emph{as deployed}, with live
-  searches; \emph{on the frozen pool}, where the content tool ranks the study's frozen candidates for the
-  question instead of searching, so Dewey sees what the fixed pipeline saw; and \emph{before the content
-  tool}, with the tool switched off and the old rule back.
+\item \textbf{Dewey}, given each question as a user would type it, as deployed; and three ablations, each
+  removing one part: \emph{without the index} (live searches only), \emph{local only} (the index and
+  Dewey's title search, no outside service, so every run is reproducible), and \emph{given the pipeline's
+  candidates} (the content tool ranks the frozen pool of the question instead of searching, so Dewey reads
+  exactly what the fixed pipeline read); and, on \dq{} and \fresh{}, \emph{without the content tool},
+  which declines such questions.
 \end{itemize}
-The \emph{RAGScholar configuration} is Mistral-7B with Top-5-CD on our candidates. It re-implements the
-original study's best system, not the system itself: the original prompt is unpublished (ours asks for one
-to three sentences), our model is 4-bit quantised on a CPU, and the candidates come from our open-world
-pool. On the record questions, the \emph{RAGScholar-style pipeline} runs the content tool's retrieval on
+The \emph{RAGScholar configuration} is Mistral-7B with Top-5-CD, BM25 over title and abstract, on two
+sets of candidates: the frozen pool, and Dewey's index, which plays the part of RAGScholar's closed
+index. It re-implements the original study's best system, not the system itself: the original prompt is
+unpublished (ours asks for one to three sentences), and our model is 4-bit quantised on a CPU. On the record questions, the \emph{RAGScholar-style pipeline} runs the content tool's retrieval on
 the question and gives the top five records as context with the fields of RAGScholar's index (dblp key,
 DOI, title, authors, year, abstract).
 
@@ -364,10 +399,13 @@ pool-level idf)~\cite{robertson2009bm25} over title and abstract; dense cosine s
 text-embedding-3-large vectors (512 dimensions); and their reciprocal rank fusion ($k=60$), the hybrid
 the original study proposed as future work. A candidate is the source paper if it has the benchmark's
 key, Semantic Scholar's dblp key for the benchmark's paper, or the same normalised title; it is then shown
-with the same abstract as in the oracle condition. Each pool is built once and frozen, and runs are
-compared only on the same pool. Semantic Scholar's unauthenticated search was saturated: it refused every
-retry for one \dq{} question, and for \fresh{} it refused three searches in a row and was not asked
-again, leaving 96 of 100 pools without its candidates.
+with the same abstract as in the oracle condition, which favours the pool: Dewey, searching live, reads
+whatever abstract its sources hold, which need not be the one the question was written from. Dewey's
+index is scored as a retriever of its own: its top 50 for each question are kept beside the pool and
+frozen likewise, never mixed into it, and the source is recognised by the same rule. Each pool is built
+once and frozen, and runs are compared only on the same pool. Semantic Scholar's unauthenticated search was saturated: it refused every
+retry for one \dq{} question, and for each of the newer sets it refused three searches in a row and was
+not asked again, leaving those pools with three retrievers.
 
 The original study measured retrieval by the rank of the first document that contains an answer. We
 measure it the same way, automatically: gpt-4.1 decides whether each top abstract states what the
@@ -473,7 +511,8 @@ models remember \dq{}'s papers. The audit labels 84 of the Fresh questions ident
 general, and within the identifiable label closed-book scores are no lower for papers published after
 the models' training cutoffs: 1.00 against 1.02 for gpt-4.1, 0.90 against 0.94 for gpt-4.1-mini and 0.65
 against 0.77 for Mistral-7B. These differences are imprecise, since only 20 \dq{} questions are
-identifiable, and a memory advantage of a few tenths of a point cannot be ruled out; the sets are also
+identifiable: their two-sample bootstrap intervals run from about $-0.3$ to $+0.35$, so a memory
+advantage of a few tenths of a point cannot be ruled out; the sets are also
 built differently, and ten of \dq{}'s source papers date from 2023 or 2024. \dq{}'s higher closed-book
 scores are largely explained by its share of general-knowledge questions, and we find no sign of memory of
 its papers.\footnote{gpt-4.1-mini labelled every Fresh question identifiable, so the two labellers' raw
@@ -503,36 +542,38 @@ Mistral-7B & 0.78 \ci{0.68}{0.87} & 1.73 \ci{1.62}{1.83} & 1.96 \ci{1.92}{1.99} 
 \subsection{RQ2: Open-world retrieval}
 \label{sec:rq2}
 
-\begin{table}[t]
-\caption{Retrieval on the frozen pools. Source: recall at $k$ of the paper a question was written from,
-and the share found anywhere in the ranker's list. Answer: the original study's measure, the rank of the
-first abstract that states the answer (gpt-4.1, controlled). First-stage retrievers are scored on their own
-lists; the rankers re-order the whole pool. Dewey: its content tool searching live, on each question as
-written.}
+\begin{table*}[t]
+\caption{Retrieval of the paper a question was written from: recall at $k$, and the share found anywhere
+in the list (Found). Answer: the original study's measure on \dq{}, the rank of the first abstract that
+states the answer (gpt-4.1, controlled). First-stage retrievers are scored on their own lists; the pool
+rankers re-order the frozen pool of four retrievers (three on the newer sets). Dewey's index: BM25 over
+5.49 million abstracts, its own top 50. Dewey's content tool: its fused ranking, local only, on each
+question as written.}
 \label{tab:retrieval}
-\centering\scriptsize
-\setlength{\tabcolsep}{2.4pt}
-\begin{tabular}{lcccccccc}
+\centering\footnotesize
+\setlength{\tabcolsep}{3.2pt}
+\begin{tabular}{lccccccccccccc}
 \toprule
- & \multicolumn{5}{c}{\dq{}} & \multicolumn{3}{c}{\fresh{}} \\
-\cmidrule(lr){2-6}\cmidrule(lr){7-9}
- & \multicolumn{3}{c}{Source} & \multicolumn{2}{c}{Answer} & \multicolumn{3}{c}{Source} \\
-\cmidrule(lr){2-4}\cmidrule(lr){5-6}\cmidrule(lr){7-9}
-Ranker & R@1 & R@5 & Found & R@1 & R@5 & R@1 & R@5 & Found \\
+ & \multicolumn{5}{c}{\dq{}} & \multicolumn{3}{c}{\fresh{}} & \multicolumn{3}{c}{\freshb{}} & \multicolumn{3}{c}{\test{}} \\
+\cmidrule(lr){2-6}\cmidrule(lr){7-9}\cmidrule(lr){10-12}\cmidrule(lr){13-15}
+ & \multicolumn{3}{c}{Source} & \multicolumn{2}{c}{Answer} & \multicolumn{3}{c}{Source} & \multicolumn{3}{c}{Source} & \multicolumn{3}{c}{Source} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-6}
+Retriever & R@1 & R@5 & Found & R@1 & R@5 & R@1 & R@5 & Found & R@1 & R@5 & Found & R@1 & R@5 & Found \\
 \midrule
-BM25 (pool) & \textbf{.42} & \textbf{.58} & .60 & .56 & \textbf{.80} & \textbf{.82} & \textbf{.89} & .91 \\
-Dense (pool) & .36 & .48 & .60 & \textbf{.60} & .78 & .70 & .86 & .91 \\
-Hybrid RRF (pool) & .40 & .56 & .60 & \textbf{.60} & .78 & .81 & \textbf{.89} & .91 \\
+BM25 (pool) & .42 & .58 & .60 & .56 & .80 & .82 & .89 & .91 & .81 & .95 & .96 & .76 & .86 & .90 \\
+Dense (pool) & .36 & .48 & .60 & .60 & .78 & .70 & .86 & .91 & .74 & .91 & .96 & .72 & .85 & .90 \\
+Hybrid RRF (pool) & .40 & .56 & .60 & .60 & .78 & .81 & .89 & .91 & .86 & .93 & .96 & .78 & .90 & .90 \\
 \midrule
-OpenAlex semantic & .24 & .32 & .44 & .32 & .52 & .26 & .62 & .88 \\
-Dewey title search & .16 & .24 & .32 & .28 & .50 & .43 & .56 & .73 \\
-OpenAlex keyword & .10 & .18 & .28 & .12 & .32 & .20 & .34 & .40 \\
-Semantic Scholar & .04 & .04 & .08 & & & -- & -- & -- \\
+OpenAlex semantic & .24 & .32 & .44 & .32 & .52 & .26 & .62 & .88 & .18 & .59 & .89 & .17 & .58 & .85 \\
+Dewey title search & .16 & .24 & .32 & .28 & .50 & .43 & .56 & .73 & .50 & .64 & .83 & .39 & .61 & .74 \\
+OpenAlex keyword & .10 & .18 & .28 & .12 & .32 & .20 & .34 & .40 & .21 & .37 & .51 & .25 & .41 & .54 \\
+Semantic Scholar & .04 & .04 & .08 & & & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
 \midrule
-Dewey, live & \pending{} & \pending{} & \pending{} & & & \pending{} & \pending{} & \pending{} \\
+Dewey's index & \textbf{.58} & \textbf{.68} & .74 & & & .78 & .85 & .91 & \pending{} & \pending{} & \pending{} & .76 & .82 & .86 \\
+Dewey's content tool & .52 & \textbf{.68} & .74 & & & \textbf{.83} & .87 & \textbf{.97} & \pending{} & \pending{} & \pending{} & \pending{} & \pending{} & \pending{} \\
 \bottomrule
 \end{tabular}
-\end{table}
+\end{table*}
 
 On \dq{} the source paper is in the pool for 60\% of questions (Table~\ref{tab:retrieval}). BM25 over
 title and abstract ranks it in the top five for 58\%, two points short of that ceiling, and first for
@@ -554,16 +595,27 @@ is a 2025--2026 journal or conference paper. \fresh{} is much easier to retrieve
 for 91\% of questions and BM25 places it in the top five for 89\%, helped by OpenAlex's semantic search
 (88\% found).
 
-Dewey's content tool runs this retrieval live, without Semantic Scholar, on each question as written:
-\pending{R@5 and found on both sets, with the median and 90th-percentile time}.
+\textbf{An open index closes most of the gap.} Dewey's index of 5.49 million abstracts plays the part of
+the original's closed index. It holds the source abstract of 90\% of \dq{}'s questions, against the
+pool's 60\%, and alone it places the source in its top five for 68\%, ten points above the best pool
+ranker and above the pool's own ceiling. The original's closed world, in which every question was drawn
+from the indexed collection, reached 84\% at rank five by its own count~\cite{neekhra2026ragscholar};
+the remaining distance is mostly the 10\% of sources whose abstract OpenAlex does not hold, and the
+wording of abstracts that differ from those the questions were written from. On the newer sets the index
+alone is slightly behind the pool (.82 against .86 at rank five on \test{}), whose candidates come from
+four live services and whose source is shown with the very abstract the question was written from. The
+content tool, which fuses the index with the title search, is the best ranker on \dq{} and \fresh{}
+(.68 and .87 at rank five; the source is anywhere in its list for 97\% of \fresh{} questions).
+\pending{the content tool on \freshb{} and \test{}}
 
 \subsection{RQ3: Re-running the original experiments}
 \label{sec:rq3}
 
 \begin{table*}[t]
 \caption{The original study's ten context variants re-run on the \dq{} frozen pool, graded by gpt-4.1
-(mean score, 0--2), with the original's manual scores for its models below ours. $\rho$: rank correlation
-between our scores and the original's across the ten variants.}
+(mean score, 0--2), with the original's manual scores for its models below ours. $\rho$: Spearman rank
+correlation between our scores and the original's across the ten variants. Phi-4 was not re-run: a
+14B model on our CPU would have needed days for the grid.}
 \label{tab:grid}
 \centering\footnotesize
 \setlength{\tabcolsep}{3.4pt}
@@ -573,23 +625,27 @@ Model & A1 & A2 & A3 & A4 & A5 & Top-3-CD & Top-5-CD & Top-3-CA & Top-5-CA & No 
 \midrule
 gpt-4.1-mini & 1.46 & 1.10 & 1.00 & 1.00 & 0.78 & 1.66 & 1.72 & 1.62 & 1.68 & 1.40 & \\
 \midrule
-Mistral-7B & \pending{} & & & & & & 1.60 & & & 1.04 & \pending{} \\
+Mistral-7B & 1.46 & 1.10 & 1.12 & 1.10 & 0.94 & 1.46 & 1.60 & 1.46 & 1.42 & 1.04 & 0.92 \\
 \quad original & 1.72 & 1.06 & 1.00 & 0.84 & 0.86 & 1.63 & 1.74 & 1.60 & 1.49 & 0.80 & \\
-Phi-4 & \pending{} & & & & & & & & & & \pending{} \\
-\quad original & 1.56 & 0.78 & 0.68 & 0.58 & 0.59 & 1.66 & 1.66 & 1.63 & 1.51 & 0.40 & \\
-TinyLlama-1.1B & \pending{} & & & & & & & & & 0.58 & \pending{} \\
+TinyLlama-1.1B & 1.22 & 0.82 & 0.86 & 0.74 & 0.74 & 1.24 & 1.26 & 1.04 & 0.98 & 0.58 & 0.84 \\
 \quad original & 1.63 & 1.10 & 0.94 & 0.82 & 0.70 & 1.58 & 1.52 & 1.44 & 1.34 & 1.10 & \\
 \bottomrule
 \end{tabular}
 \end{table*}
 
-Table~\ref{tab:grid} re-runs the original experiments. Several of its findings hold under automatic
-grading, with current and original models alike: concatenating abstracts beats any single abstract; the
-top-ranked abstract is the best single one, and scores fall with rank; and retrieval beats no context for
-the original's models (\pending{intervals}). Concatenating answers instead of abstracts is not reliably
-worse: for gpt-4.1-mini, Top-3-CD and Top-5-CD lead their answer-concatenating counterparts by $+0.04$
-each, with intervals spanning zero (5 questions better, 3 worse). \pending{the original models' CD/CA
-contrast, Top-5 against Top-3, and the rank correlations}. For a strong model, a single retrieved abstract
+Table~\ref{tab:grid} re-runs the original experiments. The ordering of the ten variants is reproduced
+closely: across them, our automatic scores and the original's manual ones correlate with $\rho=0.92$ for
+Mistral-7B and $0.84$ for TinyLlama-1.1B, although the levels differ (Section~\ref{sec:judge}). Several
+findings hold under automatic grading, with current and original models alike: concatenating abstracts
+beats any single abstract; the top-ranked abstract is the best single one, and scores fall with rank;
+and retrieval beats no context for the original's models (Mistral-7B with A1 or Top-3-CD: $+0.42$,
+interval $+0.18$ to $+0.66$). Concatenating answers instead of abstracts is worse only with five
+documents and small models: Top-5-CD leads Top-5-CA by $+0.18$ for Mistral-7B ($+0.02$ to $+0.34$; 13
+questions better, 3 worse) and by $+0.28$ for TinyLlama ($+0.08$ to $+0.48$), but Top-3-CD and Top-3-CA
+tie for Mistral-7B, and for gpt-4.1-mini each CD variant leads by $+0.04$ with intervals spanning zero.
+Five abstracts are not reliably better than three ($+0.14$ for Mistral-7B, $+0.02$ for TinyLlama, $+0.06$
+for gpt-4.1-mini, all spanning zero), matching the original's finding that it depends on the model. For a
+strong model, a single retrieved abstract
 helps little ($+0.06$ over no context for gpt-4.1-mini, interval $-0.18$ to $+0.28$): when it is the wrong
 paper it displaces knowledge the model has. Our judge's scores agree with ROUGE-L answer by answer
 (Spearman $\rho=0.54$ over 500 gpt-4.1-mini answers), where the original saw only a slight correlation
@@ -610,7 +666,7 @@ gpt-4.1-mini call per question for the gate.
 \textbf{Retrieval success decides the gain.} Retrieval helps every model significantly on the frozen
 \dq{} pool, and much more on \fresh{} (Tables~\ref{tab:main} and~\ref{tab:fresh}). Figure~\ref{fig:recall}
 expresses each gain as a share of the oracle's, computed on the same questions: at 58\% retrieval RAG
-recovers 56--62\% of the oracle's gain, and at 89\% it recovers 80--84\%. This is roughly what one expects
+recovers 56--63\% of the oracle's gain, and at 89\% it recovers 80--84\%. This is roughly what one expects
 if questions whose source is retrieved reach the oracle's score and the rest stay at closed-book, and the
 split by outcome confirms it: on the 29 \dq{} questions whose source was among the top five, the GPT
 models score 1.97 with plain RAG and Mistral-7B 1.83, and across the nine RAG runs on this pool only one
@@ -640,11 +696,11 @@ answer is worse than closed-book.
 ]
 \addplot[color=inkmuted, dashed, line width=0.6pt] coordinates {(0,0) (100,1)};
 \addlegendentry{equal shares}
-\addplot[color=seriesA, mark=*, mark size=1.8pt] coordinates {(36,0.17) (58,0.615) (89,0.821)};
+\addplot[color=seriesA, mark=*, mark size=1.8pt] coordinates {(36,0.167) (58,0.625) (89,0.821)};
 \addlegendentry{gpt-4.1}
-\addplot[color=seriesB, mark=square*, mark size=1.7pt] coordinates {(36,0.12) (58,0.559) (89,0.835)};
+\addplot[color=seriesB, mark=square*, mark size=1.7pt] coordinates {(36,0.111) (58,0.556) (89,0.835)};
 \addlegendentry{gpt-4.1-mini}
-\addplot[color=seriesC, mark=triangle*, mark size=2.2pt] coordinates {(38,0.46) (58,0.615) (89,0.805)};
+\addplot[color=seriesC, mark=triangle*, mark size=2.2pt] coordinates {(38,0.455) (58,0.614) (89,0.805)};
 \addlegendentry{Mistral-7B}
 \node[font=\tiny, text=black, anchor=south east] at (axis cs:35,0.18) {gpt-4.1};
 \node[font=\tiny, text=black, anchor=north east] at (axis cs:35,0.11) {gpt-4.1-mini};
@@ -653,7 +709,8 @@ answer is worse than closed-book.
 \end{tikzpicture}
 \caption{The share of the oracle's gain over closed-book that plain RAG recovers, on the same questions,
 against the share of questions whose source reaches the context (gpt-4.1 judge): \dq{} on an earlier,
-unfrozen pool (36--38\%, indicative), on the frozen pool (58\%), and \fresh{} (89\%).}
+unfrozen pool (36--38\%, indicative), on the frozen pool (58\%; gpt-4.1 and Mistral-7B nearly coincide),
+and \fresh{} (89\%).}
 \label{fig:recall}
 \end{figure}
 
@@ -661,30 +718,59 @@ unfrozen pool (36--38\%, indicative), on the frozen pool (58\%), and \fresh{} (8
 \label{sec:rq4}
 
 \begin{table*}[t]
-\caption{Dewey on \dq{} and \fresh{} (gpt-4.1 judge): mean score with 95\% interval, and paired
-differences from the study's runs on the same questions. RAGScholar configuration: Mistral-7B, BM25 top
-five concatenated, on the frozen pool. Source given: questions whose source abstract reached Dewey.}
+\caption{Dewey against RAGScholar's configuration and the study's baselines (gpt-4.1 judge, mean score
+0--2 with 95\% interval). \test{} was held out from Dewey's design; the other sets were used to design
+it. Pipeline pool: the frozen pool of four live retrievers, the source shown with the abstract the question
+was written from. $\Delta$: Dewey's paired difference on \test{} (questions better/worse; exact sign test).}
 \label{tab:dewey}
 \centering\footnotesize
 \setlength{\tabcolsep}{3pt}
-\begin{tabular}{llcccccc}
+\begin{tabular}{lccccc}
 \toprule
-Set & Dewey & Mean & vs closed-book & vs plain RAG & vs RAGScholar & Source & Median \\
- & & & (gpt-4.1-mini) & (gpt-4.1-mini) & configuration & given & seconds \\
+System & \dq{} (50) & \fresh{} (100) & \freshb{} (100) & \test{} (100) & $\Delta$ on \test{} \\
 \midrule
-\dq{} & before the content tool & \pending{} & \pending{} & \pending{} & \pending{} & -- & \pending{} \\
- & as deployed & \pending{} & \pending{} & \pending{} & \pending{} & \pending{} & \pending{} \\
- & on the frozen pool & \pending{} & \pending{} & \pending{} & \pending{} & \pending{} & \pending{} \\
+Closed-book, gpt-4.1-mini & 1.40 \ci{1.22}{1.58} & 0.96 \ci{0.88}{1.04} & 0.98 \ci{0.91}{1.05} & 0.89 \ci{0.81}{0.97} & $+$0.85 (81/6), $p<10^{-16}$ \\
+RAGScholar configuration, pipeline pool & 1.60 \ci{1.42}{1.76} & 1.73 \ci{1.62}{1.83} & 1.76 \ci{1.66}{1.85} & 1.73 \ci{1.60}{1.85} & $+$0.01 (10/10), $p=1$ \\
+RAGScholar configuration, Dewey's index & 1.68 \ci{1.52}{1.84} & 1.71 \ci{1.59}{1.82} & 1.63 \ci{1.50}{1.75} & 1.63 \ci{1.49}{1.75} & $+$0.11 (12/2), $p=0.013$ \\
+Plain RAG gpt-4.1-mini, pipeline pool & 1.72 \ci{1.54}{1.88} & 1.82 \ci{1.71}{1.91} & 1.89 \ci{1.81}{1.96} & 1.80 \ci{1.69}{1.89} & $-$0.06 (5/11), $p=0.21$ \\
+Plain RAG gpt-4.1-mini, Dewey's index & 1.78 \ci{1.62}{1.92} & -- & 1.73 \ci{1.62}{1.84} & 1.71 \ci{1.58}{1.82} & $+$0.03 (6/4), $p=0.75$ \\
 \midrule
-\fresh{} & before the content tool & \pending{} & \pending{} & \pending{} & \pending{} & -- & \pending{} \\
- & as deployed & \pending{} & \pending{} & \pending{} & \pending{} & \pending{} & \pending{} \\
- & on the frozen pool & \pending{} & \pending{} & \pending{} & \pending{} & \pending{} & \pending{} \\
+\textbf{Dewey} & \textbf{1.80} \ci{1.64}{1.94} & \pending{} & \pending{} & \textbf{1.74} \ci{1.62}{1.85} & \\
+\quad local only & 1.82 \ci{1.66}{1.96} & \pending{} & -- & 1.70 \ci{1.58}{1.81} & $+$0.04 (4/1), $p=0.38$ \\
+\quad without the index & \pending{} & -- & -- & 1.69 \ci{1.57}{1.81} & $+$0.05 (9/6), $p=0.61$ \\
+\quad given the pipeline's candidates & -- & -- & -- & \pending{} & \pending{} \\
+\quad without the content tool & 0.66 \ci{0.42}{0.92} & 0.22 \ci{0.14}{0.31} & -- & -- & \\
+\midrule
+Oracle, gpt-4.1-mini & 2.00 \ci{2.00}{2.00} & 1.99 \ci{1.97}{2.00} & 2.00 \ci{2.00}{2.00} & 2.00 \ci{2.00}{2.00} & $-$0.26 (0/19), $p<10^{-5}$ \\
 \bottomrule
 \end{tabular}
 \end{table*}
 
-\pending{Dewey results: levels, the three contrasts, the decomposition into model and agent, citations,
-how often it searched and with which query, cost and latency.}
+Table~\ref{tab:dewey} sets Dewey beside RAGScholar's configuration and the study's baselines. On
+\test{}, whose questions were built only after Dewey's design was frozen, Dewey scores 1.74, almost
+twice its answering model's closed-book score (0.89; better on 81 questions, worse on 6) and within 0.26
+of the oracle. It matches RAGScholar's configuration run on the pipeline pool (1.73; 10 questions
+better, 10 worse), although that pool was gathered offline from four search services and shows the
+source with the very abstract the question was written from. On the same index, the setting closest to
+the original's closed index, Dewey beats it: 1.74 against 1.63, better on 12 questions and worse on 2
+($p=0.013$). The best fixed pipeline, gpt-4.1-mini reading the top five of the pipeline pool, scores 1.80;
+the difference from Dewey is within noise ($-0.06$, interval $-0.17$ to $+0.04$). On \dq{}, Dewey's best
+set, it scores 1.80, above RAGScholar's configuration by $+0.20$ (interval $0.00$ to $+0.40$; 12 better,
+4 worse) and above closed-book by $+0.40$ ($+0.20$ to $+0.60$).
+
+Dewey's advantage over a fixed pipeline is not in generation, which every model performs near the
+ceiling, but in what it decides and what it can reach: it searched on all 100 \test{} questions, passed
+the question as written on 99, gave the source abstract to its writer on 85, and cited [n] in 98 of its
+answers, with no citation to an abstract it was not shown. When it found the source it scored 1.94, and
+when it did not, 0.60, against 0.87 closed-book on the same 15 questions ($-0.27$, interval $-0.60$ to
+$+0.07$): as for every pipeline, retrieval decides the score. The ablations isolate its parts. Without the content tool,
+Dewey declines such questions and scores 0.66 and 0.22. Without the index, it scores 1.69 on \test{}
+($-0.05$), and with the index alone and no outside service, 1.70 ($-0.04$); neither difference is
+detectable on 100 questions, but the index lets Dewey answer with no service other than its own, in a
+median of 4.6 seconds against 9.2 with the live searches (90th percentile 10.8).
+\pending{given the pipeline's candidates}.
+Answering one question cost Dewey about US\$0.013 on \test{}, most of it gpt-4.1 writing from five
+abstracts.
 
 \subsection{RQ5: Questions about dblp's records}
 \label{sec:rq5}
@@ -701,20 +787,29 @@ dump: correct answers per kind (of 10).}
 \cmidrule(lr){3-4}
 Kind & Dewey & gpt-4.1-mini & Mistral-7B & gpt-4.1-mini \\
 \midrule
-Paper: venue and year & \pending{} & \pending{} & \pending{} & \pending{} \\
-Paper: authors & \pending{} & \pending{} & \pending{} & \pending{} \\
-Person: publications & \pending{} & \pending{} & \pending{} & \pending{} \\
-Venue: papers in a year & \pending{} & \pending{} & \pending{} & \pending{} \\
-Venue: top author & \pending{} & \pending{} & \pending{} & \pending{} \\
-Two people: joint papers & \pending{} & \pending{} & \pending{} & \pending{} \\
-Name: different people & \pending{} & \pending{} & \pending{} & \pending{} \\
+Paper: venue and year & 8 & 10 & 5 & 2 \\
+Paper: authors & 8 & 10 & 10 & 0 \\
+Person: publications & 10 & 0 & 0 & 0 \\
+Venue: papers in a year & 9 & 0 & 0 & 0 \\
+Venue: top author & 9 & 0 & 0 & 0 \\
+Two people: joint papers & 10 & 0 & 1 & 1 \\
+Name: different people & 10 & 0 & 0 & 2 \\
 \midrule
-All (70) & \pending{} & \pending{} & \pending{} & \pending{} \\
+All (70) & \textbf{64} & 20 & 16 & 5 \\
+\quad 95\% interval (\%) & 83--96 & 19--40 & 15--34 & 3--16 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\pending{record-question results and the sign test against each arm}
+Questions about dblp's records separate the two designs (Table~\ref{tab:structured}). Dewey answers 64 of
+70 correctly (91\%), the RAGScholar-style pipeline 20 with gpt-4.1-mini and 16 with Mistral-7B, and
+gpt-4.1-mini without retrieval 5. The pipeline answers questions about one paper when it retrieves that
+paper's record, all twenty of them with gpt-4.1-mini, and nothing else: five records contain no count, no
+ranking and no way to tell people apart. Question by question, Dewey is right where the pipeline is wrong
+on 48 questions and the reverse holds on 4 (exact sign test $p=1.3\times10^{-10}$); against no retrieval,
+59 and 0 ($p=3.5\times10^{-18}$)\pending{; against Mistral-7B}. \pending{what Dewey's misses were, read
+from the records}. These numbers need no judge: every reference
+was computed by SQL over the raw dump and frozen before any system answered.
 
 \subsection{RQ6: Robustness to the grading and the judge}
 \label{sec:rq6}
@@ -807,8 +902,9 @@ Mistral-7B & RAG, all (50) & \textbf{$+$0.56} & $+$0.24 \\
  & \quad multi-ref. & $+$0.10 & $-$0.29 \\
  & Oracle (46) & \textbf{$+$0.96} & \textbf{$+$0.74} \\
 \midrule
-Dewey & \pending{as deployed, vs closed-book} & \pending{} & \pending{} \\
- & \pending{vs RAGScholar configuration} & \pending{} & \pending{} \\
+Dewey & vs closed-book, \test{} (100) & \textbf{$+$0.85} & \pending{} \\
+ & vs RAGScholar configuration, \test{} (100) & $+$0.01 & \pending{} \\
+ & vs closed-book, \dq{} (50) & \textbf{$+$0.40} & \pending{} \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -837,8 +933,20 @@ reference answer. Generation from the right abstract is near the ceiling under t
 sets, and we find no sign that the models' knowledge comes from memory of the papers, although 20
 identifiable \dq{} questions cannot rule out a modest effect.
 
-\textbf{Dewey against RAGScholar.} \pending{what is better and why: on its own task (model, retrieval,
-agent), on records (scope), attribution (citations, lookups shown), reproducibility; what is not.}
+\textbf{Dewey against RAGScholar.} On RAGScholar's own kind of question Dewey is at least as good as its
+best configuration, and better on equal terms: it matches that configuration when the configuration reads
+a pool gathered offline from four services, and beats it by 0.11 on the same open index, on questions
+held out from Dewey's design. The reasons are not a better generator, since every model answers almost
+perfectly from the right abstract. They are retrieval and decisions: an index rebuilt from open data that
+holds 90\% of the sources, fused with live searches that reach papers newer than the snapshot; a writer
+that answers from the abstract that addresses the question rather than from all five; and a rule to
+search again before giving up. What Dewey does not do is beat the strongest fixed pipeline we built,
+gpt-4.1-mini reading the pipeline pool, which scores 0.06 higher, within noise, with the advantage of the
+source's original abstract. Beyond that task, Dewey answers what a retrieve-then-read design cannot: 64
+of 70 record questions against 20, follow-ups, rankings and people who share a name; it cites the
+abstract behind each sentence and shows every lookup; and its index, harness, question sets, frozen pools
+and every answer are released, so each number here can be recomputed, which a closed index graded by hand
+does not allow.
 
 \textbf{Recommendations for scholarly RAG benchmarks.} Report closed-book and oracle conditions next to
 retrieval, so that prior knowledge and the generation ceiling are visible. Evaluate retrieval in an open
@@ -855,9 +963,12 @@ do not remove that dependence, the two judges differ in level, and no human rati
 \fresh{}'s questions and references were written by gpt-4.1, which also grades them and answers some of
 them, and a 2025 paper may have had an earlier preprint. The memory comparison rests on 20 identifiable
 \dq{} questions against 84 \fresh{} ones built differently. Our open-world pools depend on public services,
-one of which refused most searches, and BM25 uses pool-level statistics. Dewey's content tool and prompt
-were designed on the same questions it is evaluated on; the record questions and their scoring were fixed
-before any system answered them. Dewey's gold set and scenarios were written by its developer.
+one of which refused most searches, and BM25 over a pool uses pool-level statistics. Dewey was designed on
+\dq{}, \fresh{} and \freshb{}, so its scores there are optimistic; only \test{} is held out, and 100
+questions detect differences of about 0.15 but not the smaller ones between Dewey's ablations. Dewey's
+index reflects one OpenAlex snapshot and holds no abstract for about one in ten source papers; the live
+searches depend on OpenAlex's daily allowance. The record questions and their scoring were fixed before
+any system answered them; Dewey's gold set and scenarios were written by its developer.
 
 \textbf{Future work.} Human ratings of a sample of the answers on which the judges disagree; multiple
 reference answers per \dq{} question; questions that describe papers in other words, on which the ranker
@@ -866,7 +977,17 @@ should be compared again; and real users' questions.
 %% ===================================================================================================
 \section{Conclusion}
 
-\pending{rewrite once the Dewey results are in}
+With current models, RAGScholar's task is a retrieval problem: given the right abstract every model we
+tried answers almost perfectly, and the original study's findings about building the context are
+reproduced in order but matter less than finding the paper. Dewey, a tool-calling assistant over the
+whole dblp dump, treats that retrieval as one tool among many, rebuilt from open data as an index of 5.49
+million abstracts of dblp's papers. On questions held out from its design it scores 1.74 of 2, nearly
+twice what its model knows without retrieval, matches RAGScholar's best configuration and beats it on
+equal terms; on questions about dblp's records it answers 64 of 70 where a retrieve-then-read pipeline
+answers 20. Benchmarks for scholarly assistants should therefore report closed-book and oracle conditions,
+measure retrieval in the open, grade with more than one reference and more than one judge, and ask about
+records as well as content. Dewey, its index and the evaluation harness are open, and every number in
+this paper can be recomputed from the released runs.
 
 \section*{Acknowledgment}
 
@@ -915,11 +1036,15 @@ only this abstract could answer the question correctly.''
 the search results you are given: each has its dblp key, DOI, title, authors, year and abstract. Answer in
 one to three sentences.''
 
-\textbf{Dewey's content rule.} ``Questions about what papers say [\ldots] are answered with
-search\_abstracts. Pass the question as the user asked it, made self-contained [\ldots]. Answer from the
-returned abstracts, and end every sentence that uses one with its number in brackets [\ldots]. If none of
-them addresses the question, say so in one clause; you may then add one or two sentences of general
-background, saying that it is general background, with no numbers and no citations.''
+\textbf{Dewey's content rule.} ``Questions about what research says [\ldots] are answered with
+search\_abstracts, whatever the field: dblp indexes papers from all of computing and from fields that use
+it [\ldots], so never call such a question outside the data before searching. Pass the question as the
+user asked it, made self-contained [\ldots]. If none of the abstracts addresses the question, search once
+more with its most distinctive terms [\ldots]. Answer the question first from the abstract that addresses
+it most directly, then add what other abstracts say only where it answers the same question; end every
+sentence that uses an abstract with its number in brackets [\ldots]. If no abstract addresses it even
+after the second search, say so in one clause, then answer as well as you can from general knowledge,
+saying that it is general background, with no numbers and no citations.''
 
 \textbf{Question writer (\fresh{}).} ``You write questions for a benchmark about computer-science
 research, the way its authors did. You are given one paper's abstract. Write one question that the
