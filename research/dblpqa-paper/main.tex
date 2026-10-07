@@ -551,7 +551,7 @@ rankers re-order the frozen pool of four retrievers (three on the newer sets). D
 question as written.}
 \label{tab:retrieval}
 \centering\footnotesize
-\setlength{\tabcolsep}{3.2pt}
+\setlength{\tabcolsep}{2.8pt}
 \begin{tabular}{l*{14}{c}}
 \toprule
  & \multicolumn{5}{c}{\dq{}} & \multicolumn{3}{c}{\fresh{}} & \multicolumn{3}{c}{\freshb{}} & \multicolumn{3}{c}{\test{}} \\
@@ -723,8 +723,8 @@ and \fresh{} (89\%).}
 it. Pipeline pool: the frozen pool of four live retrievers, the source shown with the abstract the question
 was written from. $\Delta$: Dewey's paired difference on \test{} (questions better/worse; exact sign test).}
 \label{tab:dewey}
-\centering\footnotesize
-\setlength{\tabcolsep}{3pt}
+\centering\scriptsize
+\setlength{\tabcolsep}{2.6pt}
 \begin{tabular}{lccccc}
 \toprule
 System & \dq{} (50) & \fresh{} (100) & \freshb{} (100) & \test{} (100) & $\Delta$ on \test{} \\
@@ -902,9 +902,9 @@ Mistral-7B & RAG, all (50) & \textbf{$+$0.56} & $+$0.24 \\
  & \quad multi-ref. & $+$0.10 & $-$0.29 \\
  & Oracle (46) & \textbf{$+$0.96} & \textbf{$+$0.74} \\
 \midrule
-Dewey & vs closed-book, \test{} (100) & \textbf{$+$0.85} & \pending{} \\
- & vs RAGScholar configuration, \test{} (100) & $+$0.01 & \pending{} \\
- & vs closed-book, \dq{} (50) & \textbf{$+$0.40} & \pending{} \\
+Dewey & Test: vs closed-book (100) & \textbf{$+$0.85} & \pending{} \\
+ & Test: vs RAGScholar conf. (100) & $+$0.01 & \pending{} \\
+ & \dq{}: vs closed-book (50) & \textbf{$+$0.40} & \pending{} \\
 \bottomrule
 \end{tabular}
 \end{table}
