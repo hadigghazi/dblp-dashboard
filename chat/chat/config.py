@@ -104,7 +104,8 @@ CONTENT_SEARCH = os.environ.get("CHAT_CONTENT_SEARCH", "live")
 # Fresh, and lost to version 2 on the held-out Fresh-2: a paper newer than the snapshot is in no index
 # list, so papers in both lists outranked it. "rrf-impute" (version 3.1) gives a paper the index does
 # not hold its pool rank in place of the index rank it cannot have.
-CONTENT_FUSION = os.environ.get("CHAT_CONTENT_FUSION", "pool")
+# validated on the held-out Fresh-3: 1.74 against version 2's 1.69, source given 85 against 80
+CONTENT_FUSION = os.environ.get("CHAT_CONTENT_FUSION", "rrf-impute")
 
 
 def configured() -> bool:
