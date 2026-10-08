@@ -136,11 +136,11 @@
         ],
         [
           "RAGScholar-style pipeline, Mistral-7B",
-          "16"
+          "14"
         ],
         [
           "No retrieval, gpt-4.1-mini",
-          "5"
+          "4"
         ]
       ]
     },

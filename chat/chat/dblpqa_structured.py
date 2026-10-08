@@ -47,6 +47,11 @@ ARMS = ("dewey", "rag", "closed")
 RECORD_SYSTEM = ("You answer questions about computer-science papers using the search results you are given: "
                  "each has its dblp key, DOI, title, authors, year and abstract. Answer in one to three sentences.")
 NUMBERED = re.compile(r" \d{4}$")
+# citation markers ("[2]") are not numbers the answer states, and a journal is not named by an answer
+# that places it in a conference ("Conference on Computer Vision and Pattern Recognition" is not the
+# journal "Pattern Recognit.")
+CITATION = re.compile(r"\[\d+\]")
+CONFERENCE = re.compile(r"\b(conference|proceedings|workshop|symposium)\b", re.I)
 
 
 def study_dir():
@@ -103,6 +108,7 @@ def abbreviation_in(venue, answer):
 
 def score(question, answer):
     """True when the answer states the reference: its number, or its names."""
+    answer = CITATION.sub(" ", answer or "")
     ref, kind = question["ref"], question["type"]
     if "number" in ref:
         return ref["number"] in numbers(answer)
@@ -112,6 +118,8 @@ def score(question, answer):
         # the series' short name ("iwqos") counts as a whole word only, and only if it is not a
         # two-letter code that would be found inside any other word
         named = abbreviation_in(venue, answer) or (len(series) >= 3 and series.lower() in words(answer))
+        if named and (question.get("entity") or {}).get("key", "").startswith("journals/") and CONFERENCE.search(answer):
+            named = False
         return str(ref["year"]) in (answer or "") and named
     if kind == "authors":
         return all(surname(n) in low for n in ref["names"])
@@ -381,11 +389,15 @@ def print_summary(arm, model, summary, out=print):
 
 def compare(out=print):
     """Every arm's latest run side by side, and Dewey against each other arm question by question (an
-    exact sign test on the questions where exactly one of the two is right)."""
+    exact sign test on the questions where exactly one of the two is right). Every answer is scored
+    again with the current scorer, so a correction to it reaches runs answered before it."""
+    qs = {q["id"]: q for q in load()["questions"]}
     runs = {}
     for summary in sorted((study_dir() / "runs").glob("*/summary.json")):
         got = json.loads(summary.read_text(encoding="utf-8"))
         recs = [json.loads(x) for x in (summary.parent / "answers.jsonl").read_text(encoding="utf-8").splitlines() if x.strip()]
+        for r in recs:
+            r["correct"] = score(qs[r["id"]], r["answer"])
         runs[(got["arm"], got["model"])] = {r["id"]: r for r in recs}
     table = {f"{arm} ({model})": summarize(list(recs.values())) for (arm, model), recs in runs.items()}
     for label, s in table.items():

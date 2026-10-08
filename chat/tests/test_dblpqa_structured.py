@@ -105,6 +105,14 @@ def test_scoring_needs_the_reference_and_nothing_else():
     short = {"type": "venue_year", "ref": {"year": 2023, "venues": ["Pattern Recognit.", "pr"]}}
     assert ST.score(short, "Pattern Recognition, 2023.")
     assert not ST.score(short, "In the proceedings of CVPR 2023."), "a two-letter code is not found inside words"
+    # a journal is not named by an answer that places the paper at a conference of a similar name
+    in_journal = dict(short, entity={"key": "journals/pr/X23"})
+    assert ST.score(in_journal, "It appeared in Pattern Recognition in 2023.")
+    assert not ST.score(in_journal, "It appeared at the IEEE Conference on Computer Vision and Pattern Recognition 2023.")
+    # a citation marker is not a number the answer states
+    pair = {"type": "pair_count", "ref": {"number": 2}}
+    assert not ST.score(pair, "I could not find their joint papers [2].")
+    assert ST.score(pair, "They wrote 2 papers together [1].")
     authors = {"type": "authors", "ref": {"names": ["Jürgen Schmidhuber", "Sepp Hochreiter", "John Smith Jr."]}}
     assert ST.score(authors, "By Jurgen Schmidhuber, Sepp Hochreiter and John Smith.")
     assert not ST.score(authors, "By Jürgen Schmidhuber and John Smith.")
