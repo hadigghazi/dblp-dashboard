@@ -57,10 +57,11 @@ open assistant that answers questions about dblp by calling tools over the whole
 index of 5.49 million abstracts of dblp's papers rebuilt from OpenAlex's open snapshot, and evaluate it
 automatically with control-checked judges from two model families. Re-running the original study
 reproduces its ordering of context strategies (rank correlation 0.92) and shows that generation is near the
-ceiling: given the right abstract, every model we tested scores at least 1.96 of 2, so what decides the
+ceiling: each of the three models given the source abstract scores at least 1.96 of 2, so what decides the
 score is finding the paper. On 100 held-out questions about 2025--2026 papers, Dewey scores 1.74 against
 0.89 without retrieval, matches RAGScholar's best configuration (1.73), and is within noise of a fixed
-pipeline using its own answering model (1.79). On 70 questions about dblp's records, such as counts,
+pipeline using its own answering model (1.79), which leads slightly across all 300 newer questions. On 70
+questions about dblp's records, such as counts,
 rankings and people who share a name, it answers 65 where a retrieve-then-read pipeline answers 20.
 \end{abstract}
 
@@ -75,7 +76,7 @@ LLM-as-a-judge, benchmark evaluation
 Retrieval-augmented generation (RAG) conditions a language model's answer on documents retrieved for
 the question~\cite{lewis2020rag,gao2023ragsurvey}. For scholarly information access it promises answers
 that can be traced to publications rather than to a model's memory. Neekhra, Nilles and Schenkel recently
-introduced DBLP-QA, a benchmark of 50 question--answer pairs written from abstracts of papers indexed by
+introduced DBLP-QA~\cite{neekhra2026ragscholar}, a benchmark of 50 question--answer pairs written from abstracts of papers indexed by
 dblp~\cite{ley2009dblp}, together with RAGScholar, a system that retrieves abstracts with Lucene BM25 and
 answers with instruction-tuned models from 0.78B to 14.7B parameters~\cite{neekhra2026ragscholar}. They
 compared ten ways of building the context, from single abstracts to concatenated abstracts and
@@ -785,8 +786,9 @@ read the top five of the pipeline pool with gpt-4.1-mini (1.80) or with gpt-4.1,
 model (1.79). On \test{} Dewey is within noise of both ($-0.06$, interval $-0.17$ to $+0.04$; and $-0.05$,
 $-0.15$ to $+0.05$, 5 questions better, 10 worse), so with the same model the agent adds no score on these
 questions; the difference points the same way on \fresh{} and \freshb{},
-and over the 300 questions of the three newer sets the pipeline leads by 0.09 (interval $0.03$ to $0.15$;
-37 questions better, 16 worse, $p=0.005$), although Dewey was designed on two of them. On \dq{}, Dewey's best
+and over the 300 questions of the three newer sets each pipeline leads by 0.09: with gpt-4.1-mini,
+interval $0.03$ to $0.15$, 37 questions better and 16 worse ($p=0.005$); with gpt-4.1, interval $0.02$ to
+$0.15$, 36 better and 16 worse ($p=0.008$), although Dewey was designed on two of these sets. On \dq{}, Dewey's best
 set, it scores 1.80, above RAGScholar's configuration by $+0.20$ (interval $0.00$ to $+0.40$; 12 better,
 4 worse) and above closed-book by $+0.40$ ($+0.20$ to $+0.60$).
 
@@ -977,8 +979,8 @@ $0.83$) and on \dq{} (200 answers; agreement 79\%, Cohen's $\kappa=0.39$, quadra
 against gpt-4.1's 1.74, and RAGScholar's configuration lower than gpt-4.1 does (1.56 against 1.73). Under
 Qwen, Dewey's lead over that configuration is significant on both sets: $+0.14$ on \test{} (interval
 $+0.01$ to $+0.28$) and $+0.42$ on \dq{} ($+0.22$ to $+0.62$), where gpt-4.1 gives $+0.01$ and $+0.20$.
-Its difference from the best fixed pipeline stays within noise under both ($-0.03$ and $-0.06$ on
-\test{}). Here too there is no sign that gpt-4.1 favours its own family: it grades Dewey's answers
+Its difference from the gpt-4.1-mini pipeline stays within noise under both ($-0.03$ and $-0.06$ on
+\test{}); the gpt-4.1 pipeline, run after the second judge's pass, was graded by gpt-4.1 only. Here too there is no sign that gpt-4.1 favours its own family: it grades Dewey's answers
 0.04 higher than Qwen does, gpt-4.1-mini's 0.05 lower, and Mistral-7B's 0.17 higher.
 
 %% ===================================================================================================
@@ -1000,9 +1002,9 @@ set, and given the pipeline's own candidates Dewey scores the same as RAGScholar
 rules add little once the candidates are fixed. What Dewey adds is reach: an index rebuilt from open data
 that holds 90\% of the sources, live searches that reach papers newer than the snapshot, and a search as
 good as a pool gathered offline. What Dewey does not do is beat a fixed pipeline with a current model on
-the pipeline pool: with gpt-4.1-mini it scores 0.06 higher on \test{} (within noise) and 0.09 higher over
-the three newer sets, and with gpt-4.1, Dewey's own answering model, 0.05 higher on \test{}, each with the
-advantage of the source's original abstract. On content questions the agent's value is not a higher
+the pipeline pool: with gpt-4.1-mini the pipeline scores 0.06 higher than Dewey on \test{} (within noise),
+and with gpt-4.1, Dewey's own answering model, 0.05 higher; across the three newer sets either pipeline
+leads by 0.09, each with the advantage of the source's original abstract. On content questions the agent's value is not a higher
 score but reach, live search without an offline pool, and cited answers. Beyond that task, Dewey
 answers what a retrieve-then-read design cannot: 65 of 70 record questions against 20, follow-ups,
 rankings and people who share a name; it cites the abstracts it uses (98 of 100 \test{} answers, none
@@ -1042,8 +1044,8 @@ should be compared again; and real users' questions.
 %% ===================================================================================================
 \section{Conclusion}
 
-With current models, RAGScholar's task is mostly a retrieval problem: given the right abstract each of
-the three models we tested answers almost perfectly, and the original study's findings about building the context are
+With current models, RAGScholar's task is mostly a retrieval problem: each of the three models given
+the source abstract answers almost perfectly, and the original study's findings about building the context are
 reproduced in order but matter less than finding the paper. Dewey, a tool-calling assistant over the
 whole dblp dump, treats that retrieval as one tool among many, rebuilt from open data as an index of 5.49
 million abstracts of dblp's papers. On questions held out from its design it scores 1.74 of 2, nearly
