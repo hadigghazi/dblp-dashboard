@@ -43,7 +43,42 @@ RANGES = {"paper_years": (2005, 2024), "paper_authors": (2, 4), "title_chars": 4
           "author_records": (20, 400), "pair_author_records": (30, 300), "pair_records": 2,
           "venue_years": (2010, 2024), "venue_year_records": (100, 3000), "venue_records": (1000, 30000),
           "namesakes": (2, 100)}
-ARMS = ("dewey", "rag", "closed")
+ARMS = ("dewey", "rag", "closed", "sql")
+# the "sql" arm: the same model, loop and limits as Dewey, with only the read-only SQL tool and the schema -
+# what Dewey's typed tools and counting rules add over plain access to the same database
+# not src: on the serving database it is a view over the raw parquet, which the guarded SQL may not read
+SQL_TABLES = ("pubs", "persons", "person_names", "slots", "career", "person_stats", "series", "word_year",
+              "person_degree")
+SQL_SYSTEM = """You answer questions about the dblp computer-science bibliography by querying its database
+with run_sql, your only tool (its description calls it a last resort; here it is how you answer). DuckDB,
+one read-only SELECT per call, tables named without a prefix; each query is stopped after {timeout:.0f}
+seconds. You see at most {rows} rows of any result, so count and rank in SQL (count(*), ORDER BY ... LIMIT)
+rather than by reading rows. Answer only from what your queries return; if the data cannot answer the
+question, say so. Two to four sentences; lead with the answer.
+
+Tables and columns:
+{schema}
+
+What the data means:
+- pubs: one row per dblp record except author pages and proceedings volumes - journal articles,
+  conference papers, preprints, books, chapters, theses (type; is_preprint marks CoRR and other informal
+  records). title is written as dblp writes it, usually ending with a period; title_norm is the title
+  lower-cased with only letters and digits. venue is that record's journal or booktitle string.
+- Venues: sid is the series a record belongs to (conf/icml, journals/tit), taken from its key. One
+  series' records can carry several venue strings (volumes, workshops, renamings), so identify a venue by
+  its sid and count by sid. series has one row per conference or journal series; usual_name is its most
+  common venue string, and series.papers counts only its journal and conference papers, preprints excluded.
+- People: persons are dblp author pages. page_kind 'numbered' (such as 'Wei Wang 0003') is one distinct
+  person; 'regular' is an unnumbered page; 'disambiguation' is a bin holding the papers of different
+  people who share a name, not a person. base_name is the name without its number. A page can carry
+  several names (persons.names); person_names has one row per name, to find a page from a name exactly as
+  written.
+- slots links each record (pid) to its author pages (person_id), one row per author position. It holds
+  no names: join persons for them. person_id is NULL for a name that has no page, and on_bin marks a slot
+  whose page is a bin.
+- person_stats.n_pubs counts every record of a page, preprints included; career.papers counts only its
+  journal and conference papers, preprints excluded; person_degree counts co-authors on papers with 2 to
+  50 authors; word_year counts title words of journal and conference papers."""
 RECORD_SYSTEM = ("You answer questions about computer-science papers using the search results you are given: "
                  "each has its dblp key, DOI, title, authors, year and abstract. Answer in one to three sentences.")
 NUMBERED = re.compile(r" \d{4}$")
@@ -308,6 +343,19 @@ def record_context(ctx, question):
     return "\n\n".join(blocks) or "(no records were retrieved)", keys, status
 
 
+def sql_system(ctx):
+    """The SQL arm's instructions, with every column of the tables it may query."""
+    rows = ctx.cursor().execute(
+        "SELECT table_name, column_name, data_type FROM information_schema.columns WHERE table_catalog = 's' "
+        "AND table_name IN (SELECT unnest(?::VARCHAR[])) ORDER BY table_name, ordinal_position",
+        [list(SQL_TABLES)]).fetchall()
+    cols = {}
+    for table, column, kind in rows:
+        cols.setdefault(table, []).append(f"{column} {kind}")
+    schema = "\n".join(f"- {t}({', '.join(cols[t])})" for t in SQL_TABLES if t in cols)
+    return SQL_SYSTEM.format(schema=schema, rows=config.ROWS_TO_MODEL, timeout=config.SQL_TIMEOUT)
+
+
 def run(ctx, client, arm, model=None, sampling=None, limit=None, out=print):
     data = load()
     questions = data["questions"][:limit] if limit else data["questions"]
@@ -320,6 +368,12 @@ def run(ctx, client, arm, model=None, sampling=None, limit=None, out=print):
     meter = DQ.Meter()
     ledger = budget.Ledger(path=study_dir() / "dewey-ledger.json")
     records, started = [], time.time()
+    # the SQL arm gets the per-tool time Dewey's typed tools get, not run_sql's shorter default
+    sql_timeout = config.SQL_TIMEOUT
+    if arm == "sql":
+        config.SQL_TIMEOUT = config.TOOL_TIMEOUT
+    system = sql_system(ctx) if arm == "sql" else None
+    dump = (getattr(ctx, "meta", None) or {}).get("fingerprint")
     with open(out_dir / "answers.jsonl", "w", encoding="utf-8") as fh:
         for i, q in enumerate(questions, 1):
             t0, extra = time.time(), {}
@@ -328,7 +382,7 @@ def run(ctx, client, arm, model=None, sampling=None, limit=None, out=print):
                 done = agent.answer(ctx, client, q["question"], ledger=ledger, collect=payloads, channel="cli")
                 text = done.get("answer") or ""
                 extra = {"tools": done.get("tools") or [], "writer": done.get("model"), "error": done.get("error"),
-                         "cost_usd": done.get("cost_usd")}
+                         "cost_usd": done.get("cost_usd"), "dump": dump}
             elif arm == "rag":
                 context, keys, status = record_context(ctx, q["question"])
                 messages = [{"role": "system", "content": RECORD_SYSTEM},
@@ -336,6 +390,17 @@ def run(ctx, client, arm, model=None, sampling=None, limit=None, out=print):
                 text = DQ.answer(client, meter, model, messages, sampling)
                 extra = {"retrieved": keys, "sources": status,
                          "paper_found": q["entity"].get("key") in keys if q["entity"].get("key") else None}
+            elif arm == "sql":
+                payloads = []
+                done = agent.answer(ctx, client, q["question"], ledger=ledger, collect=payloads, channel="cli",
+                                    tools=["run_sql"], system=system)
+                text = done.get("answer") or ""
+                extra = {"tools": done.get("tools") or [], "writer": done.get("model"), "error": done.get("error"),
+                         "cost_usd": done.get("cost_usd"), "dump": dump,
+                         "sql": [(p.get("arguments") or {}).get("sql") for p in payloads if p.get("name") == "run_sql"],
+                         "sql_errors": [(p.get("result") or {}).get("summary") for p in payloads
+                                        if p.get("name") == "run_sql" and (p.get("result") or {}).get("refused")],
+                         "off_arm_tools": [t for t in (done.get("tools") or []) if t != "run_sql"]}
             elif arm == "closed":
                 text = DQ.answer(client, meter, model, DQ.messages_for("closed-book", q["question"]), sampling)
             else:
@@ -349,6 +414,7 @@ def run(ctx, client, arm, model=None, sampling=None, limit=None, out=print):
             if i % 10 == 0 or i == len(questions):
                 out(f"  {arm} {model}: {i}/{len(questions)} answered, {sum(r['correct'] for r in records)} correct, "
                     f"{time.time() - started:.0f}s")
+    config.SQL_TIMEOUT = sql_timeout
     summary = summarize(records)
     payload = {"arm": arm, "model": model, "sampling": sampling, "run_at": stamp, "questions": len(records),
                "built_at": data["built_at"], "results": summary, "cost_usd": round(meter.cost() + sum(

@@ -252,3 +252,9 @@ def test_a_closed_book_run_from_before_the_sampling_field_still_pairs(tmp_path):
                                         encoding="utf-8")
     got = DQ.paired_delta("m1", "ours", [{"model": "m1", "id": "qa1", "score": 2}], tmp_path)
     assert got and got["questions"] == 1 and got["better"] == 1
+
+
+def test_a_reference_cut_to_its_first_sentence_is_the_boundary_control():
+    assert DQ.first_sentence("Compressive Sensing is a technique. It needs few measurements.") ==         "Compressive Sensing is a technique."
+    assert DQ.first_sentence("One sentence only.") is None
+

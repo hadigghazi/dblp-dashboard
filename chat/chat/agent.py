@@ -173,7 +173,7 @@ def _trim(payload, cap=MAX_RESULT_CHARS):
     return text[:cap] + '..." (truncated)'
 
 
-def run_tools(ctx, calls, emit, budget_left, collect=None):
+def run_tools(ctx, calls, emit, budget_left, collect=None, allowed=None):
     """Execute tool calls in parallel; returns the tool messages for the next model call."""
     messages = []
     # how long the answer has left, for a tool that can stop itself in time (the abstract search)
@@ -185,7 +185,13 @@ def run_tools(ctx, calls, emit, budget_left, collect=None):
         started = {}
         for call in calls:
             emit({"type": "tool_start", "name": call["name"], "arguments": call["arguments"]})
-            started[pool.submit(T.call, ctx, call["name"], call["arguments"])] = (call, time.time())
+            if allowed is not None and call["name"] not in allowed:
+                # an evaluation arm offers some tools only; a guessed name must not reach the others
+                refused = {"summary": f"No tool named {call['name']!r} here; use {', '.join(sorted(allowed))}.",
+                           "refused": True}
+                started[pool.submit(lambda r=refused: r)] = (call, time.time())
+            else:
+                started[pool.submit(T.call, ctx, call["name"], call["arguments"])] = (call, time.time())
         for future, (call, t0) in list(started.items()):
             timeout = max(0.5, min(T.timeout_for(call["name"], config.TOOL_TIMEOUT), budget_left()))
             try:
@@ -275,9 +281,10 @@ def _complete_search(payload):
 
 
 def answer(ctx, client, question, history=None, emit=None, ledger=None, collect=None,
-           channel="web", tools=None):
+           channel="web", tools=None, system=None):
     """Run one question. `emit` receives events; returns a summary of the run. `tools` limits the
-    catalogue offered to the model (an evaluation variant); None offers all of it."""
+    catalogue offered to the model and `system` replaces Dewey's own instructions (both for evaluation
+    arms); None offers all of it, with Dewey's rules."""
     emit = emit or (lambda _e: None)
     # per-answer state a tool may keep (the abstract search counts its calls), reset every question
     ctx.turn = {"content_calls": 0, "lock": threading.Lock()}
@@ -285,7 +292,7 @@ def answer(ctx, client, question, history=None, emit=None, ledger=None, collect=
     collect = collect if collect is not None else []
     started = time.time()
     budget_left = lambda: config.TIME_BUDGET_SECONDS - (time.time() - started)
-    messages = [{"role": "system", "content": system_prompt(ctx)}]
+    messages = [{"role": "system", "content": system or system_prompt(ctx)}]
     for turn in (history or [])[-config.MAX_HISTORY_TURNS:]:
         role = "assistant" if turn.get("role") == "assistant" else "user"
         content = (turn.get("content") or "")[:3000]   # room for the answer and its memory
@@ -329,7 +336,8 @@ def answer(ctx, client, question, history=None, emit=None, ledger=None, collect=
                                                       "arguments": json.dumps(c["arguments"])}}
                                         for c in calls]})
         used_tools += [c["name"] for c in calls]
-        messages += run_tools(ctx, calls, emit, budget_left, collect)
+        messages += run_tools(ctx, calls, emit, budget_left, collect,
+                              allowed=None if tools is None else set(tools))
         if calls_made >= config.MAX_TOOL_CALLS or budget_left() < 5:
             messages.append({"role": "user", "content":
                              "Answer now with the tool results above; there is no time for more tools. "

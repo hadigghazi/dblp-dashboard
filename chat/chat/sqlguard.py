@@ -87,13 +87,15 @@ def run(serving_path, sql: str, row_cap=None, timeout=None):
     con = duckdb.connect(str(serving_path), read_only=True)
     timer = None
     try:
-        con.execute(f"SET threads = {config.DUCKDB_THREADS}")
-        con.execute(f"SET memory_limit = '{config.DUCKDB_MEMORY}'")
         try:
+            con.execute(f"SET threads = {config.DUCKDB_THREADS}")
+            con.execute(f"SET memory_limit = '{config.DUCKDB_MEMORY}'")
             con.execute("SET enable_external_access = false")
             con.execute("SET lock_configuration = true")
-        except duckdb.Error:      # older builds: the denylist and read-only mode still apply
-            log.debug("could not lock configuration on this DuckDB build")
+        except duckdb.Error:
+            # older builds, or a call running beside this one already configured and locked the instance
+            # DuckDB shares between connections to one file: the denylist and read-only mode still apply
+            log.debug("configuration already locked or not lockable")
         timer = _interrupt_after(con, timeout)
         con.execute(wrapped)
         columns = [d[0] for d in con.description]

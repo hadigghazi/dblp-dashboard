@@ -155,3 +155,23 @@ def test_an_arm_is_scored_per_type_and_compared_with_dewey(small):
 def test_the_wilson_interval_brackets_the_rate():
     low, high = ST.wilson(7, 10)
     assert low < 0.7 < high and 0 <= low and high <= 1
+
+
+def test_the_sql_arm_is_given_every_column_of_the_tables_it_may_query(ctx):
+    text = ST.sql_system(ctx)
+    for table in ("pubs", "persons", "slots"):
+        assert f"- {table}(" in text, table
+    assert "person_id" in text and "page_kind" in text and "run_sql" in text
+    assert "- src(" not in text, "the raw records are a view the guarded SQL cannot read"
+
+
+def test_an_arm_that_offers_only_sql_refuses_any_other_tool(ctx):
+    from chat import agent
+    from chat.llm import FakeClient
+    client = FakeClient(script=[{"tool_calls": [{"id": "c1", "name": "resolve_author", "arguments": {"name": "Ada Alpha"}}]}],
+                        answer="I could not look that up.")
+    payloads = []
+    agent.answer(ctx, client, "Who is Ada Alpha?", collect=payloads, channel="cli", tools=["run_sql"], system="SQL only.")
+    got = [p for p in payloads if p.get("name") == "resolve_author"]
+    assert got and (got[0].get("result") or {}).get("refused"), payloads
+

@@ -420,6 +420,39 @@ def judge_call(client, meter, model, messages):
     return step
 
 
+def first_sentence(text):
+    """The first sentence of a reference answer, or None when it has only one."""
+    parts = [p for p in re.split(r"(?<=[.!?])\s+(?=[A-Z0-9])", (text or "").strip()) if p]
+    # a cut of fewer than five words is usually an abbreviation ("et al.", "Fig. 3"), not a sentence
+    return parts[0] if len(parts) > 1 and len(parts[0].split()) >= 5 else None
+
+
+def boundary_control(client, rows, judge_model, out=print):
+    """A control between 1 and 2, where judges disagree most: a reference cut to its first sentence is
+    correct but incomplete, so it should score 1. Only references of two or more sentences take part."""
+    meter = Meter()
+    got, cuts, failed = {}, {}, []
+    for row in rows:
+        part = first_sentence(row["answer"])
+        if not part:
+            continue
+        try:
+            got[row["id"]] = judge(client, meter, judge_model, row["question"], row["answer"], part)["score"]
+            cuts[row["id"]] = part
+        except ValueError as e:                 # an unreadable verdict is counted, not fatal
+            failed.append({"id": row["id"], "error": str(e)[:200]})
+    n = len(got) or 1
+    counts = {s: sum(1 for v in got.values() if v == s) for s in (2, 1, 0)}
+    result = {"judge": judge_model, "questions": len(got), "scores": counts,
+              "scored_1": round(counts[1] / n, 3), "unparsed": failed, "rows_offered": len(rows),
+              "per_question": got, "cuts": cuts, "cost_usd": meter.cost()}
+    tag = re.sub(r"[^a-z0-9.-]+", "-", judge_model.lower())
+    (study_dir() / f"boundary-{tag}.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+    out(f"boundary control ({judge_model}): a reference cut to its first sentence scored 1 on "
+        f"{counts[1]}/{len(got)}, 2 on {counts[2]}, 0 on {counts[0]} (${meter.cost()})")
+    return result
+
+
 def judge(client, meter, model, question, gold, candidate):
     prompt = f"Question: {question}\nGround truth: {gold}\nAnswer to grade: {candidate}"
     step = judge_call(client, meter, model, [{"role": "system", "content": JUDGE_SYSTEM},

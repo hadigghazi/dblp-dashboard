@@ -184,7 +184,9 @@ def cmd_dblpqa(args):
             ST.compare()
         else:
             ctx = _ready()
-            arms_models = ["dewey"] if args.arm == "dewey" else [m.strip() for m in args.models.split(",") if m.strip()]
+            # Dewey and the SQL arm run Dewey's own loop (its router model); the others take --models
+            arms_models = (["dewey"] if args.arm == "dewey" else ["dewey-loop"] if args.arm == "sql"
+                           else [m.strip() for m in args.models.split(",") if m.strip()])
             for model in arms_models:
                 ST.run(ctx, client, args.arm, model=model, limit=args.limit)
         return
@@ -196,6 +198,9 @@ def cmd_dblpqa(args):
     rows, sha = DQ.load_dataset()
     if args.limit:
         rows = rows[:args.limit]
+    if args.condition == "judge-boundary":
+        DQ.boundary_control(client, rows, args.judge)
+        return
     if args.condition == "crossjudge":
         from . import dblpqa_crossjudge as CJ
         CJ.run(client, rows, judge_model=args.second_judge, pool=args.pool, modes=args.modes or "plain",
@@ -406,16 +411,18 @@ def main():
     dq = sub.add_parser("dblpqa", help="experiments on the DBLP-QA benchmark")
     dq.add_argument("condition", choices=["closed-book", "oracle", "retrieval", "rag", "audit", "regrade", "crossjudge", "report",
                              "rescore", "fresh-build", "grid", "bearing", "replication", "dewey",
-                             "dewey-retrieval", "structured-build", "structured", "structured-compare"],
+                             "dewey-retrieval", "structured-build", "structured", "structured-compare",
+                             "judge-boundary"],
                     help="oracle = each question with the abstract it was written from; retrieval = where "
                          "each ranker puts that paper (no answers); rag = answers from the top --k papers "
                          "of --ranker; rescore = score the unscored answers of --run; grid = the original "
                          "paper's ten context variants for --models; bearing = the paper's RQ1 measure "
                          "(does a top abstract answer the question?); replication = the grid beside the "
                          "paper's Table 3")
-    dq.add_argument("--arm", choices=["dewey", "rag", "closed"], default="dewey",
-                    help="for structured: Dewey, RAGScholar's pipeline over the records (--models), or the "
-                         "question alone (--models)")
+    dq.add_argument("--arm", choices=["dewey", "rag", "closed", "sql"], default="dewey",
+                    help="for structured: Dewey, RAGScholar's pipeline over the records (--models), the "
+                         "question alone (--models), or sql: Dewey's loop and models with only the read-only "
+                         "run_sql tool and a schema description")
     dq.add_argument("--seed", type=int, default=7, help="for structured-build: which questions are drawn")
     dq.add_argument("--variant", choices=["live", "frozen", "v0", "v2", "v2-frozen", "v3", "v3-local", "v3-poolrank",
                                           "v3-local-poolrank", "v31", "v31-local"], default=None,
