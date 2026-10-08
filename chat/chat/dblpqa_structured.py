@@ -397,7 +397,8 @@ def compare(out=print):
         got = json.loads(summary.read_text(encoding="utf-8"))
         recs = [json.loads(x) for x in (summary.parent / "answers.jsonl").read_text(encoding="utf-8").splitlines() if x.strip()]
         for r in recs:
-            r["correct"] = score(qs[r["id"]], r["answer"])
+            if r["id"] in qs:
+                r["correct"] = score(qs[r["id"]], r.get("answer") or "")
         runs[(got["arm"], got["model"])] = {r["id"]: r for r in recs}
     table = {f"{arm} ({model})": summarize(list(recs.values())) for (arm, model), recs in runs.items()}
     for label, s in table.items():
