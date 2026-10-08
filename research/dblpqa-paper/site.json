@@ -1,59 +1,85 @@
 {
-  "page_title": "What does retrieval add? Re-evaluating DBLP-QA",
-  "lede": "Dewey answers questions about dblp by retrieving before it answers. This study asks how much retrieval actually helps on DBLP-QA, a scholarly QA benchmark built by dblp's own team. Every answer is graded automatically and repeatably, by two judges from different model families.",
+  "page_title": "Dewey against RAGScholar on DBLP-QA",
+  "lede": "Dewey answers questions about dblp by calling tools over the whole dump, including its own index of 5.49 million abstracts of dblp's papers. This study measures it against RAGScholar, the retrieval system DBLP-QA was built for, on RAGScholar's own kind of question and on questions about dblp's records. Every answer is graded automatically and repeatably, by two judges from different model families.",
   "kpis": [
-    {"n": "≥ 1.96 / 2", "l": "every model, given the right abstract"},
-    {"n": "58%", "l": "of DBLP-QA questions are general knowledge"},
-    {"n": "58% · 89%", "l": "right paper in the top five (DBLP-QA · Fresh)"},
-    {"n": "0", "l": "detectable harm from wrong papers, once correct alternatives count"}
+    {"n": "1.74 / 2", "l": "Dewey on 100 held-out questions (0.89 without retrieval)"},
+    {"n": "+0.14", "l": "over RAGScholar's best configuration, second judge (significant)"},
+    {"n": "65 / 70", "l": "record questions right, against 20 for a RAGScholar-style pipeline"},
+    {"n": "5.49M", "l": "abstracts in Dewey's open index, built from OpenAlex's snapshot"}
   ],
   "findings": [
     {"title": "Answering is solved; finding is not",
-     "text": "Given the abstract a question was written from, gpt-4.1, gpt-4.1-mini and Mistral-7B all score at least 1.96 of 2, on both question sets. What still separates systems is whether retrieval finds that abstract."},
-    {"title": "Models know the field, not the papers",
-     "text": "Without retrieval gpt-4.1 scores 1.46 on DBLP-QA, where 58% of questions are general knowledge. On 100 new questions about 2025–2026 papers it scores 1.04, but on paper-specific questions it scores the same on old and new papers (1.00 vs 1.02), so the models were not remembering DBLP-QA's papers."},
-    {"title": "In the open world, BM25 is enough",
-     "text": "The original index cannot be rebuilt, so retrieval was reconstructed from four public search services. The right paper reaches the top five for 58% of DBLP-QA questions and 89% of the new ones; BM25 gets within two points of the candidates' ceiling, and hybrid retrieval adds nothing."},
-    {"title": "The gain follows retrieval success",
-     "text": "The share of the right abstract's gain that RAG recovers tracks how often retrieval finds it: about 56% at 58% retrieval, about 82% at 89%, for every model."},
+     "text": "Given the abstract a question was written from, gpt-4.1, gpt-4.1-mini and Mistral-7B all score at least 1.96 of 2. Re-running the original study's ten ways of building the context reproduces its ordering (rank correlation 0.92 for Mistral-7B), but what separates systems now is whether retrieval finds the paper."},
+    {"title": "An open index replaces the closed one",
+     "text": "RAGScholar's index of 4.6 million abstracts cannot be rebuilt. Dewey's index, read from OpenAlex's open snapshot in under two hours, holds 5.49 million abstracts of dblp's papers and the source abstract of 90% of DBLP-QA's questions. Alone it puts the right paper in the top five for 68% of them, against 58% for the best pipeline over four live search services."},
+    {"title": "On held-out questions, Dewey matches or beats RAGScholar",
+     "text": "On 100 questions about 2025–2026 papers, built only after Dewey's design was frozen, Dewey scores 1.74 against 0.89 without retrieval. RAGScholar's best configuration scores 1.73 when it reads candidates gathered offline from three search services and 1.63 on Dewey's open index (Dewey better on 12 questions, worse on 2), a margin owed partly to Dewey's stronger writing model. Under the second judge, Dewey's lead is significant on both the held-out set and DBLP-QA."},
+    {"title": "Dewey's live search is as good as the offline pool",
+     "text": "Given the fixed pipeline's own candidates, which show the source with the very abstract the question was written from, Dewey scores 1.75; searching for itself, in seconds, 1.74. The best fixed pipeline, gpt-4.1-mini on those candidates, scores 1.80: within noise of Dewey on the held-out set, but 0.09 ahead over all 300 newer questions."},
+    {"title": "A bibliography is asked more than what papers say",
+     "text": "On 70 questions about dblp's records, such as how many papers a venue published in a year or how many people share a name, scored by exact match against values computed from the dump, Dewey answers 65 and a RAGScholar-style pipeline 20: five retrieved records cannot be counted, ranked or told apart."},
     {"title": "It is the grading, not the wrong papers",
-     "text": "Graded against the one reference answer, wrong papers seem to cost up to 0.4 points. Graded so that any correct answer counts, after controls, neither judge finds a measurable cost: the models give different correct answers, not wrong ones."},
-    {"title": "Selective retrieval saves time, not accuracy",
-     "text": "A prompt that allows ignoring irrelevant abstracts helps only gpt-4.1, slightly. A relevance gate does not improve accuracy, but a 7B model reading 1.7 abstracts instead of 5 answers twice as fast at the same score."}
+     "text": "Graded against the one reference answer, retrieving the wrong papers seems to cost points. Graded so that any correct answer counts, after controls, neither judge finds a measurable cost: the models give different correct answers, not wrong ones."}
   ],
-  "results": {
-    "caption": "Mean score (0-2) graded by gpt-4.1. RAG: BM25 over a frozen candidate pool, top five abstracts. Oracle: the abstract the question was written from.",
-    "columns": ["Model", "Set", "No retrieval", "RAG", "Right abstract"],
-    "rows": [
-      ["gpt-4.1", "DBLP-QA (50)", "1.46", "1.76", "1.98"],
-      ["gpt-4.1-mini", "DBLP-QA (50)", "1.40", "1.72", "2.00"],
-      ["Mistral-7B", "DBLP-QA (50)", "1.04", "1.60", "1.98"],
-      ["gpt-4.1", "Fresh (100)", "1.04", "1.82", "1.99"],
-      ["gpt-4.1-mini", "Fresh (100)", "0.96", "1.82", "1.99"],
-      ["Mistral-7B", "Fresh (100)", "0.78", "1.73", "1.96"]
-    ]
-  },
+  "tables": [
+    {"title": "Dewey against RAGScholar",
+     "caption": "Mean score (0-2) graded by gpt-4.1. Test was held out from Dewey's design; the other sets were used to design it. Pipeline pool: candidates from the live search services (four on DBLP-QA, three on the newer sets), the source shown with the abstract the question was written from.",
+     "columns": ["System", "DBLP-QA (50)", "Fresh (100)", "Fresh-2 (100)", "Test (100)"],
+     "text_columns": 1,
+     "wide": true,
+     "rows": [
+       ["No retrieval, gpt-4.1-mini", "1.40", "0.96", "0.98", "0.89"],
+       ["RAGScholar configuration, pipeline pool", "1.60", "1.73", "1.76", "1.73"],
+       ["RAGScholar configuration, Dewey's index", "1.68", "1.71", "1.63", "1.63"],
+       ["Plain RAG gpt-4.1-mini, pipeline pool", "1.72", "1.82", "1.89", "1.80"],
+       ["Dewey", "1.80", "1.74", "1.76", "1.74"],
+       ["Dewey, local only (no outside service)", "1.82", "1.73", "–", "1.70"],
+       ["Right abstract given (oracle)", "2.00", "1.99", "2.00", "2.00"]
+     ]},
+    {"title": "Questions about dblp's records",
+     "caption": "Correct answers of 70, by exact match against values computed from the dump (no judge).",
+     "columns": ["System", "Correct (of 70)"],
+     "text_columns": 1,
+     "rows": [
+       ["Dewey", "65"],
+       ["RAGScholar-style pipeline, gpt-4.1-mini", "20"],
+       ["RAGScholar-style pipeline, Mistral-7B", "16"],
+       ["No retrieval, gpt-4.1-mini", "5"]
+     ]},
+    {"title": "The original study, re-run",
+     "caption": "Mean score (0-2), gpt-4.1 judge, DBLP-QA. No retrieval, the top abstract alone, and the top five concatenated.",
+     "columns": ["Model", "No retrieval", "Top abstract", "Top five", "Right abstract"],
+     "text_columns": 1,
+     "rows": [
+       ["gpt-4.1", "1.46", "–", "1.76", "1.98"],
+       ["gpt-4.1-mini", "1.40", "1.46", "1.72", "2.00"],
+       ["Mistral-7B", "1.04", "1.46", "1.60", "1.98"],
+       ["TinyLlama-1.1B", "0.58", "1.22", "1.26", "–"]
+     ]}
+  ],
   "recovery": {
     "caption": "The share of the right abstract's gain over no retrieval that plain RAG recovers, against how often the right paper reaches the context (gpt-4.1 judge). The dashed line is where the two are equal.",
     "points": [
-      {"model": "gpt-4.1", "where": "DBLP-QA, earlier pool", "x": 36, "y": 0.154},
-      {"model": "gpt-4.1", "where": "DBLP-QA, frozen pool", "x": 58, "y": 0.577},
+      {"model": "gpt-4.1", "where": "DBLP-QA, earlier pool", "x": 36, "y": 0.167},
+      {"model": "gpt-4.1", "where": "DBLP-QA, frozen pool", "x": 58, "y": 0.625},
       {"model": "gpt-4.1", "where": "DBLP-QA-Fresh", "x": 89, "y": 0.821},
-      {"model": "gpt-4.1-mini", "where": "DBLP-QA, earlier pool", "x": 36, "y": 0.136},
-      {"model": "gpt-4.1-mini", "where": "DBLP-QA, frozen pool", "x": 58, "y": 0.542},
+      {"model": "gpt-4.1-mini", "where": "DBLP-QA, earlier pool", "x": 36, "y": 0.111},
+      {"model": "gpt-4.1-mini", "where": "DBLP-QA, frozen pool", "x": 58, "y": 0.556},
       {"model": "gpt-4.1-mini", "where": "DBLP-QA-Fresh", "x": 89, "y": 0.835},
-      {"model": "Mistral-7B", "where": "DBLP-QA, earlier pool", "x": 38, "y": 0.396},
-      {"model": "Mistral-7B", "where": "DBLP-QA, frozen pool", "x": 58, "y": 0.583},
+      {"model": "Mistral-7B", "where": "DBLP-QA, earlier pool", "x": 38, "y": 0.455},
+      {"model": "Mistral-7B", "where": "DBLP-QA, frozen pool", "x": 58, "y": 0.614},
       {"model": "Mistral-7B", "where": "DBLP-QA-Fresh", "x": 89, "y": 0.805}
     ]
   },
+  "dewey_title": "How Dewey answers what papers say",
   "dewey": [
-    "Dewey answers questions about dblp's records (people, venues, counts, co-authors) by calling tools over the full dump, so its answers come from data, not from memory. Questions about what a paper says are the harder case this study measures.",
-    "Dewey's paper search is the study's dblp-search: a hybrid search over every dblp title. On its own it finds the right paper within its top 50 for 32% of DBLP-QA questions and 73% of the fresh ones; adding abstract search (OpenAlex) and BM25 re-ranking over abstracts lifts the top five to 58% and 89%.",
-    "The study's evaluation harness lives in the same codebase as Dewey and runs on the same machine, so the next version of Dewey can be measured the same way."
+    "Dewey's abstract search runs four searches at once: its own index of 5.49 million abstracts (BM25, about 75 milliseconds), its hybrid search over every dblp title, and OpenAlex's keyword and semantic search. It keeps the papers dblp has, ranks them, and fuses that ranking with the index's own; a paper newer than the index keeps its live rank, so recency is never a penalty.",
+    "The five best abstracts go to gpt-4.1, which answers from the one that addresses the question most directly and cites every sentence as [1] to [5]. On the held-out questions Dewey searched every time, gave the right abstract to its writer on 85 of 100 and cited its sources in 98 answers, never citing an abstract it was not shown.",
+    "The study's evaluation harness lives in the same codebase as Dewey and runs on the same machine, so every later version of Dewey is measured the same way."
   ],
   "links": [
     {"label": "RAGScholar & DBLP-QA (the original paper)", "href": "https://ceur-ws.org/Vol-4187/short-06.pdf"},
-    {"label": "DBLP-QA dataset (the original 50 questions)", "href": "https://seafile.rlp.net/f/6581519cdd1d4782bccc/"}
+    {"label": "DBLP-QA dataset (the original 50 questions)", "href": "https://seafile.rlp.net/f/6581519cdd1d4782bccc/"},
+    {"label": "OpenAlex snapshot (the source of Dewey's index)", "href": "https://help.openalex.org/access/snapshot/"}
   ]
 }

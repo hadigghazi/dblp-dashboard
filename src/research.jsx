@@ -84,20 +84,25 @@ export function PageResearch({ ask }) {
                    label="Share of the right abstract's gain recovered by RAG, against how often the right paper is retrieved, per model" />
           </Card>
 
-          <Card title="Scores" sub={d.results.caption}>
-            <div className="tablewrap">
-              <table className="data">
-                <thead><tr>{d.results.columns.map((c, i) => <th key={c} style={i > 1 ? { textAlign: "right" } : null}>{c}</th>)}</tr></thead>
-                <tbody>
-                  {d.results.rows.map((r) => (
-                    <tr key={r[0] + r[1]}>{r.map((v, i) => <td key={i} className={i > 1 ? "num" : undefined}>{v}</td>)}</tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Card>
+          {/* one table or several (site.json "tables"); older pages have a single "results" table */}
+          {(d.tables || [d.results]).filter(Boolean).map((t) => (
+            <Card key={t.title || "Scores"} title={t.title || "Scores"} sub={t.caption} span2={t.wide}>
+              <div className="tablewrap">
+                <table className="data">
+                  <thead><tr>{t.columns.map((c, i) => (
+                    <th key={c} style={i >= (t.text_columns ?? 2) ? { textAlign: "right" } : null}>{c}</th>))}</tr></thead>
+                  <tbody>
+                    {t.rows.map((r) => (
+                      <tr key={r.join("|")}>{r.map((v, i) => (
+                        <td key={i} className={i >= (t.text_columns ?? 2) ? "num" : undefined}>{v}</td>))}</tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          ))}
 
-          <Card span2 title="What it means for Dewey">
+          <Card span2 title={d.dewey_title || "What it means for Dewey"}>
             {d.dewey.map((t, i) => <p key={i} className="dlsum">{t}</p>)}
             {ask ? <button type="button" className="btn ghost" onClick={ask}>Ask Dewey</button> : null}
           </Card>
@@ -106,8 +111,14 @@ export function PageResearch({ ask }) {
             <ul className="srclist">
               <li><a href={BASE + d.paper.pdf} download>The paper</a> (PDF{d.paper.pages ? `, ${d.paper.pages} pages` : ""})</li>
               <li><a href={BASE + d.paper.bib} download>BibTeX entry</a></li>
-              <li><a href={`${BASE}dblpqa-fresh.csv`} download>DBLP-QA-Fresh</a>: the 100 questions about 2025–2026
-                papers, with their reference answers and dblp keys (CSV), built automatically for the study</li>
+              <li><a href={`${BASE}dblpqa-test.csv`} download>DBLP-QA-Test</a>: the 100 held-out questions about
+                2025–2026 papers on which Dewey is compared with RAGScholar, with reference answers and dblp keys (CSV)</li>
+              <li><a href={`${BASE}dblpqa-fresh.csv`} download>DBLP-QA-Fresh</a> and{" "}
+                <a href={`${BASE}dblpqa-fresh2.csv`} download>DBLP-QA-Fresh-2</a>: the two development sets, built the
+                same way</li>
+              <li><a href={`${BASE}dblpqa-runs.tar.gz`} download>Every run</a>: the questions (including the 70 record
+                questions and their answers computed from the dump), the frozen candidate pools and Dewey's index
+                pools, and every answer, grade and summary behind the numbers in the paper</li>
               {d.links.map((l) => <li key={l.href}><a href={l.href} target="_blank" rel="noopener">{l.label}</a></li>)}
             </ul>
           </Card>

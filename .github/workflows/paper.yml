@@ -51,8 +51,20 @@ jobs:
           ssh -i ~/.ssh/deploy_key "$VM" bash -s <<'EOF'
           set -e
           cd dblp-dashboard/models/downloads/research
-          # the DBLP-QA-Fresh questions live on the VM, where they were built
+          # the question sets live on the VM, where they were built (Fresh, Fresh-2, and the held-out Test)
           if [ -f ../../dblpqa-fresh/fresh.csv ]; then cp ../../dblpqa-fresh/fresh.csv dblpqa.incoming/dblpqa-fresh.csv; fi
+          if [ -f ../../dblpqa-fresh2/fresh.csv ]; then cp ../../dblpqa-fresh2/fresh.csv dblpqa.incoming/dblpqa-fresh2.csv; fi
+          if [ -f ../../dblpqa-fresh3/fresh.csv ]; then cp ../../dblpqa-fresh3/fresh.csv dblpqa.incoming/dblpqa-test.csv; fi
+          # everything needed to check a number: the questions (every set, and the record questions with
+          # their SQL-computed answers), the frozen candidate pools and Dewey's index pools, and every run's
+          # answers, grades and summary (development runs included; the paper names which runs it reports)
+          (cd ../.. && tar czf downloads/research/dblpqa.incoming/dblpqa-runs.tar.gz \
+             --exclude='*/embeddings.json' --exclude='*.tmp' \
+             $(ls -d dblpqa*/runs dblpqa*/pools.json dblpqa*/fresh.csv dblpqa*/retrieval.json \
+                     dblpqa*/dewey-index-pools.json dblpqa*/dewey-retrieval*.json dblpqa*/crossjudge*.json \
+                     dblpqa/abstracts.json dblpqa/bearing-report.json dblpqa/replication.json \
+                     dblpqa-structured/questions.json dblpqa-structured/comparison.json \
+                     2>/dev/null)) || echo "no run archive this time"
           # swap the whole folder at once, so the page never sees a new PDF with an old paper.json
           rm -rf dblpqa.previous
           if [ -d dblpqa ]; then mv dblpqa dblpqa.previous; fi
