@@ -111,11 +111,14 @@ export function PageResearch({ ask }) {
             <ul className="srclist">
               <li><a href={BASE + d.paper.pdf} download>The paper</a> (PDF{d.paper.pages ? `, ${d.paper.pages} pages` : ""})</li>
               <li><a href={BASE + d.paper.bib} download>BibTeX entry</a></li>
-              <li><a href={`${BASE}dblpqa-fresh.csv`} download>DBLP-QA-Fresh</a>: the 100 questions about 2025–2026
-                papers, with their reference answers and dblp keys (CSV), built automatically for the study</li>
+              <li><a href={`${BASE}dblpqa-test.csv`} download>DBLP-QA-Test</a>: the 100 held-out questions about
+                2025–2026 papers on which Dewey is compared with RAGScholar, with reference answers and dblp keys (CSV)</li>
+              <li><a href={`${BASE}dblpqa-fresh.csv`} download>DBLP-QA-Fresh</a> and{" "}
+                <a href={`${BASE}dblpqa-fresh2.csv`} download>DBLP-QA-Fresh-2</a>: the two development sets, built the
+                same way</li>
               <li><a href={`${BASE}dblpqa-runs.tar.gz`} download>Every run</a>: the questions (including the 70 record
-                questions and their answers computed from the dump), the frozen candidate pools, and every answer,
-                grade and summary behind the numbers in the paper</li>
+                questions and their answers computed from the dump), the frozen candidate pools and Dewey's index
+                pools, and every answer, grade and summary behind the numbers in the paper</li>
               {d.links.map((l) => <li key={l.href}><a href={l.href} target="_blank" rel="noopener">{l.label}</a></li>)}
             </ul>
           </Card>
