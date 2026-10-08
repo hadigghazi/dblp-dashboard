@@ -199,7 +199,7 @@ export function Heatmap({ rowLabels, colLabels, matrix }) {
               {matrix[ri].map((val, ci) => (
                 <td key={ci} className="num" title={`${r} · ${colLabels[ci]}: ${val == null ? "n/a" : (val * 100).toFixed(1) + "%"}`}
                     style={{ background: `rgba(${rgb}, ${Math.max(0.05, val || 0)})`, color: val > 0.55 ? "#fff" : "var(--ink-2)" }}>
-                  {val == null ? "—" : Math.round(val * 100) + "%"}
+                  {val == null ? "–" : Math.round(val * 100) + "%"}
                 </td>
               ))}
             </tr>

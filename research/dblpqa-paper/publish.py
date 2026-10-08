@@ -28,7 +28,7 @@ def plain(tex):
     tex = re.sub(r"(?<!\\)%.*", "", tex)                      # comments - but not \%, a percent sign
     tex = re.sub(r"~?\\cite\{[^}]*\}", "", tex)
     tex = re.sub(r"\\(?:textbf|textit|emph|texttt)\{([^{}]*)\}", r"\1", tex)
-    tex = tex.replace(r"\%", "%").replace(r"\&", "&").replace("---", "—").replace("--", "–")
+    tex = tex.replace(r"\%", "%").replace(r"\&", "&").replace("---", ", ").replace("--", "–")
     tex = tex.replace("~", " ").replace(r"\,", " ").replace(r"\ldots{}", "…").replace(r"\ldots", "…")
     tex = re.sub(r"\$([^$]*)\$", r"\1", tex)                   # inline maths: $+0.30$ -> +0.30
     tex = tex.replace("``", "“").replace("''", "”")

@@ -127,7 +127,7 @@ export function lineOption(p, { labels, series, log = false, fmtY }) {
   return {
     ...base(p, { legend: multi, legendNames: series.map((s) => s.name) }),
     tooltip: { ...base(p).tooltip, trigger: "axis", axisPointer: { type: "line", lineStyle: { color: p.rule } },
-               valueFormatter: (v) => (v == null ? "—" : fmtY ? fmtY(v) : v) },
+               valueFormatter: (v) => (v == null ? "–" : fmtY ? fmtY(v) : v) },
     xAxis: categoryAxis(p, labels),
     yAxis: valueAxis(p, { log, formatter: fmtY }),
     series: clean.map(lineSeries),
@@ -140,7 +140,7 @@ export function barOption(p, { labels, series, stacked = false, fmtY }) {
   return {
     ...base(p, { legend: multi, legendNames: series.map((s) => s.name) }),
     tooltip: { ...base(p).tooltip, trigger: "axis", axisPointer: { type: "shadow", shadowStyle: { color: "rgba(128,128,128,.08)" } },
-               valueFormatter: (v) => (v == null ? "—" : fmtY ? fmtY(v) : v) },
+               valueFormatter: (v) => (v == null ? "–" : fmtY ? fmtY(v) : v) },
     xAxis: categoryAxis(p, labels, { bars: true }),
     yAxis: valueAxis(p, { formatter: fmtY }),
     series: series.map((s) => barSeries(s, { stack: stacked ? "s" : null })),
@@ -155,7 +155,7 @@ export function hbarOption(p, { labels, series, stacked = false, fmtX, labelWidt
     ...base(p, { legend: multi, legendNames: series.map((s) => s.name) }),
     grid: { left: 8, right: 44, top: multi ? 38 : 8, bottom: 6, containLabel: true },
     tooltip: { ...base(p).tooltip, trigger: "axis", axisPointer: { type: "shadow", shadowStyle: { color: "rgba(128,128,128,.08)" } },
-               valueFormatter: (v) => (v == null ? "—" : fmtX ? fmtX(v) : v) },
+               valueFormatter: (v) => (v == null ? "–" : fmtX ? fmtX(v) : v) },
     xAxis: valueAxis(p, { formatter: fmtX, max }),
     yAxis: categoryAxis(p, rev(labels), { bars: true, axisLabel: { color: p.ink2, fontSize: 11.5, width: labelWidth, overflow: "truncate" } }),
     series: series.map((s) => barSeries({ ...s, data: rev(s.data) }, { horizontal: true, stack: stacked ? "s" : null, maxWidth: 18 })),

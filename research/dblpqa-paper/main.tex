@@ -999,9 +999,10 @@ gpt-4.1-mini reading the pipeline pool, which scores 0.06 higher on \test{} (wit
 over the three newer sets, with the advantage of the source's original abstract. Beyond that task, Dewey
 answers what a retrieve-then-read design cannot: 65 of 70 record questions against 20, follow-ups,
 rankings and people who share a name; it cites the abstracts it uses (98 of 100 \test{} answers, none
-citing an abstract it was not shown) and shows every lookup; and the question sets, frozen pools and every
-answer and grade are published with the paper, so each number here can be recomputed, which a closed
-index graded by hand does not allow.
+citing an abstract it was not shown) and shows every lookup; and its code, the index builder and the
+evaluation harness are open source, with the question sets, frozen pools and every answer and grade
+published beside them, so each number here can be recomputed, which a closed index graded by hand does
+not allow.
 
 \textbf{Recommendations for scholarly RAG benchmarks.} Report closed-book and oracle conditions next to
 retrieval, so that prior knowledge and the generation ceiling are visible. Evaluate retrieval in an open
@@ -1043,8 +1044,10 @@ twice what its models know without retrieval, matches RAGScholar's best configur
 it when that configuration reads the same open index; on questions about dblp's records it answers 65 of 70 where a retrieve-then-read pipeline
 answers 20. Benchmarks for scholarly assistants should therefore report closed-book and oracle conditions,
 measure retrieval in the open, grade with more than one reference and more than one judge, and ask about
-records as well as content. The question sets and every run, answer and grade are published with this
-paper, so every number in it can be recomputed.
+records as well as content. Dewey, its index builder and the evaluation harness are open
+source,\footnote{\url{https://github.com/hadigghazi/dblp-dashboard}; the question sets and every run,
+answer and grade are on the paper's page at \url{https://dblp.hadighazi.com}.} so every number in this
+paper can be recomputed.
 
 \section*{Acknowledgment}
 

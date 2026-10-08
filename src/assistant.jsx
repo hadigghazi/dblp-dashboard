@@ -14,7 +14,7 @@ const DEWEY = {
   name: "Dewey",
   // named after the decimal classification: the one who knows where everything is filed
   role: "knows where every paper is filed",
-  greeting: "Ask me anything about the papers, people and venues in dblp — who publishes the most, "
+  greeting: "Ask me anything about the papers, people and venues in dblp: who publishes the most, "
           + "how a topic grew, where a paper appeared, or what has been written on a subject. "
           + "I look up the real records for every answer.",
   working: "looking that up…",
@@ -332,7 +332,7 @@ function ToolCall({ event, go }) {
                            columns={columns.map((c) => ({
                              key: c, label: c.replace(/_/g, " "),
                              num: typeof rows[0][c] === "number",
-                             render: (r) => (typeof r[c] === "number" ? fmt.comma(r[c]) : String(r[c] ?? "—")),
+                             render: (r) => (typeof r[c] === "number" ? fmt.comma(r[c]) : String(r[c] ?? "–")),
                            }))} />
           ) : null}
           {event.note ? <div className="toolnote">{event.note}</div> : null}

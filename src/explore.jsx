@@ -55,7 +55,7 @@ export function PageAuthors({ params, go }) {
               { key: "name", label: "Name", render: (r) => <span className="strong">{r.name}</span> },
               { key: "page_kind", label: "Page", render: (r) => <KindBadge kind={r.page_kind} /> },
               { key: "papers", label: "Papers", num: true, render: (r) => fmt.comma(r.papers) },
-              { key: "first_year", label: "Active", render: (r) => (r.first_year ? `${r.first_year}–${r.last_year}` : "—") },
+              { key: "first_year", label: "Active", render: (r) => (r.first_year ? `${r.first_year}–${r.last_year}` : "–") },
               { key: "affiliation", label: "Affiliation", render: (r) => r.affiliation || <span className="muted">none recorded</span> },
               { key: "namesakes", label: "Pages sharing the name", num: true, render: (r) => fmt.comma(r.namesakes) },
             ]} />
@@ -140,7 +140,7 @@ function EgoNetwork({ authorKey, go }) {
       if (q.dataType === "edge") {
         const a = nodes.find((n) => n.id === q.data.source), b = nodes.find((n) => n.id === q.data.target);
         return q.data.lineStyle?.type === "dashed" ? `<b>${a?.name}</b> is predicted to publish with <b>${b?.name}</b>`
-          : `<b>${a?.name}</b> — <b>${b?.name}</b><br>${q.data.value} paper${q.data.value === 1 ? "" : "s"} together`;
+          : `<b>${a?.name}</b> and <b>${b?.name}</b><br>${q.data.value} paper${q.data.value === 1 ? "" : "s"} together`;
       }
       const n = q.data;
       if (n.id === "ego") return `<b>${n.name}</b><br>${d.degree.toLocaleString()} identified co-authors`;
@@ -151,7 +151,7 @@ function EgoNetwork({ authorKey, go }) {
   }, [p, d, pred.data, pred.loading]);
   return (
     <Card span2 state={ego} height={420} title="Collaboration groups"
-          sub={d ? `${d.degree.toLocaleString()} identified co-authors; the ${d.shown} strongest shown. An edge joins two co-authors who also publish together; the colours are ${built?.groups ?? 0} communit${built?.groups === 1 ? "y" : "ies"} found among them (label propagation), local clustering ${d.clustering ?? "—"}. Drag to rearrange, click to open.`
+          sub={d ? `${d.degree.toLocaleString()} identified co-authors; the ${d.shown} strongest shown. An edge joins two co-authors who also publish together; the colours are ${built?.groups ?? 0} communit${built?.groups === 1 ? "y" : "ies"} found among them (label propagation), local clustering ${d.clustering ?? "–"}. Drag to rearrange, click to open.`
                  : "The strongest co-authors, and which of them also work with each other."}>
       {() => (d.coauthors.length
         ? <Chart option={built?.option} height={420} label="Ego network" onClick={(e) => { if (e.dataType === "node" && e.data.key) go("authors", { key: e.data.key }); }} />
@@ -233,12 +233,12 @@ function AuthorDetail({ authorKey, go, back }) {
       ) : null}
       <KpiStrip items={[
         { n: fmt.comma(stats.papers), l: "publications (all types)" },
-        { n: stats.first_year ? `${stats.first_year}–${stats.last_year}` : "—", l: "years with publications" },
+        { n: stats.first_year ? `${stats.first_year}–${stats.last_year}` : "–", l: "years with publications" },
         { n: fmt.comma(stats.coauthors),
           l: stats.coauthor_names_on_bins
             ? `identified co-authors (papers with 2–50 authors); ${fmt.comma(stats.coauthor_names_on_bins)} further co-author names sit on a disambiguation bin`
             : "identified co-authors (papers with 2–50 authors)" },
-        { n: stats.on_3plus ? `${Math.round((100 * stats.first_author) / stats.on_3plus)}% / ${Math.round((100 * stats.last_author) / stats.on_3plus)}%` : "—", l: "first / last author on 3+ author papers" },
+        { n: stats.on_3plus ? `${Math.round((100 * stats.first_author) / stats.on_3plus)}% / ${Math.round((100 * stats.last_author) / stats.on_3plus)}%` : "–", l: "first / last author on 3+ author papers" },
         { n: `${stats.pct_with_orcid ?? 0}%`, l: "of their author slots carry an ORCID" },
         { n: fmt.comma(data.namesake_count), l: `author pages named “${person.base_name}”` },
       ]} />
@@ -299,7 +299,7 @@ function PaperList({ rows, go, showPosition }) {
           <button type="button" className="paperrow" onClick={() => go("papers", { key: r.key })}>
             <span className="ptitle">{r.title}</span>
             <span className="pmeta">
-              <PubKind kind={r.kind} /> {r.year ?? "—"} · {r.venue || <span className="muted">no venue</span>}
+              <PubKind kind={r.kind} /> {r.year ?? "–"} · {r.venue || <span className="muted">no venue</span>}
               {r.n_authors ? ` · ${r.n_authors} author${r.n_authors === 1 ? "" : "s"}` : ""}
               {showPosition && r.position ? ` · position ${r.position}` : ""}
               {r.n_unidentified ? <span className="flag bad">{r.n_unidentified} unidentified</span> : null}

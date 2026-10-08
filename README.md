@@ -131,7 +131,7 @@ from those scores, the series' popularity and recency, and how many authors have
 |---|---|---|
 | last complete year − 2 (2023) | papers ≤ 2022 | training the ranker |
 | last complete year (2025) | papers ≤ 2024 | every reported number |
-| — | everything in the dump | serving (`stats.parquet` next to the model) |
+| – | everything in the dump | serving (`stats.parquet` next to the model) |
 
 No paper contributes to the statistics it is scored by. The class set at a snapshot is the series
 with ≥ 100 papers and a paper in the last three years; the share of test papers whose venue is in

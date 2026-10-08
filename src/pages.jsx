@@ -7,7 +7,7 @@ import {
 } from "./components.jsx";
 
 const cap = (s) => s[0].toUpperCase() + s.slice(1);
-const pct = (v) => (v == null ? "—" : `${v}%`);
+const pct = (v) => (v == null ? "–" : `${v}%`);
 
 /** Last complete year of the dump (from the server), used as the default end of time ranges. */
 function useLastYear(status) {
@@ -318,7 +318,7 @@ function DatasetDownload({ go }) {
       <>
         <p className="dlsum">
           {fmt.comma(s.authors_with_a_coauthor)} authors and {fmt.comma(s.coauthorships)} co-authorships from the
-          dblp snapshot of {m.dump?.latest_mdate} — every record type, not a sample. {m.format}.
+          dblp snapshot of {m.dump?.latest_mdate}: every record type, not a sample. {m.format}.
           License: {m.license}.
         </p>
         <div className="tablewrap">
@@ -387,7 +387,7 @@ export function PageNetwork({ go }) {
       <KpiStrip loading={!d} items={d && [
         { n: `${clean?.giant_pct}%`, l: "of connected authors sit in one giant component" },
         { n: `${clean?.mean_degree}`, l: `mean distinct co-authors (max ${clean?.max_degree?.toLocaleString()})` },
-        { n: `${d.distance_summary?.mean ?? "—"}`, l: `average steps between two authors; 90% within ${d.distance_summary?.p90 ?? "—"}` },
+        { n: `${d.distance_summary?.mean ?? "–"}`, l: `average steps between two authors; 90% within ${d.distance_summary?.p90 ?? "–"}` },
         { n: `${s["average local clustering"]}`, l: `average local clustering (random graph: ${s["clustering expected in a random graph"]})` },
         { n: `k = ${s["max k-core"]}`, l: `densest core: ${s["authors in the max k-core"]} authors` },
         { n: `${c.communities?.toLocaleString()}`, l: `Leiden communities, modularity ${c.modularity}` },
@@ -786,7 +786,7 @@ export function PageTails() {
         { n: fmt.comma(s.max), l: "maximum" },
         { n: `${s.gini}`, l: "Gini coefficient" },
         { n: `${s.top1_share}%`, l: "of the total held by the top 1%" },
-        { n: s.alpha_live ? `α ≈ ${s.alpha_live}` : "—", l: fit?.xmin ? `power-law exponent above x = ${fmt.comma(fit.xmin)} (all data)` : "power-law fit unavailable" },
+        { n: s.alpha_live ? `α ≈ ${s.alpha_live}` : "–", l: fit?.xmin ? `power-law exponent above x = ${fmt.comma(fit.xmin)} (all data)` : "power-law fit unavailable" },
       ]} />
       <div className="grid">
         <Card span2 state={t} height={380} title={`Share with at least x: ${(d?.label || "").toLowerCase()}`}

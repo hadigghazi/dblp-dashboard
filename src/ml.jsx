@@ -5,8 +5,8 @@ import {
   KpiStrip, PageHead, Card, Filters, FilterLabel, SearchBox, SortableTable, KindBadge, Callout, EmptyNote, Spinner,
 } from "./components.jsx";
 
-const pct = (v, d = 1) => (v == null ? "—" : `${(100 * v).toFixed(d)}%`);
-const num = (v, d = 3) => (v == null ? "—" : Number(v).toFixed(d));
+const pct = (v, d = 1) => (v == null ? "–" : `${(100 * v).toFixed(d)}%`);
+const num = (v, d = 3) => (v == null ? "–" : Number(v).toFixed(d));
 
 /** The model's measured accuracy, shown wherever its output is - a suggestion never travels alone. */
 export function ModelCard({ card, compact }) {
@@ -75,7 +75,7 @@ function ClusterRow({ c, go }) {
       <div className="clusterhead">
         <span className="flag">uncertain</span>
         <span>closest: <button type="button" className="linkish" onClick={() => go("authors", { key: u.key })}>{u.name}</button></span>
-        <span className="muted">score {num(u.score, 2)}, margin {num(u.margin, 2)} — not enough to name</span>
+        <span className="muted">score {num(u.score, 2)}, margin {num(u.margin, 2)}, not enough to name</span>
       </div>
     );
   } else {
@@ -88,7 +88,7 @@ function ClusterRow({ c, go }) {
         {c.papers.map((p) => (
           <li key={p.key}><button type="button" className="paperrow" onClick={() => go("papers", { key: p.key })}>
             <span className="ptitle">{p.title}</span>
-            <span className="pmeta">{p.year ?? "—"} · {p.venue || <span className="muted">no venue</span>}</span>
+            <span className="pmeta">{p.year ?? "–"} · {p.venue || <span className="muted">no venue</span>}</span>
           </button></li>
         ))}
       </ul>
@@ -116,7 +116,7 @@ export function BinSplit({ authorKey, go }) {
             { n: fmt.comma(data.summary.look_new), l: "groups that match no page: people with no entry yet" },
           ]} />
           {data.summary.pages_named_by_several_groups?.length ? (
-            <Callout>{data.summary.pages_named_by_several_groups.length} numbered page(s) are named by more than one group that couldn’t be merged confidently — either one person split in two, or a page that itself mixes people. Worth a human look.</Callout>
+            <Callout>{data.summary.pages_named_by_several_groups.length} numbered page(s) are named by more than one group that couldn’t be merged confidently: either one person split in two, or a page that itself mixes people. Worth a human look.</Callout>
           ) : null}
           <ol className="clusterlist">
             {data.clusters.map((c, i) => <ClusterRow key={i} c={c} go={go} />)}
@@ -160,7 +160,7 @@ export function LinksModelCard({ card, compact }) {
       <div className="modelnote">
         <span className="srctag job">Model · trained {fmtDate(card.trained_at)}</span>
         {" "}Tested on the {t.snapshot} snapshot, predicting {t.horizon} years ahead for authors it never saw: the right person is in the top 10 for{" "}
-        {pct(r["hits@10"], 0)} of authors who gained a new distance-2 co-author (best heuristic, {HEURISTIC_NAMES[bestHits?.h] || "—"}: {pct(bestHits?.v, 0)}).
+        {pct(r["hits@10"], 0)} of authors who gained a new distance-2 co-author (best heuristic, {HEURISTIC_NAMES[bestHits?.h] || "–"}: {pct(bestHits?.v, 0)}).
       </div>
     );
   }
@@ -171,9 +171,9 @@ export function LinksModelCard({ card, compact }) {
   return (
     <>
       <KpiStrip items={[
-        { n: pct(r["hits@10"], 0), l: `authors with the right new co-author in their top 10 (best heuristic, ${HEURISTIC_NAMES[bestHits?.h] || "—"}: ${pct(bestHits?.v, 0)})` },
-        { n: num(r.mrr, 2), l: `mean reciprocal rank of the first correct suggestion (${HEURISTIC_NAMES[bestMrr?.h] || "—"}: ${num(bestMrr?.v, 2)})` },
-        { n: num(p.roc_auc, 3), l: `ROC-AUC over all candidate pairs (${HEURISTIC_NAMES[bestAuc?.h] || "—"}: ${num(bestAuc?.v, 3)})` },
+        { n: pct(r["hits@10"], 0), l: `authors with the right new co-author in their top 10 (best heuristic, ${HEURISTIC_NAMES[bestHits?.h] || "–"}: ${pct(bestHits?.v, 0)})` },
+        { n: num(r.mrr, 2), l: `mean reciprocal rank of the first correct suggestion (${HEURISTIC_NAMES[bestMrr?.h] || "–"}: ${num(bestMrr?.v, 2)})` },
+        { n: num(p.roc_auc, 3), l: `ROC-AUC over all candidate pairs (${HEURISTIC_NAMES[bestAuc?.h] || "–"}: ${num(bestAuc?.v, 3)})` },
         { n: pct(origin["distance 2"]?.share, 0), l: "of new co-authors were a co-author of a co-author at the snapshot: the ceiling for any local method" },
       ]} />
       <div className="grid">
@@ -249,7 +249,7 @@ export function LinkSuggestions({ authorKey, go }) {
                     </span>
                   ))}
                   {s.shared_venues.length ? <span>· shared venues: {s.shared_venues.map((v) => v.name).join(", ")}</span> : null}
-                  <span>· {fmt.comma(s.papers || 0)} papers, last {s.last_year ?? "—"}</span>
+                  <span>· {fmt.comma(s.papers || 0)} papers, last {s.last_year ?? "–"}</span>
                 </div>
               </li>
             ))}
@@ -274,7 +274,7 @@ export function PageCollaborators({ params, go }) {
       <PageHead eyebrow="Machine learning · Link prediction" title="Who will they write with next?">
         New collaborations mostly close triangles: a co-author of a co-author becomes a co-author. A model trained on the
         co-authorship graph as it stood in one year, and on who actually collaborated in the two years after, ranks an author’s
-        distance-2 neighbours — and says how often a score like that has come true.
+        distance-2 neighbours, and says how often a score like that has come true.
       </PageHead>
       <Card state={status} title="How good is it" sub="Measured on a later snapshot than the one it was trained on, for authors it never saw, next to the classic heuristics of the link-prediction literature.">
         {(card) => <LinksModelCard card={card} />}
@@ -287,7 +287,7 @@ export function PageCollaborators({ params, go }) {
             <SortableTable rows={search.data.filter((r) => r.page_kind !== "disambiguation")} defaultSort={{ key: "papers", dir: -1 }} onRowClick={(r) => go("collaborators", { q: qd, key: r.key })} columns={[
               { key: "name", label: "Name", render: (r) => <><span className="strong">{r.name}</span> {r.page_kind !== "regular" ? <KindBadge kind={r.page_kind} /> : null}</> },
               { key: "papers", label: "Papers", num: true, render: (r) => fmt.comma(r.papers) },
-              { key: "first_year", label: "Active", render: (r) => (r.first_year ? `${r.first_year}–${r.last_year}` : "—") },
+              { key: "first_year", label: "Active", render: (r) => (r.first_year ? `${r.first_year}–${r.last_year}` : "–") },
             ]} />
           ) : <EmptyNote>No author page matches “{qd}”.</EmptyNote>
         ) : null}
@@ -382,7 +382,7 @@ export function VenuesModelCard({ card, compact }) {
       <div className="modelnote">
         <span className="srctag job">Model · trained {fmtDate(card.trained_at)}</span>
         {" "}On {fmt.comma(t.papers || 0)} papers of {t.year}, scored from earlier years only: the real venue is the first suggestion for {pct(m["acc@1"], 0)},
-        in the top 5 for {pct(m["acc@5"], 0)} (best single signal, {RANKER_NAMES[bestOther?.k] || "—"}: {pct(bestOther?.v, 0)} at rank 1).
+        in the top 5 for {pct(m["acc@5"], 0)} (best single signal, {RANKER_NAMES[bestOther?.k] || "–"}: {pct(bestOther?.v, 0)} at rank 1).
       </div>
     );
   }
@@ -399,7 +399,7 @@ export function VenuesModelCard({ card, compact }) {
   return (
     <>
       <KpiStrip items={[
-        { n: pct(m["acc@1"], 0), l: `papers whose real venue is the first suggestion (${RANKER_NAMES[bestOther?.k] || "—"} alone: ${pct(bestOther?.v, 0)})` },
+        { n: pct(m["acc@1"], 0), l: `papers whose real venue is the first suggestion (${RANKER_NAMES[bestOther?.k] || "–"} alone: ${pct(bestOther?.v, 0)})` },
         { n: pct(m["acc@5"], 0), l: "real venue within the top 5" },
         { n: pct(t.covered?.share, 0), l: `of papers appear in a venue the model knows (${fmt.comma(t.covered?.papers || 0)} of ${fmt.comma(t.papers || 0)}): the ceiling` },
         { n: pct(t.in_candidates?.share_of_covered, 0), l: "of those had the real venue among the candidates the ranker sees" },
@@ -472,7 +472,7 @@ function RelatedPapers({ rows, go }) {
         {rows.map((p) => (
           <li key={p.key}><button type="button" className="paperrow" onClick={() => go("papers", { key: p.key })}>
             <span className="ptitle">{p.title}</span>
-            <span className="pmeta">{p.year ?? "—"} · {p.venue || p.sid}</span>
+            <span className="pmeta">{p.year ?? "–"} · {p.venue || p.sid}</span>
           </button></li>
         ))}
       </ul>
@@ -545,8 +545,8 @@ export function PageWhereToPublish({ params, go }) {
   return (
     <>
       <PageHead eyebrow="Machine learning · Venue recommendation" title="Where would this paper be published?">
-        Type a title. Two readers of the title — a Naive Bayes model and a TF-IDF centroid over every journal and conference
-        series — propose venues, the authors’ own publishing history proposes more, and a model trained on one year of
+        Type a title. Two readers of the title (a Naive Bayes model and a TF-IDF centroid over every journal and conference
+        series) propose venues, the authors’ own publishing history proposes more, and a model trained on one year of
         papers and tested on a later one ranks them. The closest titles in dblp come with it.
       </PageHead>
       <Card state={status} title="How good is it" sub="Measured on papers of a year the statistics never saw, next to each signal used on its own.">
@@ -570,7 +570,7 @@ export function PageWhereToPublish({ params, go }) {
                            onRowClick={(r) => { if (!authors.some((a) => a.key === r.key)) setAuthors([...authors, { key: r.key, name: r.name }]); setAuthorQ(""); }} columns={[
               { key: "name", label: "Name", render: (r) => <><span className="strong">{r.name}</span> {r.page_kind !== "regular" ? <KindBadge kind={r.page_kind} /> : null}</> },
               { key: "papers", label: "Papers", num: true, render: (r) => fmt.comma(r.papers) },
-              { key: "first_year", label: "Active", render: (r) => (r.first_year ? `${r.first_year}–${r.last_year}` : "—") },
+              { key: "first_year", label: "Active", render: (r) => (r.first_year ? `${r.first_year}–${r.last_year}` : "–") },
             ]} />
           ) : <EmptyNote>No author page matches “{authorQd}”.</EmptyNote>
         ) : null}
@@ -592,7 +592,7 @@ export function PageDisambiguation({ params, go }) {
       <PageHead eyebrow="Machine learning · Author disambiguation" title="Who is this “Wei Wang”?">
         dblp records authors as name strings. When editors haven’t decided which person a paper belongs to, it sits in a
         disambiguation bin with everyone else of that name. A model trained on the 147,223 pages editors <em>have</em> verified proposes
-        how to split a bin — and says how sure it is.
+        how to split a bin, and says how sure it is.
       </PageHead>
       <Card state={status} title="How good is it" sub="Every number is measured on name blocks the model never saw in training, next to the rule a person would write by hand: “same person if they share a co-author”.">
         {(card) => <ModelCard card={card} />}
