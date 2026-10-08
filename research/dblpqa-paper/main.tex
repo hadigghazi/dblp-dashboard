@@ -16,6 +16,10 @@
 \usepackage{pgfplots}
 \pgfplotsset{compat=1.18}
 \usetikzlibrary{positioning,arrows.meta}
+\usepackage{etoolbox}
+%% IEEEtran sets an em dash after "Abstract" and "Index Terms"; this paper uses a colon instead
+\patchcmd{\abstract}{---}{:\ }{}{\PackageWarning{main}{abstract heading not patched}}
+\patchcmd{\IEEEkeywords}{---}{:\ }{}{\PackageWarning{main}{keywords heading not patched}}
 
 %% categorical slots 1-4 of the validated reference palette (light surface), one per answering system;
 %% markers differ too, so the figure survives grey-scale printing and colour-vision deficiencies
