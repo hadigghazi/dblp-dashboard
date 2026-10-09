@@ -55,8 +55,8 @@ RAGScholar answers questions about computer-science papers from abstracts retrie
 Scholar index no longer available, and its benchmark, DBLP-QA, was graded by hand. We present Dewey, an
 open tool-calling assistant over the dblp dump, with a BM25 index of 5.49 million abstracts built from
 OpenAlex's open snapshot, and evaluate it with controlled LLM judges from two model families. Re-running the original study broadly reproduces its
-ordering of context strategies (rank correlations 0.92 and 0.84), and given the source abstract each
-model scores at least 1.96 of 2 under the primary judge, so finding the paper mostly decides the score.
+ordering of context strategies (rank correlations 0.92 and 0.84), and each of the three models given the
+source abstract scores at least 1.98 of 2 on \dq{}, which is not filtered, under the primary judge, so finding the paper mostly decides the score.
 On 100 held-out questions about 2025--2026 papers, Dewey scores 1.74 against 0.89 without retrieval. Over
 three runs it does not differ detectably from our re-implementation of RAGScholar's best configuration on
 an offline pool ($+0.05$, 95\% interval $-0.06$ to $+0.16$) and scores above it on Dewey's index
@@ -314,7 +314,9 @@ names ``Int. J. Medical Informatics''), or if the answer contains dblp's short n
 letters or more) as a word; for authors, every surname; for a top author, every word of the name except
 initials. Numbers inside citation markers such as ``[2]'' are ignored, and a journal does not count when
 the answer places it in a conference, proceedings, workshop or symposium (``Conference on Computer Vision
-and Pattern Recognition'' for the journal \emph{Pattern Recognition}).
+and Pattern Recognition'' for the journal \emph{Pattern Recognition}). These two rules were added after
+the first runs, against three false positives found in the baselines' answers, and every system's answers
+were scored again with them.
 
 \subsection{Systems and conditions}
 
@@ -425,7 +427,8 @@ source-rank counts (32, 7, 2, 1 and 5 outside the top five) sum to 47 of 50 ques
 ratings (e.g.\ 1.63, 1.49) are not means of 50 integer ratings, so some cells may rest on fewer
 questions.}
 
-All prompts are in the evaluation harness's source code, in the repository.
+The judges' and the question writer's prompts are in Appendix~\ref{app:prompts}; all other prompts are in
+the evaluation harness's source code, in the repository.
 
 %% ===================================================================================================
 \section{Results}
@@ -691,7 +694,7 @@ the gpt-4.1-mini oracle, which is near 2.00 by construction on this set. In the 
 differ detectably from RAGScholar's configuration run on the pipeline pool (1.73; $+0.01$, interval
 $-0.11$ to $+0.13$; 10 questions better, 10 worse), a pool gathered offline from three search services
 that shows the source with the very abstract the question was written from. Since repeated runs of
-one system differ, both systems were run three times. Dewey scores 1.74, 1.77 and 1.73 (mean
+one system differ, Dewey and the configuration, on both sets of candidates, were run three times. Dewey scores 1.74, 1.77 and 1.73 (mean
 1.747) and the configuration 1.73, 1.70 and 1.65 (mean 1.693); paired on each question's mean over the
 three runs, Dewey scores $+0.05$ higher (interval $-0.06$ to $+0.16$; 19 questions better, 10 worse;
 $p=0.14$), still not a detectable difference. On the same index (where the pipeline is still shown the
@@ -1019,8 +1022,10 @@ search indexes, so it does not test the older papers, preprints and other record
 \dq{}'s 50 sources. In a single run its 100 questions reliably detect differences of about 0.15, not the smaller ones between
 Dewey's ablations; three runs detected Dewey's margin of 0.13 over the configuration on its index. Dewey's
 index reflects one OpenAlex snapshot and holds no abstract for about one in ten source papers; the live
-searches depend on OpenAlex's daily allowance. The record questions and their scoring were fixed before
-any system answered them; the SQL-only arm was given one prompt and data dictionary, written by Dewey's
+searches depend on OpenAlex's daily allowance. The record questions and their references were fixed before
+any system answered them, but two scoring rules were tightened after the first runs, against false
+positives in the baselines' answers, and applied to every system (Mistral-7B's pipeline fell from 16 to 14,
+no retrieval from 5 to 4, and Dewey's 65 did not change); the SQL-only arm was given one prompt and data dictionary, written by Dewey's
 developer, so its 37 is one measure of plain SQL access, not the most it allows; Dewey's gold set and
 scenarios were written by its developer.
 
@@ -1033,7 +1038,7 @@ which the ranker should be compared again; and real users' questions.
 \section{Conclusion}
 
 With current models, RAGScholar's task is mostly a retrieval problem: each of the three models given
-the source abstract answers almost perfectly, and the original study's findings about building the context are
+the source abstract answers almost perfectly on \dq{}, which is not filtered, and the original study's findings about building the context are
 reproduced in order but matter less than finding the paper. Dewey, a tool-calling assistant over the
 whole dblp dump, treats that retrieval as one tool among many, rebuilt from open data as an index of 5.49
 million abstracts of dblp's papers. On questions held out from its design it scores 1.74 of 2, nearly
@@ -1064,5 +1069,40 @@ author reviewed and edited the content and takes full responsibility for it.
 \IEEEtriggercmd{\enlargethispage{2\baselineskip}}
 \bibliographystyle{IEEEtran}
 \bibliography{references}
+
+\appendix[Prompts]
+\label{app:prompts}
+
+\textbf{Judge} (gpt-4.1 and Qwen2.5-14B; system prompt, verbatim): \emph{``You grade answers to questions
+about computer-science papers against a ground-truth answer, on the scale used by the DBLP-QA benchmark:
+2 = correct and complete: says what the ground-truth answer says (wording may differ); 1 = correct but
+incomplete: related to and consistent with the ground truth, but misses its key point or is only partly
+right; 0 = incorrect or irrelevant: contradicts the ground truth, describes something else, or does not
+answer. Grade only against the ground truth. Extra correct detail does not lower a score; a wrong claim
+that contradicts the ground truth does. Do not reward fluency.''} It is followed by the benchmark
+authors' worked example for ``What is Compressive Sensing?'' with three graded answers (2, 1 and 0), and
+asks for JSON with the score and a one-sentence reason. The user message is the question, the ground
+truth and the answer to grade.
+
+\textbf{Multi-reference judge} (verbatim): \emph{``You grade answers to questions about computer-science
+research. Each question was written from one paper's abstract and comes with that paper's answer (the
+reference). The question may have other correct answers, so you are also given abstracts of other papers
+on the topic. Grade the answer to the question as it is worded: 2 - correct and complete: it matches the
+reference, or it is an equally valid answer to the question as worded that is supported by one of the
+abstracts or is established knowledge in the field; 1 - partially correct or incomplete; 0 - incorrect,
+unsupported, or it does not answer the question. Do not reward an answer for length or fluency.''} The
+answer to grade precedes the five retrieved abstracts.
+
+\textbf{Question writer} (\fresh{}, \freshb{} and \test{}; verbatim): \emph{``You write questions for a
+benchmark about computer-science research, the way its authors did. You are given one paper's abstract.
+Write one question that the abstract answers, about the paper's main idea, method, finding or motivation,
+and its answer: one to three sentences taken from the abstract. The question must make sense on its own
+- never `this paper', `the authors' or `the proposed method'.''} It is followed by four \dq{} pairs as
+style examples and asks for JSON with the question and the answer.
+
+\textbf{Answering} (closed-book, oracle and RAG): \emph{``You answer questions about computer-science
+research [using the paper abstract(s) you are given]. Answer in one to three sentences.''} The permissive
+variant adds that the abstracts may not be relevant and that, if none addresses the question, the model
+should answer from its own knowledge.
 
 \end{document}
