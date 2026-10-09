@@ -51,21 +51,18 @@ hadigghazi@gmail.com}}
 \maketitle
 
 \begin{abstract}
-RAGScholar answers questions about computer-science papers by reading abstracts retrieved from an index
-built on a Semantic Scholar release that is no longer available, and its benchmark, DBLP-QA, was graded
-by hand. We present Dewey, an open assistant that answers questions about dblp by calling tools over the
-whole dump, including a BM25 index of 5.49 million abstracts of dblp's papers rebuilt from OpenAlex's
-open snapshot, and evaluate it automatically with LLM judges from two model families that must first
-pass controls. Re-running the original study broadly reproduces its ordering of context strategies (rank
-correlations 0.92 and 0.84 for the two models re-run) and shows that generation is near the ceiling:
-given the source abstract, each of the three models scores at least 1.96 of 2 under the primary judge and
-at least 1.80 under the second, so what mostly decides the score is finding the paper. On 100 held-out
-questions about 2025--2026 papers, Dewey scores 1.74 against 0.89 without retrieval. It does not differ
-detectably from our re-implementation of RAGScholar's best configuration (1.73; paired difference
-$+0.01$, 95\% interval $-0.11$ to $+0.13$) or from a fixed pipeline using Dewey's own answering model
-(1.79); that pipeline leads Dewey by 0.09 over all 300 newer questions, two thirds of which were used to
-design Dewey. On 70 questions about dblp's records, such as counts, rankings and people who share a name,
-Dewey answers 65 and a retrieve-then-read pipeline, which has nothing to count or rank with, answers 20.
+RAGScholar answers questions about computer-science papers from abstracts retrieved from a Semantic
+Scholar index no longer available, and its benchmark, DBLP-QA, was graded by hand. We present Dewey, an
+open tool-calling assistant over the dblp dump, with a BM25 index of 5.49 million abstracts built from
+OpenAlex's open snapshot, and evaluate it with controlled LLM judges from two model families. Re-running the original study broadly reproduces its
+ordering of context strategies (rank correlations 0.92 and 0.84), and given the source abstract each
+model scores at least 1.96 of 2 under the primary judge, so finding the paper mostly decides the score.
+On 100 held-out questions about 2025--2026 papers, Dewey scores 1.74 against 0.89 without retrieval. Over
+three runs it does not differ detectably from our re-implementation of RAGScholar's best configuration on
+an offline pool ($+0.05$, 95\% interval $-0.06$ to $+0.16$) and scores above it on Dewey's index
+($+0.13$, $+0.06$ to $+0.20$); a fixed pipeline with Dewey's answering model leads by 0.09 over the 300
+newer questions, two thirds used in Dewey's design. On 70 questions about dblp's records, Dewey
+answers 65, the same models with only SQL access 37, and a retrieve-then-read pipeline 20.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -127,9 +124,10 @@ that what retrieving the wrong papers appears to cost depends on the grading pro
 (RQ1--RQ3, RQ6); (iii)~three sets of 100 questions about papers published after the models' training
 cutoffs, two used during development and one held out until Dewey's design was frozen
 (Section~\ref{sec:benchmarks}); and (iv)~a comparison of Dewey with re-implementations of RAGScholar's
-pipeline on its kind of question, and a demonstration on 70 questions about dblp's records scored
-without a judge (RQ4, RQ5). Everything runs on one CPU virtual machine; the study's 96 runs, development
-and discarded runs included, cost US\$39 in API calls, answers and grading together.
+pipeline on its kind of question, the key ones over three runs, and a demonstration on 70 questions
+about dblp's records scored without a judge, against the same models given only read-only SQL as well as a
+retrieve-then-read pipeline (RQ4, RQ5). Everything runs on one CPU virtual machine; the study's 105 runs, development
+and discarded runs included, and its boundary controls cost US\$43 in API calls, answers and grading together.
 
 %% ===================================================================================================
 \section{Related Work}
@@ -344,7 +342,13 @@ sets of candidates: the frozen pool, and Dewey's index, which plays the part of 
 unpublished (ours asks for one to three sentences), and our model is 4-bit quantised on a CPU. On the record questions, the \emph{RAGScholar-style pipeline} runs the content tool's live searches
 without the index (Dewey's title search and OpenAlex's keyword and semantic search, ranked by BM25 over
 title and abstract) on the question and gives the top five records as context with the fields of RAGScholar's index (dblp key,
-DOI, title, authors, year, abstract).
+DOI, title, authors, year, abstract). The \emph{SQL-only arm} asks what Dewey's typed tools add over plain
+access to the same database: the same model, agent loop and limits as Dewey (gpt-4.1-mini choosing tools,
+gpt-4.1 writing when the rounds run out; three rounds, eight calls, 25 seconds), offered only the
+read-only \emph{run\_sql} tool, with a generated schema of the nine tables the tools serve from (not the
+view over the raw records, which the guarded SQL cannot read), a short data dictionary (pages and
+disambiguation bins, numbered pages, preprints, series) and 10 seconds per query, the limit of the typed
+tools.
 
 \subsection{Models}
 
@@ -396,13 +400,19 @@ complete, 1 correct but incomplete, 0 incorrect or irrelevant), anchored with th
 worked example. A judge is used only if it passes two controls on the whole question set: each reference
 answer must score 2, and another question's reference answer must score 0, both in at least 95\% of
 cases; gpt-4.1 passed 50/50 and 50/50 on \dq{}, 100/100 and 98/100 on \fresh{}, and 100/100 and 100/100 on each
-of \freshb{} and \test{}. Means are reported with
+of \freshb{} and \test{}. A third control, not used to admit a judge, tests the boundary between 1 and
+2, where the judges disagree most: for each reference of two or more sentences whose first sentence has
+at least five words, that first sentence alone is graded as the answer, and should score 1, correct but
+incomplete (Section~\ref{sec:rq6}). Means are reported with
 95\% percentile bootstrap intervals (10{,}000 resamples, fixed seed)~\cite{efron1993bootstrap};
 comparisons are paired by question, with the mean difference, its interval and the numbers of questions
 that improved and worsened, with a two-sided exact sign test on those counts where a $p$-value is given;
 intervals and $p$-values are not adjusted for multiple comparisons, except where Holm's
 procedure~\cite{holm1979} is stated;
-accuracies on the record questions carry 95\% Wilson score intervals. A second judge from another family, Qwen2.5-14B-Instruct~\cite{qwen2024qwen25} (4-bit quantised, run
+accuracies on the record questions carry 95\% Wilson score intervals. The key systems on \test{}, Dewey
+and RAGScholar's configuration on both sets of candidates, were run three times; their comparison is
+paired on each question's mean score over the three runs, while the tables give the first run. Every
+other system is reported from one run on each set. A second judge from another family, Qwen2.5-14B-Instruct~\cite{qwen2024qwen25} (4-bit quantised, run
 locally), re-grades the main sets (Section~\ref{sec:rq6}). ROUGE-L~\cite{lin2004rouge} is recorded for every answer.
 
 \textbf{No comparison with the original scores.} Re-running the original closed-book condition with its
@@ -641,7 +651,9 @@ answer is worse than closed-book.
 0--2 with 95\% interval). \test{} was held out from Dewey's design; the other sets were used to design
 it. Pipeline pool: the frozen pool of the first-stage retrievers (four on \dq{}, three on the newer sets),
 the source shown with the abstract the question was written from. $\Delta$: Dewey's paired difference on
-\test{} (questions better/worse; exact sign test). On \dq{} the oracle uses the 46 questions with an
+\test{} (questions better/worse; exact sign test). One run of each system; on \test{} Dewey and
+RAGScholar's configuration show the first of their three runs (the text gives the three-run comparison).
+On \dq{} the oracle uses the 46 questions with an
 available abstract. On the three newer sets a question was kept only where gpt-4.1-mini's oracle answer
 scored 2, so that oracle is near 2.00 by construction.}
 \label{tab:dewey}
@@ -657,8 +669,8 @@ RAGScholar configuration, Dewey's index & 1.68 \ci{1.52}{1.84} & 1.71 \ci{1.59}{
 Plain RAG gpt-4.1-mini, pipeline pool & 1.72 \ci{1.54}{1.88} & 1.82 \ci{1.71}{1.91} & 1.89 \ci{1.81}{1.96} & 1.80 \ci{1.69}{1.89} & $-$0.06 (5/11), $p=0.21$ \\
 Plain RAG gpt-4.1, pipeline pool & 1.76 \ci{1.58}{1.90} & 1.82 \ci{1.72}{1.91} & 1.89 \ci{1.82}{1.95} & 1.79 \ci{1.68}{1.89} & $-$0.05 (5/10), $p=0.30$ \\
 Plain RAG gpt-4.1-mini, Dewey's index & 1.78 \ci{1.62}{1.92} & 1.74 \ci{1.62}{1.85} & 1.73 \ci{1.62}{1.84} & 1.71 \ci{1.58}{1.82} & $+$0.03 (6/4), $p=0.75$ \\
-Plain RAG gpt-4.1, Dewey's index & 1.84 \ci{1.70}{1.96} & 1.74 \ci{1.62}{1.85} & 1.75 \ci{1.63}{1.86} & -- & \\
-Permissive RAG gpt-4.1, pipeline pool & 1.84 \ci{1.70}{1.96} & -- & 1.91 \ci{1.84}{1.97} & -- & \\
+Plain RAG gpt-4.1, Dewey's index & 1.84 \ci{1.70}{1.96} & 1.74 \ci{1.62}{1.85} & 1.75 \ci{1.63}{1.86} & 1.69 \ci{1.55}{1.81} & $+$0.05 (6/3), $p=0.51$ \\
+Permissive RAG gpt-4.1, pipeline pool & 1.84 \ci{1.70}{1.96} & -- & 1.91 \ci{1.84}{1.97} & 1.75 \ci{1.63}{1.85} & $-$0.01 (7/8), $p=1$ \\
 \midrule
 \textbf{Dewey} & \textbf{1.80} \ci{1.64}{1.94} & \textbf{1.74} \ci{1.62}{1.85} & \textbf{1.76} \ci{1.64}{1.87} & \textbf{1.74} \ci{1.62}{1.85} & \\
 \quad local only & 1.82 \ci{1.66}{1.96} & 1.73 \ci{1.61}{1.84} & -- & 1.70 \ci{1.58}{1.81} & $+$0.04 (4/1), $p=0.38$ \\
@@ -675,15 +687,21 @@ Table~\ref{tab:dewey} sets Dewey beside RAGScholar's configuration and the study
 \test{}, whose questions were built only after Dewey's design was frozen, Dewey scores 1.74, almost
 twice the closed-book score of gpt-4.1-mini, which calls its tools (0.89; better on 81 questions, worse on
 6), and of gpt-4.1, which wrote all its answers (also 0.89; better on 82, worse on 7), and 0.26 below
-the gpt-4.1-mini oracle, which is near 2.00 by construction on this set. It does not differ detectably
-from RAGScholar's configuration run on the pipeline pool (1.73; $+0.01$, interval $-0.11$ to $+0.13$; 10
-questions better, 10 worse), though a difference of about 0.1 either way cannot be excluded, and that
-pool was gathered offline from three search services and shows the source with the very abstract the
-question was written from. On the same index (where the pipeline is still shown the source's oracle
-abstract), the setting closest to the original's index, Dewey scores above it: 1.74 against 1.63, better
-on 12 questions and worse on 2 in one run of each ($p=0.013$, or $0.10$ after Holm's adjustment over the ten contrasts in the
-last column of Table~\ref{tab:dewey}, of which only those with closed-book and the oracle stay below
-0.05). Part of that margin is the writer: on the same candidates gpt-4.1-mini scores above the 4-bit
+the gpt-4.1-mini oracle, which is near 2.00 by construction on this set. In the first run it does not
+differ detectably from RAGScholar's configuration run on the pipeline pool (1.73; $+0.01$, interval
+$-0.11$ to $+0.13$; 10 questions better, 10 worse), a pool gathered offline from three search services
+that shows the source with the very abstract the question was written from. Since repeated runs of
+one system differ, both systems were run three times. Dewey scores 1.74, 1.77 and 1.73 (mean
+1.747) and the configuration 1.73, 1.70 and 1.65 (mean 1.693); paired on each question's mean over the
+three runs, Dewey scores $+0.05$ higher (interval $-0.06$ to $+0.16$; 19 questions better, 10 worse;
+$p=0.14$), still not a detectable difference. On the same index (where the pipeline is still shown the
+source's oracle abstract), the setting closest to the original's index, Dewey scores above it. In the
+first run it scores 1.74 against 1.63, better on 12 questions and worse on 2 ($p=0.013$, or $0.13$ after
+Holm's adjustment over the twelve contrasts in the last column of Table~\ref{tab:dewey}, of which only
+those with closed-book and the oracle stay below 0.05). Over three runs, in which the configuration scores
+1.63, 1.62 and 1.60 (mean 1.617), Dewey leads by $+0.13$ (interval $+0.06$ to $+0.20$; 27 better, 5 worse;
+$p=0.0001$), which stays below 0.01 after Holm's adjustment with this test in place of the single-run one.
+Part of that margin is the writer: in single runs on the same candidates gpt-4.1-mini scores above the 4-bit
 Mistral-7B on every set (on \test{}, $+0.07$ on the pipeline pool and $+0.08$ on the index, $p=0.039$
 each), and given the pipeline's own candidates Dewey is level with RAGScholar's configuration ($+0.02$). The best fixed pipelines
 read the top five of the pipeline pool with gpt-4.1-mini (1.80) or with gpt-4.1, Dewey's own answering
@@ -694,16 +712,17 @@ and over the 300 questions of the three newer sets each pipeline leads by 0.09: 
 interval $0.03$ to $0.15$, 37 questions better and 16 worse ($p=0.005$); with gpt-4.1, interval $0.02$ to
 $0.15$, 36 better and 16 worse ($p=0.008$), although Dewey was designed on two of these sets. Reading the top five of Dewey's own index, gpt-4.1
 scores 1.84, 1.74 and 1.75 on the three design sets, level with Dewey on each (Dewey $-0.04$, $0.00$ and
-$+0.01$; 3/3, 7/6 and 5/3 questions better/worse). The highest-scoring fixed pipeline on any of our sets,
-gpt-4.1 with the permissive prompt, scores 1.91 on \freshb{}, 0.15 above Dewey (interval $0.05$ to $0.26$;
-12 questions better, 2 worse; $p=0.013$). On \dq{}, Dewey's best
+$+0.01$; 3/3, 7/6 and 5/3 questions better/worse), and 1.69 on \test{} (Dewey $+0.05$; 6/3, $p=0.51$).
+The highest-scoring fixed pipeline on any of our sets, gpt-4.1 with the permissive prompt, scores 1.91
+on \freshb{}, 0.15 above Dewey (interval $0.05$ to $0.26$; 12 questions better, 2 worse; $p=0.013$), but
+1.75 on \test{}, level with Dewey ($-0.01$; 7/8, $p=1$). On \dq{}, Dewey's best
 set, it scores 1.80, above RAGScholar's configuration by $+0.20$ (interval $0.00$ to $+0.40$; 12 better,
 4 worse) and above closed-book by $+0.40$ ($+0.20$ to $+0.60$).
 
-Dewey's run records show what it does with each question: it searched on all 100 \test{} questions, passed
+Dewey's run records show what it does with each question: in its first run on \test{} it searched on all 100 questions, passed
 the question as written on 99, gave the source abstract to its writer on 85, and cited [n] in 98 of its
-answers, with no citation to an abstract it was not shown. It never searched a second time on \test{},
-although five of its answers say that no abstract addressed the question, and over its 350 answers on the
+answers, with no citation to an abstract it was not shown. In that run it never searched a second time,
+although five of its answers say that no abstract addressed the question, and over its 350 answers in the first run on each of the
 four sets a second search returned abstracts on only 2. The rule to search again is followed by the model
 that chooses tools, gpt-4.1-mini, while gpt-4.1, which writes the answer from the abstracts, calls no
 tools. On these questions Dewey therefore acts as a single-shot retrieve-then-read system with its own
@@ -739,26 +758,27 @@ abstracts.
 
 \begin{table}[t]
 \caption{Seventy questions about dblp's records, scored by exact match against values computed from the
-dump: correct answers per kind (of 10).}
+dump: correct answers per kind (of 10). SQL only: Dewey's models, loop and limits with only read-only SQL
+over the same database.}
 \label{tab:structured}
 \centering\scriptsize
-\setlength{\tabcolsep}{2.6pt}
-\begin{tabular}{lcccc}
+\setlength{\tabcolsep}{1.7pt}
+\begin{tabular}{lccccc}
 \toprule
- & & \multicolumn{2}{c}{RAGScholar-style} & No retrieval \\
-\cmidrule(lr){3-4}
-Kind & Dewey & gpt-4.1-mini & Mistral-7B & gpt-4.1-mini \\
+ & & SQL & \multicolumn{2}{c}{RAGScholar-style} & No retrieval \\
+\cmidrule(lr){4-5}
+Kind & Dewey & only & gpt-4.1-mini & Mistral-7B & gpt-4.1-mini \\
 \midrule
-Paper: venue and year & 8 & 10 & 4 & 1 \\
-Paper: authors & 8 & 10 & 10 & 0 \\
-Person: publications & 10 & 0 & 0 & 0 \\
-Venue: papers in a year & 9 & 0 & 0 & 0 \\
-Venue: top author & 10 & 0 & 0 & 0 \\
-Two people: joint papers & 10 & 0 & 0 & 1 \\
-Name: different people & 10 & 0 & 0 & 2 \\
+Paper: venue and year & 8 & 3 & 10 & 4 & 1 \\
+Paper: authors & 8 & 0 & 10 & 10 & 0 \\
+Person: publications & 10 & 8 & 0 & 0 & 0 \\
+Venue: papers in a year & 9 & 7 & 0 & 0 & 0 \\
+Venue: top author & 10 & 10 & 0 & 0 & 0 \\
+Two people: joint papers & 10 & 9 & 0 & 0 & 1 \\
+Name: different people & 10 & 0 & 0 & 0 & 2 \\
 \midrule
-All (70) & \textbf{65} & 20 & 14 & 4 \\
-\quad 95\% interval (\%) & 84--97 & 19--40 & 12--31 & 2--14 \\
+All (70) & \textbf{65} & 37 & 20 & 14 & 4 \\
+\quad 95\% interval (\%) & 84--97 & 41--64 & 19--40 & 12--31 & 2--14 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -778,6 +798,21 @@ gpt-4.1-mini all 20. Four of Dewey's five misses are papers its title search did
 outside that search's index of papers from 2010 on; it said it had not found them and offered the closest
 title it had, while the pipeline's OpenAlex searches found them. The fifth is a venue name it could not resolve. These numbers need no judge: every reference
 was computed by SQL over the raw dump and frozen before any system answered.
+
+\textbf{What the typed tools add.} The SQL-only arm separates Dewey's typed tools from access to the data:
+the same models in the same loop, given only read-only SQL over the database the tools read, its schema
+and a data dictionary, answer 37 of 70 (53\%; Table~\ref{tab:structured}). Where one aggregate settles the
+question once the right key is found, it comes close to Dewey: 10 of a venue's top authors, 9 counts of
+joint papers, 8 counts of a person's publications and 7 of a venue's papers in a year. It answers 3
+questions about a paper's venue and year, none about its authors and none about people who share a name.
+Dewey is right where it is wrong on 30 questions and the reverse holds on 2 ($p=2.5\times10^{-7}$). The
+arm had room to work: no query timed out, a statement was refused or failed in only 2 of the 70 answers,
+and it never tried a tool other than \emph{run\_sql}. Its misses are exact-match queries that match
+nothing or the wrong thing: a title compared with a wrongly normalised string, a numbered page looked up
+by key with its name, namesakes counted from the table of names, although one person can carry several
+names, and a venue matched by a substring of its booktitle. Name resolution, title matching and the
+rules for namesakes and counting that Dewey's typed tools carry add 28 correct answers over plain access to
+the same database with the same models.
 
 \subsection{RQ6: Robustness to the grading and the judge}
 \label{sec:rq6}
@@ -847,7 +882,7 @@ gpt-4.1-mini's, but $+0.14$ for Mistral-7B's.
 \caption{Paired differences under the primary judge (gpt-4.1) and the second judge (Qwen2.5-14B). For the
 three models: from closed-book on \dq{}, graded against the single reference, and for the missed questions
 also by each judge's multi-reference re-grade (multi-ref.). For Dewey: on \test{} and \dq{}, from
-closed-book gpt-4.1-mini and from RAGScholar's configuration (pipeline pool). Bold: the 95\% bootstrap
+closed-book gpt-4.1-mini and from RAGScholar's configuration (pipeline pool), first run. Bold: the 95\% bootstrap
 interval excludes zero (not adjusted for multiple comparisons).}
 \label{tab:judges}
 \centering\footnotesize
@@ -899,12 +934,21 @@ $-0.14$), graded against the single reference. The controls also guarded
 the protocol: placing the answer after the abstracts, which runs five times faster on a local judge, made
 gpt-4.1 score two of 21 mismatched references above zero (19/21), so both judges use the original order.
 
+\textbf{The boundary between 1 and 2.} The controls that admit a judge test only the ends of the scale,
+while most disagreements between the judges lie between 1 and 2. The boundary control
+(Section~\ref{sec:judge}) grades the first sentence of a longer reference as the answer, which should
+score 1. On \dq{} six references qualify, and both judges score all six as 1. On \test{} 58 qualify:
+gpt-4.1 scores 52 of them 1 and 6 of them 2, none 0, and Qwen scores all 58 as 1. Both judges therefore
+separate an incomplete answer from a complete one, gpt-4.1 more leniently on 6 of 58. The control covers
+one kind of incompleteness, an answer that stops short of the reference, not one that is partly wrong or
+covers different points.
+
 \textbf{Dewey under the second judge.} Qwen re-grades Dewey's answers and the baselines it is compared
 with on \test{} (400 answers; agreement with gpt-4.1 87\%, Cohen's $\kappa=0.76$, quadratic-weighted
 $0.83$) and on \dq{} (200 answers; agreement 79\%, Cohen's $\kappa=0.39$, quadratic-weighted $0.74$). It scores Dewey 1.70 on \test{}
 against gpt-4.1's 1.74, and RAGScholar's configuration lower than gpt-4.1 does (1.56 against 1.73). Under
 Qwen, the interval of Dewey's lead over that configuration excludes zero on both sets: $+0.14$ on \test{} (interval
-$+0.01$ to $+0.28$) and $+0.42$ on \dq{} ($+0.22$ to $+0.62$), where gpt-4.1 gives $+0.01$ and $+0.20$.
+$+0.01$ to $+0.28$) and $+0.42$ on \dq{} ($+0.22$ to $+0.62$), where gpt-4.1 gives $+0.01$ and $+0.20$ (on \test{}, first runs; $+0.05$ over three runs).
 Its difference from the gpt-4.1-mini pipeline stays within noise under both ($-0.03$ under Qwen and $-0.06$ under gpt-4.1 on
 \test{}); the gpt-4.1 pipeline, run after the second judge's pass, was graded by gpt-4.1 only. Here too there is no sign that gpt-4.1 favours its own family: it grades Dewey's answers
 0.04 higher than Qwen does, gpt-4.1-mini's 0.05 lower, and Mistral-7B's 0.17 higher (on \dq{}: $+0.06$, $-0.03$ and $+0.28$).
@@ -920,21 +964,24 @@ sets, and we find no sign that the models' knowledge comes from memory of the pa
 identifiable \dq{} questions cannot rule out a modest effect.
 
 \textbf{Dewey against RAGScholar.} On RAGScholar's own kind of question we find no setting in which our
-re-implementation of its best configuration scores detectably above Dewey, but how far Dewey leads
-depends on the judge. On questions held out from Dewey's design it is level with that configuration under
-gpt-4.1 ($+0.01$) when the configuration reads a pool gathered offline from three services, and ahead of
-it under Qwen ($+0.14$, interval $+0.01$ to $+0.28$). The judges disagree most about the configuration's
-own Mistral-7B answers, which gpt-4.1 grades 0.17 higher than Qwen on \test{} and 0.28 higher on \dq{},
-while they grade Dewey's and gpt-4.1-mini's answers within 0.06 of each other; without human ratings we
-cannot say which judge is right. When the configuration reads the same open index, Dewey scores 0.11
-higher under gpt-4.1 ($p=0.013$), a margin that does not survive Holm's adjustment over the ten \test{}
-contrasts of Table~\ref{tab:dewey}. Part of that margin is the writer, since given the pipeline's own
+re-implementation of its best configuration scores detectably above Dewey, but whether Dewey scores detectably higher
+depends on the candidates and on the judge. On questions held out from Dewey's design, when the
+configuration reads a pool gathered offline from three services, Dewey scores higher under gpt-4.1 by a margin
+that is not detectable, $+0.05$ over three runs (interval $-0.06$ to $+0.16$; $+0.01$ in the first), and
+is ahead of it under Qwen in the first run ($+0.14$, interval $+0.01$ to $+0.28$). The judges disagree
+most about the configuration's own Mistral-7B answers, which gpt-4.1 grades 0.17 higher than Qwen on
+\test{} and 0.28 higher on \dq{}, while they grade Dewey's and gpt-4.1-mini's answers within 0.06 of each
+other; without human ratings we cannot say which judge is right. When the configuration reads the same
+open index, Dewey scores 0.13 higher over three runs (interval $+0.06$ to $+0.20$; $p=0.0001$), a margin
+that survives Holm's adjustment over the \test{} contrasts of Table~\ref{tab:dewey}, where the first run
+alone ($+0.11$, $p=0.013$) did not. Part of that margin is the writer, since given the pipeline's own
 candidates Dewey is level with the configuration. With Dewey's own answering model, a fixed pipeline on
 the offline pool does as well or slightly better (Section~\ref{sec:rq4}). On content questions the
 agent's value is therefore not a higher score but reach: an open index, live search without an offline
 pool, and cited answers (98 of 100 on \test{}, none citing an abstract it was not shown, though whether
 each cited abstract supports its sentence was not measured). Beyond that task it answers what a
-retrieve-then-read design cannot (Section~\ref{sec:rq5}). Its code, the index builder and the
+retrieve-then-read design cannot, and its typed tools answer 28 more of the record questions than the
+same models given only read-only SQL over the same database (65 against 37; Section~\ref{sec:rq5}). Its code, the index builder and the
 evaluation harness are open source, and the question sets, frozen pools and every answer and grade are
 published, so each reported number can be recomputed from the records.
 
@@ -946,21 +993,20 @@ from different families. Prefer questions that identify their paper: on \dq{} it
 to 0.90 points on identifiable questions but only 0.14 to 0.28 on general ones (Table~\ref{tab:audit}).
 And ask questions about records too: a bibliography is queried for more than paper content.
 
-\textbf{Limitations.} Fifty questions give wide intervals, and subgroup analyses wider still. Every system
-was run once on each set, so our intervals cover the sampling of questions, not of runs: the original
+\textbf{Limitations.} Fifty questions give wide intervals, and subgroup analyses wider still. Apart from
+Dewey and RAGScholar's configuration on \test{}, run three times, every system was run once on each set,
+so for those systems our intervals cover the sampling of questions, not of runs: the original
 models sample at temperature~0.7 and are quantised, Dewey's live searches and hosted models are not
 deterministic, and even at temperature~0 two identical closed-book runs on \dq{} changed the grade of 5 of
 50 questions for each GPT model (gpt-4.1 1.48 and 1.46, gpt-4.1-mini 1.38 and 1.40). Single-run
-differences of about 0.1 or less, including Dewey's from RAGScholar's configuration on \test{}, should be
-read with that in mind. Every content grade comes from an
+differences of about 0.1 or less, including Dewey's from the fixed pipelines on \test{}, should be
+read with that in mind; three runs are themselves a small sample of runs. Every content grade comes from an
 LLM judge; controls, inter-labeller agreement, the multi-reference re-grade and the second judge bound but
-do not remove that dependence, the two judges differ in level, and no human ratings were collected. The
-judge controls test only the ends of the scale, whereas most disagreements between the judges are between
-scores 1 and 2 (70 of 79 on \dq{}, 36 of 53 on \test{}), so differences below about 0.1 may rest on a
-boundary the judges do not resolve reliably.
-The controls test only the ends of the scale (a reference must score 2, a mismatched one 0), not the
-boundary between 1 and 2, where 70 of the 79 disagreements between the judges on the three models' \dq{}
-answers lie, so differences of about 0.1 that change with the judge remain unresolved.
+do not remove that dependence, the two judges differ in level, and no human ratings were collected. Most
+disagreements between the judges are between scores 1 and 2 (70 of 79 on \dq{}, 36 of 53 on \test{}).
+The boundary control shows that both judges score a reference cut to its first sentence as incomplete,
+but it covers only that one kind of incompleteness, so differences of about 0.1 that change with the
+judge remain unresolved.
 The questions and references of \fresh{}, \freshb{} and \test{} were written by gpt-4.1, which also grades
 them and writes Dewey's answers that rest on abstracts; this shared authorship may favour the GPT systems
 over Mistral-7B in the comparison with RAGScholar's configuration, and the second judge addresses the
@@ -970,15 +1016,15 @@ one of which refused most searches, and BM25 over a pool uses pool-level statist
 \dq{}, \fresh{} and \freshb{}, so its scores there are optimistic; only \test{} is held out, and like \fresh{} and
 \freshb{} it holds only journal and conference papers from 2025 on, of the kinds and years the title
 search indexes, so it does not test the older papers, preprints and other records that make up 23 of
-\dq{}'s 50 sources. Its 100 questions detect differences of about 0.15 but not the smaller ones between
-Dewey's ablations. Dewey's
+\dq{}'s 50 sources. In a single run its 100 questions reliably detect differences of about 0.15, not the smaller ones between
+Dewey's ablations; three runs detected Dewey's margin of 0.13 over the configuration on its index. Dewey's
 index reflects one OpenAlex snapshot and holds no abstract for about one in ten source papers; the live
 searches depend on OpenAlex's daily allowance. The record questions and their scoring were fixed before
-any system answered them; they compare Dewey only with systems that cannot count or rank, so they do not
-show what its typed tools add over the same model given read-only SQL and the schema; Dewey's gold set and scenarios were written by its developer.
+any system answered them; the SQL-only arm was given one prompt and data dictionary, written by Dewey's
+developer, so its 37 is one measure of plain SQL access, not the most it allows; Dewey's gold set and
+scenarios were written by its developer.
 
-\textbf{Future work.} Human ratings of a sample of the answers on which the judges disagree; a comparison
-on the record questions with the same model given only read-only SQL; multiple
+\textbf{Future work.} Human ratings of a sample of the answers on which the judges disagree; multiple
 reference answers per \dq{} question; questions that describe papers in other words, as
 LitSearch~\cite{ajith2024litsearch} does for literature search, where dense retrievers lead BM25, on
 which the ranker should be compared again; and real users' questions.
@@ -991,11 +1037,13 @@ the source abstract answers almost perfectly, and the original study's findings 
 reproduced in order but matter less than finding the paper. Dewey, a tool-calling assistant over the
 whole dblp dump, treats that retrieval as one tool among many, rebuilt from open data as an index of 5.49
 million abstracts of dblp's papers. On questions held out from its design it scores 1.74 of 2, nearly
-twice what its models know without retrieval, is level with our re-implementation of RAGScholar's best
-configuration under the primary judge and ahead of it under the second, scores above it, before
-adjustment for multiple comparisons, when that configuration reads the same open index, and is within noise of a fixed pipeline using its own answering
-model, which leads slightly over the 300 newer questions; on questions about dblp's records it answers 65 of 70 where a retrieve-then-read pipeline
-answers 20. Benchmarks for scholarly assistants should therefore report closed-book and oracle conditions,
+twice what its models know without retrieval. Over three runs it does not differ detectably from our
+re-implementation of RAGScholar's best configuration reading an offline pool under the primary judge
+($+0.05$), is ahead of it under the second in one run, and scores above it when that configuration reads
+Dewey's open index ($+0.13$, interval $+0.06$ to $+0.20$); it is within noise of a fixed pipeline using its
+own answering model, which leads slightly over the 300 newer questions. On questions about dblp's records
+it answers 65 of 70, where the same models with only SQL access to the same database answer 37 and a
+retrieve-then-read pipeline 20. Benchmarks for scholarly assistants should therefore report closed-book and oracle conditions,
 measure retrieval in the open, grade with more than one reference and more than one judge, and ask about
 records as well as content. Dewey, its index builder and the evaluation harness are open
 source,\footnote{\url{https://github.com/hadigghazi/dblp-dashboard}; the question sets, frozen pools
@@ -1012,6 +1060,8 @@ label the questions and gate the retrieved abstracts, as described above. In add
 (Claude, Anthropic) was used to implement Dewey and the evaluation harness and to draft the text; the
 author reviewed and edited the content and takes full responsibility for it.
 
+\IEEEtriggeratref{35}
+\IEEEtriggercmd{\enlargethispage{2\baselineskip}}
 \bibliographystyle{IEEEtran}
 \bibliography{references}
 
